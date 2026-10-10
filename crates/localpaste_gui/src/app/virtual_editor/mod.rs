@@ -16,7 +16,7 @@ pub(crate) mod visual_rows;
 pub(crate) use buffer::{RopeBuffer, VirtualEditDelta};
 pub(crate) use galley_cache::{VirtualGalleyCache, VirtualGalleyContext};
 pub(crate) use history::{EditIntent, RecordedEdit, VirtualEditorHistory};
-pub(crate) use input::{commands_from_events, VirtualInputCommand};
+pub(crate) use input::{commands_from_events, uses_mac_shortcuts, VirtualInputCommand};
 #[cfg(test)]
 pub(crate) use input::{set_test_platform, PlatformFlavor};
 pub(crate) use state::{VirtualEditorState, WrapBoundaryAffinity};

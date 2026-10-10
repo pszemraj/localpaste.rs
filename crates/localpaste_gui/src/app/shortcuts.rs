@@ -1,6 +1,7 @@
 //! Runtime shortcut registry shared by input dispatch and discoverability UI.
 
 use super::interaction_helpers::{is_command_shift_shortcut, is_plain_command_shortcut};
+use super::virtual_editor::uses_mac_shortcuts;
 use eframe::egui;
 
 /// Runtime shortcut actions handled by the app frame loop.
@@ -29,6 +30,11 @@ pub(crate) struct ShortcutHelpEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ShortcutChord {
     PlainCommand(egui::Key),
+    /// A plain command chord that macOS also accepts on a second, native key.
+    PlainCommandOrMac {
+        key: egui::Key,
+        mac_key: egui::Key,
+    },
     CommandShift(egui::Key),
     AnyModifier(egui::Key),
 }
@@ -50,7 +56,7 @@ impl RuntimeShortcut {
         self.help
     }
 
-    fn matches_event(self, event: &egui::Event) -> bool {
+    fn matches_event(self, event: &egui::Event, mac: bool) -> bool {
         let egui::Event::Key {
             key,
             pressed: true,
@@ -63,6 +69,13 @@ impl RuntimeShortcut {
         match self.chord {
             ShortcutChord::PlainCommand(expected) => {
                 *key == expected && is_plain_command_shortcut(*modifiers)
+            }
+            ShortcutChord::PlainCommandOrMac {
+                key: expected,
+                mac_key,
+            } => {
+                (*key == expected || (mac && *key == mac_key))
+                    && is_plain_command_shortcut(*modifiers)
             }
             ShortcutChord::CommandShift(expected) => {
                 *key == expected && is_command_shift_shortcut(*modifiers)
@@ -92,9 +105,15 @@ pub(crate) const RUNTIME_SHORTCUTS: &[RuntimeShortcut] = &[
     },
     RuntimeShortcut {
         action: RuntimeShortcutAction::DeleteSelected,
-        chord: ShortcutChord::PlainCommand(egui::Key::Delete),
+        // MacBook keyboards have no forward Delete key, and Cmd+Backspace is the
+        // native chord for deleting a selected item there. Elsewhere
+        // Ctrl+Backspace deletes a word, so the alias is macOS-only.
+        chord: ShortcutChord::PlainCommandOrMac {
+            key: egui::Key::Delete,
+            mac_key: egui::Key::Backspace,
+        },
         help: ShortcutHelpEntry {
-            keys: "Ctrl/Cmd+Delete",
+            keys: "Ctrl+Delete (Win/Linux) or Cmd+Backspace/Delete (macOS)",
             description: "Delete selected paste when text inputs are unfocused",
         },
     },
@@ -219,9 +238,10 @@ pub(crate) fn native_paste_shortcut_action(
 /// # Returns
 /// The registered action for a pressed shortcut event, or `None` for other input.
 pub(crate) fn runtime_shortcut_action(event: &egui::Event) -> Option<RuntimeShortcutAction> {
+    let mac = uses_mac_shortcuts();
     RUNTIME_SHORTCUTS
         .iter()
-        .find(|shortcut| shortcut.matches_event(event))
+        .find(|shortcut| shortcut.matches_event(event, mac))
         .map(|shortcut| shortcut.action)
 }
 
@@ -231,22 +251,40 @@ pub(crate) fn runtime_shortcut_action(event: &egui::Event) -> Option<RuntimeShor
 /// Human-readable shortcut key label for the action.
 ///
 /// # Panics
-/// Panics if a [`RuntimeShortcutAction`] variant is not present in [`RUNTIME_SHORTCUTS`].
+/// Panics if a [`RuntimeShortcutAction`] variant is not present in [`RUNTIME_SHORTCUTS`],
+/// or if its label names no chord for the build platform.
 pub(crate) fn runtime_shortcut_label(action: RuntimeShortcutAction) -> String {
     RUNTIME_SHORTCUTS
         .iter()
         .find(|shortcut| shortcut.action == action)
-        .map(|shortcut| {
-            shortcut.help.keys.replace(
-                "Ctrl/Cmd",
-                if cfg!(target_os = "macos") {
-                    "Cmd"
-                } else {
-                    "Ctrl"
-                },
-            )
-        })
-        .expect("runtime shortcut action must be registered")
+        .and_then(|shortcut| platform_shortcut_keys(shortcut.help.keys, cfg!(target_os = "macos")))
+        .expect("runtime shortcut action must be registered for this platform")
+}
+
+/// Selects the native key spelling from a registry label shared across platforms.
+///
+/// # Arguments
+/// - `keys`: Registry label using `Ctrl/Cmd`, `X (Win/Linux) or Y (macOS)`, or a
+///   `(macOS)` suffix for a chord that exists only there.
+/// - `macos`: Whether to spell the chord for macOS.
+///
+/// # Returns
+/// The label for that platform, or `None` when the chord does not exist there.
+pub(crate) fn platform_shortcut_keys(keys: &str, macos: bool) -> Option<String> {
+    if let Some((other, mac)) = keys.split_once(" (Win/Linux) or ") {
+        return Some(
+            if macos {
+                mac.trim_end_matches(" (macOS)")
+            } else {
+                other
+            }
+            .to_string(),
+        );
+    }
+    if let Some(mac) = keys.strip_suffix(" (macOS)") {
+        return macos.then(|| mac.to_string());
+    }
+    Some(keys.replace("Ctrl/Cmd", if macos { "Cmd" } else { "Ctrl" }))
 }
 
 /// A group of shared navigation/editing shortcut descriptions.
@@ -460,6 +498,54 @@ mod tests {
                 shortcut.help.keys
             );
         }
+    }
+
+    #[test]
+    fn delete_selected_adds_cmd_backspace_only_on_macos() {
+        let delete = RUNTIME_SHORTCUTS
+            .iter()
+            .find(|shortcut| shortcut.action == RuntimeShortcutAction::DeleteSelected)
+            .copied()
+            .unwrap();
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let cmd = egui::Modifiers {
+            command: true,
+            mac_cmd: true,
+            ..Default::default()
+        };
+        let ctrl = egui::Modifiers {
+            command: true,
+            ctrl: true,
+            ..Default::default()
+        };
+        assert!(delete.matches_event(&key(egui::Key::Backspace, cmd), true));
+        assert!(delete.matches_event(&key(egui::Key::Delete, cmd), true));
+        assert!(delete.matches_event(&key(egui::Key::Delete, ctrl), false));
+        assert!(!delete.matches_event(&key(egui::Key::Backspace, ctrl), false));
+        for extra in [
+            egui::Modifiers { shift: true, ..cmd },
+            egui::Modifiers { alt: true, ..cmd },
+            egui::Modifiers {
+                ctrl: true,
+                ..Default::default()
+            },
+        ] {
+            assert!(!delete.matches_event(&key(egui::Key::Backspace, extra), true));
+        }
+        assert_eq!(
+            platform_shortcut_keys(delete.help.keys, true).as_deref(),
+            Some("Cmd+Backspace/Delete")
+        );
+        assert_eq!(
+            platform_shortcut_keys(delete.help.keys, false).as_deref(),
+            Some("Ctrl+Delete")
+        );
     }
 
     #[test]

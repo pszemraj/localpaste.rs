@@ -470,8 +470,9 @@ impl LocalPasteApp {
 
     /// Returns whether the global delete-selected shortcut should run this frame.
     ///
-    /// When the virtual editor owns keyboard focus, `Ctrl/Cmd+Delete` belongs to
-    /// native text-editing behavior instead of deleting the selected paste.
+    /// When the virtual editor or any other text input owns keyboard focus, the
+    /// delete-selected chords (`Ctrl/Cmd+Delete`, and `Cmd+Backspace` on macOS)
+    /// belong to native text-editing behavior instead of deleting the selected paste.
     ///
     /// # Arguments
     /// - `focus_state`: Focus/ownership context for the current shortcut frame.

@@ -90,6 +90,14 @@ fn active_platform() -> PlatformFlavor {
     PlatformFlavor::current()
 }
 
+/// Whether keyboard chords follow macOS conventions, honoring the test platform override.
+///
+/// # Returns
+/// `true` on macOS builds, or when a test forces the Mac flavor.
+pub(crate) fn uses_mac_shortcuts() -> bool {
+    active_platform() == PlatformFlavor::Mac
+}
+
 fn is_word_modifier(platform: PlatformFlavor, modifiers: egui::Modifiers) -> bool {
     match platform {
         // macOS: word movement/deletion is Option (Alt).

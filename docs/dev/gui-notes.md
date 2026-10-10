@@ -24,7 +24,7 @@ Shortcut contract:
 
 - `Ctrl/Cmd+N`: create/select new paste.
 - `Ctrl/Cmd+S`: save content + metadata.
-- `Ctrl/Cmd+Delete`: delete selected paste when text input does not own focus. `Delete` means forward Delete; on a MacBook keyboard use `Fn+Cmd+Delete`.
+- `Ctrl+Delete` (Windows/Linux) or `Cmd+Backspace` / `Cmd+Delete` (macOS): delete selected paste when no text input (editor, title, search, picker or palette query, or any other field) owns focus; there the chord keeps its text-editing meaning (`Cmd+Backspace` deletes to line start). `Delete` means forward Delete. `Ctrl+Backspace` is word deletion on Windows/Linux and never deletes the paste.
 - `Ctrl/Cmd+F`: focus sidebar search.
 - `Ctrl/Cmd+K`: toggle the commands-only palette (also `Ctrl/Cmd+Shift+P`).
 - `Ctrl/Cmd+Shift+K`: toggle the separate paste picker.

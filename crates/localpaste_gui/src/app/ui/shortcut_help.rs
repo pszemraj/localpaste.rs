@@ -1,6 +1,8 @@
 //! Keyboard shortcut help surface.
 
-use super::super::shortcuts::{ShortcutHelpEntry, RUNTIME_SHORTCUTS, STATIC_SHORTCUT_SECTIONS};
+use super::super::shortcuts::{
+    platform_shortcut_keys, ShortcutHelpEntry, RUNTIME_SHORTCUTS, STATIC_SHORTCUT_SECTIONS,
+};
 use super::super::*;
 use eframe::egui;
 
@@ -464,24 +466,6 @@ fn shortcut_cell(ui: &mut egui::Ui, width: f32, text: egui::RichText) {
             ui.add(egui::Label::new(text).wrap());
         },
     );
-}
-
-/// Select the native key spelling from the registry's shared platform labels.
-fn platform_shortcut_keys(keys: &str, macos: bool) -> Option<String> {
-    if let Some((other, mac)) = keys.split_once(" (Win/Linux) or ") {
-        return Some(
-            if macos {
-                mac.trim_end_matches(" (macOS)")
-            } else {
-                other
-            }
-            .to_string(),
-        );
-    }
-    if let Some(mac) = keys.strip_suffix(" (macOS)") {
-        return macos.then(|| mac.to_string());
-    }
-    Some(keys.replace("Ctrl/Cmd", if macos { "Cmd" } else { "Ctrl" }))
 }
 
 fn shortcut_matches(entry: ShortcutHelpEntry, query: &str) -> bool {

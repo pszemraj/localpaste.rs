@@ -471,6 +471,7 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
 mod backend_dispatch;
 mod collections_and_search;
 mod creation_and_projection;
+mod delete_selected_shortcut;
 mod discovery_input_order;
 mod discovery_keyboard;
 mod discovery_scopes;
