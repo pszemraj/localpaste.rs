@@ -114,12 +114,10 @@ impl LocalPasteApp {
                             for item in self.diff_candidates() {
                                 let selected_row = self.version_ui.diff_target_id.as_deref()
                                     == Some(item.id.as_str());
-                                let label = format!(
-                                    "{}  [{}]",
-                                    item.name,
-                                    item.language.as_deref().unwrap_or("text")
-                                );
-                                if ui.selectable_label(selected_row, label).clicked() {
+                                let language = paste_list_language_label(&item);
+                                if super::list_row(ui, selected_row, &item.name, &language)
+                                    .clicked()
+                                {
                                     pending_target = Some(item.id.clone());
                                 }
                             }

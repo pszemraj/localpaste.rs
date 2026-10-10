@@ -314,3 +314,43 @@ fn diff_preview_cache_short_circuits_large_payloads_before_snapshot_clone() {
         Err(crossbeam_channel::TryRecvError::Empty)
     ));
 }
+
+#[test]
+fn diff_candidates_use_the_sidebar_language_labels() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.all_pastes = vec![
+        test_summary("alpha", "Alpha", None, 7),
+        test_summary("unset", "Unset", None, 10),
+        test_summary("table", "Table", Some("csv"), 10),
+        test_summary("huge", "Huge", Some("rust"), HIGHLIGHT_PLAIN_THRESHOLD),
+    ];
+    harness.app.open_diff_modal();
+    let input = || egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1600.0, 1000.0),
+        )),
+        ..Default::default()
+    };
+    let _ = run_full_update_with_input(&mut harness.app, &ctx, input());
+    let output = run_full_update_with_input(&mut harness.app, &ctx, input());
+    let texts = output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for candidate in ["Unset", "Table", "Huge"] {
+        assert!(texts.contains(&candidate), "missing {candidate}: {texts:?}");
+    }
+    // Same wording as the sidebar: unresolved is `auto`, large buffers are `plain`.
+    for label in ["auto", "csv", "plain"] {
+        assert!(texts.contains(&label), "missing {label}: {texts:?}");
+    }
+    assert!(!texts
+        .iter()
+        .any(|text| text.contains("[text]") || text.contains("[csv]")));
+}

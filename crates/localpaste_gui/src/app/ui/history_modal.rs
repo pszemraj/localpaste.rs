@@ -60,7 +60,7 @@ fn format_history_row_label(now: DateTime<Utc>, meta: &VersionMeta) -> String {
     let language = display_language_label(
         meta.language.as_deref(),
         meta.language_is_manual,
-        meta.len > HIGHLIGHT_PLAIN_THRESHOLD,
+        meta.len >= HIGHLIGHT_PLAIN_THRESHOLD,
     );
     format!("{relative} | {size} | {language}")
 }
