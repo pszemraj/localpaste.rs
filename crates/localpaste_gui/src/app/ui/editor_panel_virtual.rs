@@ -149,14 +149,12 @@ impl LocalPasteApp {
         let eof_padding_rows = (editor_height / self.virtual_line_height / 2.0).ceil() as usize + 3;
         let content_rows = self.virtual_layout.total_rows().max(1);
         let total_rows = content_rows.saturating_add(eof_padding_rows);
-        let scroll_style = ui.spacing().scroll;
-        let floating_scrollbar_hit_width = if scroll_style.floating
-            && total_rows as f32 * self.virtual_line_height > editor_height
-        {
-            scroll_style.bar_width
-        } else {
-            0.0
-        };
+        let floating_scrollbar_hit_width =
+            if total_rows as f32 * self.virtual_line_height > editor_height {
+                floating_scrollbar_hit_width(&ui.spacing().scroll)
+            } else {
+                0.0
+            };
         self.virtual_galley_cache.prepare_frame(
             line_count,
             VirtualGalleyContext::new(

@@ -100,6 +100,24 @@ pub(super) fn request_virtual_editor_focus(
     });
 }
 
+/// Returns the width at the viewport's right edge owned by a floating vertical scrollbar.
+///
+/// # Arguments
+/// - `style`: Scroll style the editor's scroll area renders with.
+///
+/// # Returns
+/// Width of the strip, measured from the content's right edge, that row hit-testing must
+/// leave to the scrollbar: its hover-expanded bar plus outer margin, less any width the
+/// style already allocates outside the content.
+pub(super) fn floating_scrollbar_hit_width(style: &egui::style::ScrollStyle) -> f32 {
+    if !style.floating {
+        return 0.0;
+    }
+    (style.bar_width.max(style.floating_width) + style.bar_outer_margin
+        - style.floating_allocated_width)
+        .max(0.0)
+}
+
 /// Returns whether a pointer/window event should explicitly blur the editor.
 ///
 /// # Arguments
@@ -253,6 +271,27 @@ mod tests {
         let clamped = line_number_gutter_width(999, 0.0);
         let expected = (3.0 * 1.0) + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0;
         assert!((clamped - expected).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn floating_scrollbar_hit_width_covers_the_expanded_bar_and_outer_margin() {
+        let solid = egui::style::ScrollStyle::solid();
+        assert_eq!(floating_scrollbar_hit_width(&solid), 0.0);
+        let floating = egui::style::ScrollStyle::floating();
+        assert_eq!(floating_scrollbar_hit_width(&floating), floating.bar_width);
+        let inset = egui::style::ScrollStyle {
+            bar_outer_margin: 8.0,
+            ..floating
+        };
+        assert_eq!(
+            floating_scrollbar_hit_width(&inset),
+            floating.bar_width + 8.0
+        );
+        let thin = egui::style::ScrollStyle::thin();
+        assert_eq!(
+            floating_scrollbar_hit_width(&thin),
+            thin.bar_width - thin.floating_allocated_width
+        );
     }
 
     #[test]

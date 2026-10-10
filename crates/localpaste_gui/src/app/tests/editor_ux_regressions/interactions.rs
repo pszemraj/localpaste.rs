@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod drag_lifecycle;
+
 fn review_frame(
     app: &mut LocalPasteApp,
     ctx: &egui::Context,
