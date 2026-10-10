@@ -14,6 +14,7 @@ GUI runtime flags and interaction contracts. Detection/normalization/highlight b
 - `LOCALPASTE_NAV_PROBE_SCENARIO=<id>`: labels probe frames for runner assertions.
 - `LOCALPASTE_NAV_PROBE_SEED_TEXT=<text>`, `LOCALPASTE_NAV_PROBE_SEED_NAME=<name>`, `LOCALPASTE_NAV_PROBE_SEED_CURSOR=<char|line:col>`: seed the disposable in-memory probe paste and initial caret.
 - `LOCALPASTE_NAV_PROBE_FOCUS_EDITOR=1`: requests initial virtual-editor focus until the active native window acquires it; later focus changes follow normal app behavior. Only `1` and `true` enable it.
+- `LOCALPASTE_NAV_PROBE_CLEAR_SELECTION=1`: with probe logging enabled, clears the first loaded startup selection once while retaining sidebar rows, so native paste tests can exercise the no-open fallback. Later selection and paste follow normal app behavior.
 - `LOCALPASTE_NAV_PROBE_PYTHON=<path>`: runner/assertion Python executable override.
 - The perf and trace flags (`LOCALPASTE_EDITOR_PERF_LOG`, `LOCALPASTE_BACKEND_PERF_LOG`, `LOCALPASTE_EDITOR_INPUT_TRACE`, `LOCALPASTE_HIGHLIGHT_TRACE`) accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed). An unrecognized value logs a warning and counts as false.
 
@@ -91,6 +92,8 @@ No human input is needed. Completed paste results are recorded alongside native
 frames in NDJSON, including full synthetic API readback and restart equality.
 An unmet native precondition remains a failed assertion; it is never silently
 replaced by an in-memory test.
+The no-open case uses the one-shot probe setup flag because ordinary startup
+automatically opens the first available paste.
 
 Windows automation runs from Windows PowerShell 5.1 or PowerShell 7 and sends navigation chords through low-level `SendInput`; `-UseSendKeys` is a fallback for debugging the driver itself.
 

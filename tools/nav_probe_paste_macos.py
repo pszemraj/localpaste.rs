@@ -55,7 +55,8 @@ def main():
                LOCALPASTE_NAV_PROBE_LOG=str(args.log), LOCALPASTE_NAV_PROBE_SCENARIO=args.scenario)
     # A real persisted fixture must not be replaced by the navigation-only seed.
     for key in list(env):
-        if key.startswith("LOCALPASTE_NAV_PROBE_SEED_") or key == "LOCALPASTE_NAV_PROBE_FOCUS_EDITOR":
+        if key.startswith("LOCALPASTE_NAV_PROBE_SEED_") or key in (
+                "LOCALPASTE_NAV_PROBE_FOCUS_EDITOR", "LOCALPASTE_NAV_PROBE_CLEAR_SELECTION"):
             env.pop(key)
     process = None
     safari_pid = None
@@ -96,11 +97,13 @@ def main():
     def all_pastes():
         return [api("/api/paste/" + row["id"]) for row in api()]
 
-    def start(restart=False):
+    def start(restart=False, clear_selection=False):
         nonlocal process
         launch_env = dict(env)
         if restart:
             launch_env["LOCALPASTE_NAV_PROBE_SCENARIO"] += "__restart"
+        if clear_selection:
+            launch_env["LOCALPASTE_NAV_PROBE_CLEAR_SELECTION"] = "1"
         with stdout_path.open("ab") as stdout:
             process = subprocess.Popen([str(args.exe)], env=launch_env, stdout=stdout, stderr=stdout)
         wait_for(ready, "isolated GUI API")
@@ -136,6 +139,17 @@ def main():
 
     def latest():
         return frames()[-1]
+
+    def capture_result(result):
+        if not args.capture:
+            return
+        capture = args.log.with_suffix(".capture.json")
+        resume = args.log.with_suffix(".continue")
+        resume.unlink(missing_ok=True)
+        capture.write_text(json.dumps({"scenario": args.scenario, "pid": process.pid, **result}, indent=2))
+        wait_for(resume.exists, "computer-use screenshot capture", timeout=180)
+        capture.unlink()
+        resume.unlink()
 
     try:
         start()
@@ -196,14 +210,18 @@ def main():
         before = latest()
         precondition = None
         if mode == "no_open":
-            # The public UI automatically selects the first available row.
-            # Never substitute an in-memory Rust test for this native precondition.
+            # Startup normally opens the top row. The gated probe setup clears
+            # that selection once, without changing native paste handling.
             stop()
-            start()
-            time.sleep(0.5)
+            start(clear_selection=True)
+            wait_for(lambda: latest()["app"]["selected_id"] is None
+                     and any(row.get("value") == "Select a paste from the sidebar."
+                             for row in snapshot()), "native no-open editor")
             before = latest()
             if before["app"]["selected_id"] is not None:
                 precondition = "Native startup automatically opens the top sidebar paste; no deselect action is exposed."
+            capture_result({"stage": "before_paste", "before_selected": before["app"]["selected_id"],
+                            "db_path": env["DB_PATH"], "endpoint": endpoint, "native_ui": snapshot()})
         if precondition is None:
             for chord in scenario["driver"]["macos"]["keys"]:
                 key(chord["key_code"], *chord["modifiers"])
@@ -228,14 +246,7 @@ def main():
             "precondition_failure": precondition, "db_path": env["DB_PATH"], "endpoint": endpoint,
             "key_delay_ms": args.key_delay_ms, "api_rows": rows, "native_ui": ui,
         }
-        if args.capture:
-            capture = args.log.with_suffix(".capture.json")
-            resume = args.log.with_suffix(".continue")
-            resume.unlink(missing_ok=True)
-            capture.write_text(json.dumps({"scenario": args.scenario, "pid": process.pid, **result}, indent=2))
-            wait_for(resume.exists, "computer-use screenshot capture", timeout=180)
-            capture.unlink()
-            resume.unlink()
+        capture_result(result)
         if safari_pid is not None:
             key(53, pid=safari_pid)
             key(13, "command", pid=safari_pid)  # Close only the window created above.

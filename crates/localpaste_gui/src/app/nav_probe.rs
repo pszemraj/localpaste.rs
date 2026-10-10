@@ -24,6 +24,7 @@ pub(super) struct NavProbe {
     current_raw_events: Vec<ProbeEvent>,
     current_candidate_commands_if_editor_focused: Vec<String>,
     focus_editor_until_acquired: bool,
+    clear_selection_once: bool,
 }
 
 impl NavProbe {
@@ -65,6 +66,7 @@ impl NavProbe {
             current_raw_events: Vec::new(),
             current_candidate_commands_if_editor_focused: Vec::new(),
             focus_editor_until_acquired: env_truthy("LOCALPASTE_NAV_PROBE_FOCUS_EDITOR"),
+            clear_selection_once: env_truthy("LOCALPASTE_NAV_PROBE_CLEAR_SELECTION"),
         })
     }
 
@@ -204,6 +206,23 @@ impl LocalPasteApp {
     /// Captures raw input and clears per-frame command state before UI code can consume keyboard events.
     pub(super) fn nav_probe_begin_frame(&mut self, ctx: &egui::Context) {
         self.nav_probe_applied_commands.clear();
+        // Wait for the persisted startup selection to finish loading, then expose
+        // the no-open state once. Subsequent selection and paste use normal paths.
+        let clear_selection = self.nav_probe.as_ref().is_some_and(|probe| {
+            probe.clear_selection_once
+                && !self.pastes.is_empty()
+                && self.selected_paste.is_some()
+                && self.save_status == super::SaveStatus::Saved
+        });
+        if clear_selection {
+            if let Some(probe) = self.nav_probe.as_mut() {
+                probe.clear_selection_once = false;
+                probe.focus_editor_until_acquired = false;
+            }
+            self.clear_selection();
+            self.focus_editor_next = false;
+            ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
+        }
         if let Some(probe) = self.nav_probe.as_mut() {
             probe.capture_begin_frame(ctx);
         }

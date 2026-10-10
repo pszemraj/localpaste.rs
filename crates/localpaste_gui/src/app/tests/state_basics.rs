@@ -1,6 +1,53 @@
 //! State/event flow tests for basic app selection, status, and toast behavior.
 
 use super::*;
+use localpaste_core::env::{env_lock, EnvGuard};
+
+#[test]
+fn nav_probe_clear_selection_waits_for_loaded_rows_and_runs_once() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _setup = EnvGuard::set("LOCALPASTE_NAV_PROBE_CLEAR_SELECTION", "1");
+    let _disabled = EnvGuard::set("LOCALPASTE_NAV_PROBE_LOG", "");
+    assert!(nav_probe::NavProbe::from_env().is_none());
+
+    let log_dir = TempDir::new().expect("probe temp dir");
+    let log_path = log_dir.path().join("probe.ndjson");
+    let _enabled = EnvGuard::set("LOCALPASTE_NAV_PROBE_LOG", log_path.to_str().unwrap());
+    let mut harness = make_app();
+    harness.app.nav_probe = nav_probe::NavProbe::from_env();
+    assert!(harness.app.nav_probe.is_some());
+    let ctx = egui::Context::default();
+    let rows = std::mem::take(&mut harness.app.pastes);
+    harness.app.nav_probe_begin_frame(&ctx);
+    assert!(harness.app.selected_paste.is_some());
+    harness.app.pastes = rows;
+    let loaded = harness.app.selected_paste.take();
+    harness.app.nav_probe_begin_frame(&ctx);
+    assert!(harness.app.selected_id.is_some());
+    harness.app.selected_paste = loaded.clone();
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.nav_probe_begin_frame(&ctx);
+    assert!(harness.app.selected_paste.is_some());
+    harness.app.save_status = SaveStatus::Saved;
+    harness
+        .app
+        .locks
+        .acquire("alpha", &harness.app.lock_owner_id)
+        .unwrap();
+
+    harness.app.nav_probe_begin_frame(&ctx);
+
+    assert!(harness.app.selected_id.is_none());
+    assert!(harness.app.selected_paste.is_none());
+    assert_eq!(harness.app.active_snapshot(), "");
+    assert_eq!(harness.app.pastes[0].id, "alpha");
+    assert!(!harness.app.locks.is_locked("alpha").unwrap());
+    harness.app.selected_id = Some("alpha".into());
+    harness.app.selected_paste = loaded;
+    harness.app.nav_probe_begin_frame(&ctx);
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(harness.app.selected_paste.is_some());
+}
 
 fn assert_delete_send_failure_keeps_lock_and_status(
     delete_action: impl FnOnce(&mut crate::app::LocalPasteApp),
