@@ -67,6 +67,10 @@ impl LocalPasteApp {
     }
 
     /// Samples frame times and periodically logs percentile snapshots when perf logging is on.
+    ///
+    /// # Panics
+    /// Does not panic: the percentile math is floating point and only divides
+    /// by a non-empty sample count or a clamped average.
     pub(super) fn track_frame_metrics(&mut self) {
         let now = Instant::now();
         if let Some(last) = self.last_frame_at {
