@@ -10,7 +10,9 @@ pub(crate) mod commands;
 /// Runtime-output recognition shared by detection and semantic kinds.
 pub(crate) mod logs;
 mod makefile;
-pub(crate) use makefile::{makefile_body_language, makefile_note_body};
+pub(crate) use makefile::{
+    makefile_body_language, makefile_note_body, makefile_rules_read_as_prose,
+};
 
 const SAMPLE_MAX_LINES: usize = 256;
 const MAX_TERMS: usize = 4;
@@ -157,6 +159,7 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
     // Detection locks inferred labels too. Positive note structure corrects the
     // retrieval kind without rewriting a stored highlighting/export choice.
     if (matches!(lang.as_str(), "shell" | "makefile") && makefile_note_body(sample))
+        || (lang == "makefile" && makefile_rules_read_as_prose(sample))
         || (lang == "javascript" && javascript_keyword_prose(sample))
     {
         return PasteKind::Document;

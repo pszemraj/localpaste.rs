@@ -181,6 +181,9 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
     if label == "makefile" && crate::semantic::makefile_note_body(content) {
         return Some("markdown".to_string());
     }
+    if label == "makefile" && crate::semantic::makefile_rules_read_as_prose(content) {
+        return None;
+    }
     if label == "markdown" {
         if let Some(technical) = crate::semantic::markdown_technical_language(content) {
             return (technical != "text").then(|| technical.to_string());

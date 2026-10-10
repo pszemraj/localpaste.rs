@@ -476,3 +476,35 @@ fn capitalized_labels_under_markdown_headings_stay_documents() {
         }
     }
 }
+
+#[test]
+fn chat_lines_shaped_like_make_rules_are_not_makefiles() {
+    for source in [
+        "ana: the deploy failed again\nbob: which step?\nana: the docker build, out of disk",
+        "Pros: it is faster and cheaper\nCons: the setup takes a while",
+    ] {
+        for body in [source.to_owned(), source.replace('\n', "\r\n")] {
+            assert_eq!(refine_magika_label("makefile", &body), None, "{body}");
+            assert_ne!(
+                detect_language(&body).as_deref(),
+                Some("makefile"),
+                "{body}"
+            );
+            assert_eq!(derive(&body, Some("makefile")).kind, PasteKind::Document);
+            let paste = Paste::new(body.clone(), "standup".into());
+            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document);
+        }
+    }
+    // Prerequisites are names, and a `##` help comment ends the scan.
+    for source in [
+        ".PHONY: all clean test\nall: build test\nbuild: src/main.c src/util.c",
+        "help: ## Show this help\n\t@grep -E '^[a-z]+:' Makefile\nbuild: ## Build the binary\n\tcargo build --release",
+    ] {
+        assert_eq!(
+            refine_magika_label("makefile", source).as_deref(),
+            Some("makefile"),
+            "{source}"
+        );
+        assert_eq!(derive(source, Some("makefile")).kind, PasteKind::Config);
+    }
+}

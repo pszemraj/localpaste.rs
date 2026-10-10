@@ -103,6 +103,32 @@ pub(crate) fn makefile_body_language(content: &str) -> Option<&'static str> {
     }
 }
 
+/// Recognize `name: text` lines whose text reads as a sentence, with no recipe.
+///
+/// Make prerequisites are target and file names, so a function word,
+/// contraction, or sentence punctuation after every colon marks a chat
+/// transcript or labeled notes rather than rules.
+///
+/// # Returns
+/// Whether every non-comment line is such a line and at least one exists.
+pub(crate) fn makefile_rules_read_as_prose(content: &str) -> bool {
+    let mut rules = 0usize;
+    for line in sample_prefix(content).lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((_, text)) = trimmed.split_once(':') else {
+            return false;
+        };
+        if line.starts_with('\t') || !commands::has_prose_grammar(text) {
+            return false;
+        }
+        rules += 1;
+    }
+    rules > 0
+}
+
 /// Require a complete note body before replacing an inferred Makefile label.
 ///
 /// Unknown Make syntax alone is not document evidence. A target-shaped note
