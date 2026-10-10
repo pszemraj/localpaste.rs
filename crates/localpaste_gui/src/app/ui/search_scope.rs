@@ -8,10 +8,16 @@ use super::super::*;
 /// - `ui`: Parent surface.
 /// - `id`: Stable identifier distinguishing sidebar from picker.
 /// - `scope`: Current field scope.
+/// - `width`: Outer combo width.
 ///
 /// # Returns
 /// Selected field scope for this surface.
-pub(super) fn scope_selector(ui: &mut egui::Ui, id: &str, scope: SearchScope) -> SearchScope {
+pub(super) fn scope_selector(
+    ui: &mut egui::Ui,
+    id: &str,
+    scope: SearchScope,
+    width: f32,
+) -> SearchScope {
     let mut selected = scope;
     let label = |scope| match scope {
         SearchScope::All => "All fields",
@@ -21,6 +27,7 @@ pub(super) fn scope_selector(ui: &mut egui::Ui, id: &str, scope: SearchScope) ->
     };
     egui::ComboBox::from_id_salt(id)
         .selected_text(label(scope))
+        .width(width)
         .show_ui(ui, |ui| {
             for scope in [
                 SearchScope::All,
@@ -32,6 +39,8 @@ pub(super) fn scope_selector(ui: &mut egui::Ui, id: &str, scope: SearchScope) ->
             }
         })
         .response
-        .on_hover_text("Metadata includes title, tags, language, and derived search terms.");
+        .on_hover_text(
+            "Fields to search. Metadata includes title, tags, language, and derived search terms.",
+        );
     selected
 }

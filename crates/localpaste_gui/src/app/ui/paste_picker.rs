@@ -87,10 +87,12 @@ impl LocalPasteApp {
                 if response.changed() {
                     self.set_paste_picker_query(query);
                 }
+                let combo_width = ui.spacing().combo_width;
                 let scope = super::search_scope::scope_selector(
                     ui,
                     "picker_scope",
                     self.paste_picker_scope,
+                    combo_width,
                 );
                 self.set_paste_picker_scope(scope);
                 if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {

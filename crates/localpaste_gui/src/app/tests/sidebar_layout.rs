@@ -1,28 +1,46 @@
-//! Rendered sidebar layout: smart-filter chips and list reveal.
+//! Rendered sidebar layout: filter controls, smart-filter chips, and list reveal.
 
 use super::*;
 
-const FILTER_LABELS: [&str; 10] = [
-    "All",
-    "Today",
-    "This Week",
-    "Recent (30d)",
-    "Unfiled",
-    "Documents",
-    "Code",
-    "Config",
-    "Logs",
-    "Links",
+/// Smart-filter chip labels, grouped by the row each renders on.
+const FILTER_ROWS: [&[&str]; 2] = [
+    &["All", "Today", "This Week", "Recent (30d)"],
+    &["Unfiled", "Documents", "Code", "Config", "Logs", "Links"],
 ];
 
-fn sidebar_input() -> egui::RawInput {
-    egui::RawInput {
+/// Right edge of sidebar content at the default 300 pt panel width (8 pt side margins).
+const SIDEBAR_CONTENT_RIGHT: f32 = 292.0;
+
+/// Raw input for one frame of a `size` window at `pixels_per_point` display scale.
+fn window_input(size: [f32; 2], pixels_per_point: f32) -> egui::RawInput {
+    let mut input = egui::RawInput {
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,
-            egui::vec2(1100.0, 800.0),
+            egui::vec2(size[0], size[1]),
         )),
         ..Default::default()
-    }
+    };
+    input
+        .viewports
+        .entry(egui::ViewportId::ROOT)
+        .or_default()
+        .native_pixels_per_point = Some(pixels_per_point);
+    input
+}
+
+/// Renders two frames in a fresh context so layout settles, returning the second.
+fn settled_frame(
+    app: &mut LocalPasteApp,
+    size: [f32; 2],
+    pixels_per_point: f32,
+) -> egui::FullOutput {
+    let ctx = egui::Context::default();
+    let _ = run_full_update_with_input(app, &ctx, window_input(size, pixels_per_point));
+    run_full_update_with_input(app, &ctx, window_input(size, pixels_per_point))
+}
+
+fn sidebar_input() -> egui::RawInput {
+    window_input([1100.0, 800.0], 1.0)
 }
 
 /// Returns the rendered rect of each exact text label inside the sidebar column.
@@ -68,29 +86,87 @@ fn sidebar_visible_label_count(output: &egui::FullOutput, label: &str) -> usize 
 #[test]
 fn every_smart_filter_is_a_visible_chip_without_an_overflow_menu() {
     let mut harness = make_app();
-    let ctx = egui::Context::default();
     harness.app.active_collection = crate::backend::SidebarCollection::Links;
-    let _ = run_full_update_with_input(&mut harness.app, &ctx, sidebar_input());
-    let output = run_full_update_with_input(&mut harness.app, &ctx, sidebar_input());
-
-    let mut row_tops = Vec::new();
-    for label in FILTER_LABELS {
-        // "Today" is also a list header; the chip is the first, higher one.
-        let rect = *sidebar_text_rects(&output, label)
-            .first()
-            .unwrap_or_else(|| panic!("missing filter chip {label}"));
-        assert!(rect.right() <= 300.0, "{label} overflows the sidebar");
-        if !row_tops
-            .iter()
-            .any(|top: &f32| (top - rect.top()).abs() < 1.0)
-        {
-            row_tops.push(rect.top());
+    // Default window at standard and Retina scale: time chips on one row, kinds on the next.
+    for pixels_per_point in [1.0, 2.0] {
+        let output = settled_frame(&mut harness.app, DEFAULT_WINDOW_SIZE, pixels_per_point);
+        let mut row_tops = Vec::new();
+        for row in FILTER_ROWS {
+            let tops: Vec<f32> = row
+                .iter()
+                .map(|label| {
+                    // "Today" is also a list header; the chip is the first, higher one.
+                    let rect = *sidebar_text_rects(&output, label)
+                        .first()
+                        .unwrap_or_else(|| panic!("missing filter chip {label}"));
+                    assert!(
+                        rect.right() <= SIDEBAR_CONTENT_RIGHT,
+                        "{label} overflows the sidebar"
+                    );
+                    rect.top()
+                })
+                .collect();
+            assert!(
+                tops.iter().all(|top| (top - tops[0]).abs() < 1.0),
+                "{row:?} wrapped at {pixels_per_point}x: {tops:?}"
+            );
+            row_tops.push(tops[0]);
         }
+        assert!(row_tops[0] < row_tops[1], "filter rows: {row_tops:?}");
+        assert!(sidebar_text_rects(&output, "...").is_empty());
+        assert!(sidebar_text_rects(&output, "Active filter is in ...").is_empty());
     }
-    // The former layout used two four-chip rows plus a row for the `...` menu.
-    assert!(row_tops.len() <= 3, "filter rows: {row_tops:?}");
-    assert!(sidebar_text_rects(&output, "...").is_empty());
-    assert!(sidebar_text_rects(&output, "Active filter is in ...").is_empty());
+}
+
+#[test]
+fn search_scope_and_language_filter_share_one_row() {
+    let mut harness = make_app();
+    // No paste has a language yet, so the scope combo stands alone.
+    let output = settled_frame(&mut harness.app, DEFAULT_WINDOW_SIZE, 1.0);
+    assert_eq!(sidebar_text_rects(&output, "All fields").len(), 1);
+    assert!(sidebar_text_rects(&output, "All languages").is_empty());
+
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("rusty", "Rusty", Some("rust"), 1));
+    let output = settled_frame(&mut harness.app, DEFAULT_WINDOW_SIZE, 1.0);
+    let scope = sidebar_text_rects(&output, "All fields")[0];
+    let language = sidebar_text_rects(&output, "All languages")[0];
+    assert!(
+        (scope.top() - language.top()).abs() < 1.0,
+        "{scope:?} {language:?}"
+    );
+    assert!(scope.right() < language.left());
+    assert!(language.right() <= SIDEBAR_CONTENT_RIGHT);
+    // The combo text names the filter, so no separate label row precedes it.
+    assert!(sidebar_text_rects(&output, "Language filter").is_empty());
+
+    // A name longer than the half-width combo truncates instead of overflowing.
+    let long_name = "an-improbably-long-language-name";
+    harness.app.active_language_filter = Some(long_name.to_string());
+    let output = settled_frame(&mut harness.app, DEFAULT_WINDOW_SIZE, 1.0);
+    let language = sidebar_text_rects(&output, long_name)[0];
+    assert!((scope.top() - language.top()).abs() < 1.0);
+    assert!(language.right() <= SIDEBAR_CONTENT_RIGHT, "{language:?}");
+}
+
+#[test]
+fn the_minimum_window_shows_six_sidebar_rows() {
+    let mut harness = make_app();
+    let mut rows = long_sidebar_list(60);
+    // Detected languages bring up the language filter, as in a real store.
+    for row in &mut rows {
+        row.language = Some("rust".to_string());
+    }
+    harness.app.all_pastes = rows.clone();
+    harness.app.pastes = rows;
+    let output = settled_frame(&mut harness.app, MIN_WINDOW_SIZE, 1.0);
+    let visible = (0..60)
+        .filter(|index| sidebar_label_is_visible(&output, &format!("Sidebar row {index}")))
+        .count();
+    // Stacking each filter control on its own row left room for three.
+    assert!(visible >= 6, "visible rows: {visible}");
 }
 
 /// Sidebar list of `count` pastes named `Sidebar row N`, newest first.

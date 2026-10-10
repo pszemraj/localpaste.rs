@@ -192,9 +192,19 @@ impl LocalPasteApp {
                 if search_resp.changed() {
                     self.set_search_query(search_buf);
                 }
-                let scope =
-                    super::search_scope::scope_selector(ui, "sidebar_scope", self.search_scope);
-                self.set_search_scope(scope);
+                ui.horizontal(|ui| {
+                    // Scope and language share one row, each half the sidebar width.
+                    let combo_width =
+                        ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(0.0);
+                    let scope = super::search_scope::scope_selector(
+                        ui,
+                        "sidebar_scope",
+                        self.search_scope,
+                        combo_width,
+                    );
+                    self.set_search_scope(scope);
+                    self.render_language_filter(ui, combo_width);
+                });
                 if let Some(error) = &self.search_error {
                     ui.label(RichText::new(error).small().color(COLOR_TEXT_MUTED));
                     if ui.button("Retry search").clicked() {
@@ -232,7 +242,6 @@ impl LocalPasteApp {
 
                 ui.add_space(10.0);
                 self.render_collection_filters(ui);
-                self.render_language_filters(ui);
 
                 ui.separator();
                 ui.add_space(4.0);
@@ -388,53 +397,59 @@ impl LocalPasteApp {
                 .small()
                 .color(COLOR_TEXT_MUTED),
         );
-        let options = [
-            (SidebarCollection::All, "All"),
-            (SidebarCollection::Today, "Today"),
-            (SidebarCollection::Week, "This Week"),
-            (SidebarCollection::Recent, "Recent (30d)"),
-            (SidebarCollection::Unfiled, "Unfiled"),
-            (SidebarCollection::Documents, "Documents"),
-            (SidebarCollection::Code, "Code"),
-            (SidebarCollection::Config, "Config"),
-            (SidebarCollection::Logs, "Logs"),
-            (SidebarCollection::Links, "Links"),
+        // Time windows on the first row, content kinds on the second.
+        let rows: [&[(SidebarCollection, &str)]; 2] = [
+            &[
+                (SidebarCollection::All, "All"),
+                (SidebarCollection::Today, "Today"),
+                (SidebarCollection::Week, "This Week"),
+                (SidebarCollection::Recent, "Recent (30d)"),
+            ],
+            &[
+                (SidebarCollection::Unfiled, "Unfiled"),
+                (SidebarCollection::Documents, "Documents"),
+                (SidebarCollection::Code, "Code"),
+                (SidebarCollection::Config, "Config"),
+                (SidebarCollection::Logs, "Logs"),
+                (SidebarCollection::Links, "Links"),
+            ],
         ];
         let mut pending_collection: Option<SidebarCollection> = None;
         ui.scope(|ui| {
-            // Compact chips so every filter fits in a few wrapped rows.
+            // Compact chips so each group fits one row at the default sidebar width.
             let spacing = ui.spacing_mut();
-            spacing.button_padding = egui::vec2(6.0, 3.0);
-            spacing.item_spacing = egui::vec2(6.0, 6.0);
+            spacing.button_padding = egui::vec2(4.0, 3.0);
+            spacing.item_spacing = egui::vec2(4.0, 6.0);
             spacing.interact_size.y = 24.0;
-            ui.horizontal_wrapped(|ui| {
-                for (collection, label) in options {
-                    let selected = self.active_collection == collection;
-                    if ui
-                        .selectable_label(selected, RichText::new(label).small())
-                        .clicked()
-                    {
-                        pending_collection = Some(collection);
+            for row in rows {
+                ui.horizontal_wrapped(|ui| {
+                    for (collection, label) in row {
+                        let selected = self.active_collection == *collection;
+                        if ui
+                            .selectable_label(selected, RichText::new(*label).small())
+                            .clicked()
+                        {
+                            pending_collection = Some(collection.clone());
+                        }
                     }
-                }
-            });
+                });
+            }
         });
         if let Some(collection) = pending_collection {
             self.set_active_collection(collection);
         }
     }
 
-    fn render_language_filters(&mut self, ui: &mut egui::Ui) {
+    /// Renders the language filter combo beside the search scope, when any paste has a language.
+    ///
+    /// # Arguments
+    /// - `ui`: Horizontal row shared with the search scope combo.
+    /// - `width`: Outer combo width; long language names truncate to the row's remaining width.
+    fn render_language_filter(&mut self, ui: &mut egui::Ui, width: f32) {
         let language_options = self.language_filter_options();
         if language_options.is_empty() {
             return;
         }
-        ui.add_space(8.0);
-        ui.label(
-            RichText::new("Language filter")
-                .small()
-                .color(COLOR_TEXT_MUTED),
-        );
 
         let mut selected_language = self.active_language_filter.clone();
         let selected_text = selected_language
@@ -444,13 +459,16 @@ impl LocalPasteApp {
             .to_string();
         egui::ComboBox::from_id_salt("sidebar_language_filter")
             .selected_text(selected_text)
-            .width(180.0)
+            .width(width)
+            .truncate()
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut selected_language, None, "All languages");
                 for lang in &language_options {
                     ui.selectable_value(&mut selected_language, Some(lang.clone()), lang.as_str());
                 }
-            });
+            })
+            .response
+            .on_hover_text("Filter by language");
         if selected_language != self.active_language_filter {
             self.set_active_language_filter(selected_language);
         }
