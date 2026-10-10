@@ -35,10 +35,10 @@ Shortcut contract:
 - `Ctrl/Cmd+A/C/X/Z/Y`: standard virtual-editor select-all/copy/cut/undo/redo when editor owns focus.
 - `Ctrl/Cmd+Shift+Z`: redo editor edit when editor owns focus.
 - Windows `Shift+Delete`, including `Ctrl+Shift+Delete`, cuts the editor selection; with no selection it leaves the buffer unchanged. `Ctrl+Delete` deletes the next word. The pinned [egui-winit 0.33.3 clipboard mapping](https://github.com/emilk/egui/blob/0.33.3/crates/egui-winit/src/lib.rs#L1008-L1012) consumes the shifted Delete press as a Cut event; Linux retains forward word deletion for `Ctrl+Shift+Delete`.
-- `Ctrl/Cmd+V`: insert when editor is focused; create new paste from clipboard when editor is not focused.
-- `Ctrl/Cmd+Shift+V`: explicit "force paste as new" fallback.
+- `Ctrl/Cmd+V`: paste into the focused editor or text field; with no text focus, create a new paste from the clipboard. Switching away from the app releases editor focus, so `Ctrl/Cmd+V` after returning creates a new paste.
+- `Ctrl/Cmd+Shift+V`: paste into the open paste at its retained caret or selection, from any focus, and focus the editor. With no paste loaded, the text is appended to the top sidebar paste after it loads; with no pastes, it becomes a new paste. Discovery overlays keep the payload for their own query input. The command palette's Paste as New action remains the explicit create path.
 
-Native paste routing recognizes egui-winit's Paste-only events as well as key-plus-payload input. Under CPU load, the pinned backend can deliver the payload after discarding all shortcut modifiers; `Ctrl/Cmd+Shift+V` then inserts into the current editor. The [inspection and native paste migration (#35)](https://github.com/pszemraj/localpaste.rs/issues/35) must preserve the press chord to resolve that case.
+Native paste routing recognizes egui-winit's Paste-only events as well as key-plus-payload input. Under CPU load, the pinned backend can deliver the payload after discarding all shortcut modifiers; `Ctrl/Cmd+Shift+V` then behaves as `Ctrl/Cmd+V`, creating a new paste when no text input owns focus. Automated key injection that releases the chord within one frame reproduces this. The [inspection and native paste migration (#35)](https://github.com/pszemraj/localpaste.rs/issues/35) must preserve the press chord to resolve that case.
 
 Navigation/selection contract:
 
@@ -115,7 +115,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - The app selects its dark theme before installing custom fonts and spacing, including on systems using a light theme. Editor geometry uses the resolved font even if a later style change removes the named Editor text style. Startup, first creation, and populated restart have regression coverage with light-system input and without test-only style registration.
 - The command palette searches actions only, including Export, Duplicate, Copy, Copy Link, Find, Properties, History, and Diff. The paste picker searches paste rows and retains Open, Copy, Copy Fenced, and Delete actions.
 - Command palette, paste picker, and shortcut help are mutually exclusive: opening one closes the other two so its query owns keyboard input. Escape or the toggle shortcut restores the input that opened discovery, including across switches between these surfaces. Input batched around these transitions stays in order: earlier text belongs to the previous input, and later text belongs to the new destination. Accepting a palette command or picker result with Enter processes the preceding query before routing subsequent text. Commands that open another workflow retain their intended focus destination.
-- Discovery overlays block background New, Paste as New, Save, Delete, sidebar-search focus, and Properties shortcuts, including delayed clipboard replies; actions chosen within the palette remain available. [Diff and History](#diff-and-history-workflows) use separate workflow fences.
+- Discovery overlays block background New, Paste into Editor, Save, Delete, sidebar-search focus, and Properties shortcuts, including delayed Paste as New clipboard replies; actions chosen within the palette remain available. [Diff and History](#diff-and-history-workflows) use separate workflow fences.
 - Command-palette keyboard navigation and query changes reveal the selected command within the scroll area.
 - Sidebar and picker each retain their own session query and field scope: All fields (default), Title, Metadata, or Body. The [search read paths](../architecture.md#5-read-and-write-paths) determine which fields are loaded and ranked. HTTP and CLI search are unchanged.
 - Debounced sidebar and picker searches schedule their own repaint deadline; typing a query needs no further input or focus change to dispatch it. Pending or failed requests do not create a repaint loop.
@@ -162,7 +162,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
   - reset restores the selected snapshot and archives the outgoing head as a recoverable snapshot.
   - dirty save-and-reset saves local edits before reset so the just-saved outgoing head is recoverable.
 - History, Diff, and reset-confirm windows fence background mutations:
-  - create/delete/paste-as-new and other destructive workflow shortcuts are blocked while a version window is open; New and Delete report why,
+  - create/delete/paste-into-editor and other destructive workflow shortcuts are blocked while a version window is open; New and Delete report why,
   - autosave and explicit save still persist already-dirty content/metadata while a version window is open,
   - selection changes and automatic reselection are blocked while a version window is open; a refused sidebar selection preserves the picker-opened document and its pending input,
   - the selected paste stays pinned during a queued hard reset,
@@ -228,7 +228,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - `Ctrl/Cmd+K` lists commands; a paste-body query does not produce paste rows.
    - `Ctrl/Cmd+Shift+K` opens the paste picker. With an empty query, open a different paste and confirm its body starts at the first line. With a Body query near the end of a long paste, confirm the result shows a matching excerpt; open it and confirm Find selects and reveals that passage.
    - Copy and Copy Fenced work from picker results without changing the active editor or its unsaved draft; deleting a disposable result removes its row.
-   - With a dirty draft, open each of the picker, palette, and help, then press `Ctrl/Cmd+Shift+V`. Clipboard text belongs to that surface; no new paste appears behind it. Choosing the palette's explicit Paste as New action still creates a paste.
+   - With a dirty draft, open each of the picker, palette, and help, then press `Ctrl/Cmd+Shift+V`. Clipboard text belongs to that surface; the editor behind it is unchanged and no new paste appears. Choosing the palette's explicit Paste as New action still creates a paste.
    - Open history and diff modals from palette queries (`history`, `diff`) when a paste is selected.
    - `F1` help shows native platform key names and finds shortcuts by description and by key combination, including `Cmd+Shift+K` on macOS or `Ctrl+Shift+K` on Windows/Linux. Try an unmatched query and confirm the no-match message appears without resizing the window; Clear restores all shortcuts. Open help from the editor, then close with `Esc`, `F1`, or Close and confirm typing resumes at the same selection. Repeat from sidebar search and confirm typing resumes in its query.
    - Open History, press `F1`, then `Esc`: help closes and History returns at the same snapshot. Repeat from Diff and confirm its comparison is retained.
@@ -248,8 +248,9 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - `Ctrl/Cmd+C`, `Ctrl/Cmd+X`, `Ctrl/Cmd+V`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Y` behave correctly in virtual editor mode.
    - Paste a 20-30 line block near the bottom of the visible editor; expected: the inserted tail/caret scrolls into view.
    - Set the language to Markdown, select a phrase, and paste `https://example.com/docs`: expected `[phrase](https://example.com/docs)`, with the caret after the link. Undo restores the phrase and its selection; Redo restores the link. Save and restart to confirm persistence. Repeat with a non-URL or a plain-text paste and confirm ordinary replacement; a URL pasted without selection remains literal.
-   - `Ctrl/Cmd+V` outside editor focus creates a new paste from clipboard.
-   - Check `Ctrl/Cmd+Shift+V` against the [native paste behavior](#keyboard-and-navigation-contract), then confirm the command palette's Paste as New action creates a paste.
+   - Type in the middle of a paste, switch to another app with `Alt+Tab`/`Cmd+Tab`, copy text there, switch back, and press `Ctrl/Cmd+V`: expected a new paste containing that text, with the previous paste unchanged.
+   - Repeat, but press `Ctrl/Cmd+Shift+V` after switching back: expected the text inserted at the previous caret, with the editor focused. Repeat from sidebar search and from the title field; the text lands in the editor, not the focused field.
+   - With no paste open, press `Ctrl/Cmd+Shift+V`: the top sidebar paste opens with the text appended on a new last line. Confirm the command palette's Paste as New action still creates a paste.
    - Start Paste as New, open help with `F1`, close it with `Escape`, then paste fresh text with `Ctrl/Cmd+V`. The fresh paste reaches the editor; an older canceled clipboard reply must not overwrite or prepend it.
    - Modified arrow movement/selection (`Ctrl`/`Alt`/`Shift`/`Cmd` + arrows) affects editor selection/caret movement and does not switch sidebar filters.
 9. Virtual editor selection:

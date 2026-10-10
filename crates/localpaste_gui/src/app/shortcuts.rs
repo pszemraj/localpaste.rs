@@ -15,7 +15,7 @@ pub(crate) enum RuntimeShortcutAction {
     TogglePastePicker,
     ToggleProperties,
     PlainPaste,
-    PasteAsNew,
+    PasteIntoEditor,
     ToggleShortcutHelp,
 }
 
@@ -143,15 +143,15 @@ pub(crate) const RUNTIME_SHORTCUTS: &[RuntimeShortcut] = &[
         chord: ShortcutChord::PlainCommand(egui::Key::V),
         help: ShortcutHelpEntry {
             keys: "Ctrl/Cmd+V",
-            description: "Paste in editor; otherwise create new paste",
+            description: "Paste into focused text; otherwise create new paste",
         },
     },
     RuntimeShortcut {
-        action: RuntimeShortcutAction::PasteAsNew,
+        action: RuntimeShortcutAction::PasteIntoEditor,
         chord: ShortcutChord::CommandShift(egui::Key::V),
         help: ShortcutHelpEntry {
             keys: "Ctrl/Cmd+Shift+V",
-            description: "Force paste as new paste",
+            description: "Paste into the open paste",
         },
     },
     RuntimeShortcut {
@@ -176,7 +176,7 @@ pub(crate) fn pressed_runtime_shortcuts(
     let has_paste_key = input.events.iter().any(|event| {
         matches!(
             runtime_shortcut_action(event),
-            Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteAsNew)
+            Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteIntoEditor)
         )
     });
     input.events.iter().filter_map(move |event| {
@@ -206,7 +206,7 @@ pub(crate) fn native_paste_shortcut_action(
         return None;
     }
     if is_command_shift_shortcut(modifiers) {
-        Some(RuntimeShortcutAction::PasteAsNew)
+        Some(RuntimeShortcutAction::PasteIntoEditor)
     } else if is_plain_command_shortcut(modifiers) {
         Some(RuntimeShortcutAction::PlainPaste)
     } else {
@@ -355,7 +355,7 @@ mod tests {
             (command_modifiers(), Some(RuntimeShortcutAction::PlainPaste)),
             (
                 command_shift_modifiers(),
-                Some(RuntimeShortcutAction::PasteAsNew),
+                Some(RuntimeShortcutAction::PasteIntoEditor),
             ),
             (egui::Modifiers::NONE, None),
             (
@@ -508,7 +508,7 @@ mod tests {
             (
                 egui::Key::V,
                 command_shift_modifiers(),
-                RuntimeShortcutAction::PasteAsNew,
+                RuntimeShortcutAction::PasteIntoEditor,
             ),
         ] {
             assert_eq!(pressed_actions(key, modifiers), vec![expected]);

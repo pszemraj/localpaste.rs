@@ -478,6 +478,7 @@ mod focus_and_paste_routing;
 mod highlight_behaviors;
 mod history_reset;
 mod keyboard_navigation_audit;
+mod paste_into_editor;
 mod persistence;
 mod picker_copy;
 mod picker_find;

@@ -40,26 +40,15 @@ fn native_paste_only_chords_route_without_a_v_key_event() {
                 ..Default::default()
             },
         );
-        let created: Vec<_> = harness
-            .cmd_rx
-            .try_iter()
-            .filter_map(|command| match command {
-                CoreCmd::CreatePaste { content } => Some(content),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            created,
-            if explicit {
-                vec!["clip".to_owned()]
-            } else {
-                vec![]
-            }
+        // Both chords insert once into the focused editor.
+        assert!(
+            !harness
+                .cmd_rx
+                .try_iter()
+                .any(|command| matches!(command, CoreCmd::CreatePaste { .. })),
+            "shift={explicit} key={include_key}"
         );
-        assert_eq!(
-            harness.app.active_snapshot(),
-            if explicit { "original" } else { "cliporiginal" }
-        );
+        assert_eq!(harness.app.active_snapshot(), "cliporiginal");
         assert!(!output.viewport_output.values().any(|viewport| viewport
             .commands
             .iter()
@@ -102,7 +91,7 @@ fn native_plain_paste_supersedes_a_canceled_clipboard_request() {
 }
 
 #[test]
-fn native_paste_as_new_respects_version_and_reset_fences() {
+fn native_shift_paste_respects_version_and_reset_fences() {
     for fence in ["history", "diff", "reset"] {
         let mut harness = make_app();
         harness.app.reset_virtual_editor("original");
@@ -133,7 +122,7 @@ fn native_paste_as_new_respects_version_and_reset_fences() {
 }
 
 #[test]
-fn native_paste_preserves_focused_metadata_and_explicit_create_ownership() {
+fn native_paste_preserves_focused_metadata_and_shift_paste_targets_editor() {
     for (input_id, explicit) in [
         (TITLE_INPUT_ID, false),
         (TITLE_INPUT_ID, true),
@@ -162,31 +151,23 @@ fn native_paste_preserves_focused_metadata_and_explicit_create_ownership() {
                 ..primary_command_modifiers()
             },
         );
-        let created: Vec<_> = harness
+        assert!(!harness
             .cmd_rx
             .try_iter()
-            .filter_map(|command| match command {
-                CoreCmd::CreatePaste { content } => Some(content),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(
-            created,
-            if explicit {
-                vec!["clip".to_owned()]
-            } else {
-                vec![]
-            }
-        );
+            .any(|command| matches!(command, CoreCmd::CreatePaste { .. })));
         if explicit {
+            // Shift+V targets the open paste rather than the focused field.
             assert_eq!(harness.app.edit_name, before.0, "{input_id}");
             assert_eq!(harness.app.edit_tags, before.1, "{input_id}");
-        } else if input_id == PROPERTIES_TAGS_INPUT_ID {
-            assert!(harness.app.edit_tags.contains("clip"));
+            assert_eq!(harness.app.active_snapshot(), "clipcontent", "{input_id}");
         } else {
-            assert!(harness.app.edit_name.contains("clip"));
+            if input_id == PROPERTIES_TAGS_INPUT_ID {
+                assert!(harness.app.edit_tags.contains("clip"));
+            } else {
+                assert!(harness.app.edit_name.contains("clip"));
+            }
+            assert_eq!(harness.app.active_snapshot(), "content");
         }
-        assert_eq!(harness.app.active_snapshot(), "content");
     }
 }
 

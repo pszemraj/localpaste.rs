@@ -80,16 +80,20 @@ impl LocalPasteApp {
                 || action.is_some_and(|action| {
                     !matches!(
                         action,
-                        RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::Save
+                        RuntimeShortcutAction::PlainPaste
+                            | RuntimeShortcutAction::PasteIntoEditor
+                            | RuntimeShortcutAction::Save
                     )
                 });
             if transfers_input {
                 self.pending_picker_open = None;
                 retaining = false;
             }
-            let editor_event = action == Some(RuntimeShortcutAction::PlainPaste)
-                || (action.is_none()
-                    && !commands_from_events(std::slice::from_ref(event), true).is_empty());
+            let editor_event = matches!(
+                action,
+                Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteIntoEditor)
+            ) || (action.is_none()
+                && !commands_from_events(std::slice::from_ref(event), true).is_empty());
             // Native activation remains current immediately; keep its ordered
             // tail too so delayed editor input finishes with the same ownership.
             if retaining && matches!(event, egui::Event::WindowFocused(_)) {

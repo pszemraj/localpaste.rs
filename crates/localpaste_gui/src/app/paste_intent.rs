@@ -1,4 +1,4 @@
-//! Paste-intent helpers for explicit "paste as new" routing.
+//! Paste-intent helpers for new-paste and open-paste clipboard routing.
 
 use super::*;
 
@@ -13,7 +13,7 @@ pub(super) enum KeyboardFocusState {
 /// Clipboard acceptance policy for creating new paste entries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClipboardCreatePolicy {
-    // Explicit Ctrl/Cmd+Shift+V intent should preserve whitespace-only payloads.
+    // The explicit palette action should preserve whitespace-only payloads.
     ExplicitPasteAsNew,
     // Implicit global Ctrl/Cmd+V-to-new-paste keeps existing non-whitespace gate.
     ImplicitGlobalShortcut,
@@ -32,7 +32,7 @@ impl LocalPasteApp {
         if input.events.iter().any(|event| {
             matches!(
                 shortcuts::runtime_shortcut_action(event),
-                Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteAsNew)
+                Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteIntoEditor)
             )
         }) {
             return;
@@ -184,31 +184,92 @@ impl LocalPasteApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
     }
 
-    /// Arms explicit "paste as new" intent when command+shift+V is observed this frame.
+    /// Inserts clipboard text into the open paste regardless of keyboard focus.
+    ///
+    /// With no loaded paste, the text is appended to the loading selection or,
+    /// failing that, to the top sidebar paste once it loads. An empty list
+    /// leaves nothing to insert into, so the text becomes a new paste.
     ///
     /// # Arguments
-    /// - `ctx`: Egui context used to inspect current-frame input events.
-    ///
-    /// # Returns
-    /// `true` when the explicit shortcut was observed and intent was armed.
-    pub(super) fn maybe_arm_paste_as_new_shortcut_intent(&mut self, ctx: &egui::Context) -> bool {
-        let explicit_shortcut = ctx.input(|input| {
-            pressed_runtime_shortcuts(input)
-                .any(|action| action == RuntimeShortcutAction::PasteAsNew)
-        });
-        if explicit_shortcut {
-            if self.keyboard_overlay_open() && !self.version_overlay_open() {
-                self.cancel_paste_as_new_intent();
-                return false;
-            }
-            if self.mutation_shortcut_block_reason().is_some() {
-                self.cancel_paste_as_new_intent();
-                self.set_mutation_shortcut_blocked_status();
-                return false;
-            }
-            self.arm_paste_as_new_intent();
+    /// - `ctx`: Context used to apply the editor edit and request focus.
+    /// - `text`: Clipboard payload observed with `Ctrl/Cmd+Shift+V`.
+    pub(super) fn paste_into_editor(&mut self, ctx: &egui::Context, text: String) {
+        if text.is_empty() {
+            return;
         }
-        explicit_shortcut
+        // Selection switches clear the loaded paste until its replacement arrives.
+        if self.selected_paste.is_some() {
+            self.pending_editor_paste = None;
+            self.apply_editor_paste(ctx, &[VirtualInputCommand::Paste(text)]);
+            return;
+        }
+        let target = self
+            .selected_id
+            .clone()
+            .or_else(|| self.pastes.first().map(|paste| paste.id.clone()));
+        let Some(id) = target else {
+            self.create_new_paste_with_content(text);
+            return;
+        };
+        if self.selected_id.as_deref() != Some(id.as_str()) && !self.select_paste(id.clone()) {
+            return;
+        }
+        self.pending_editor_paste = Some(PendingEditorPaste { id, text });
+    }
+
+    /// Appends a deferred `Ctrl/Cmd+Shift+V` payload once its target paste loads.
+    ///
+    /// The payload is dropped when selection moves to a different paste first.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context used to apply the editor edit and request focus.
+    pub(super) fn maybe_apply_pending_editor_paste(&mut self, ctx: &egui::Context) {
+        let Some(pending) = self.pending_editor_paste.as_ref() else {
+            return;
+        };
+        let target = Some(pending.id.as_str());
+        if self.selected_id.as_deref() != target {
+            if self.pending_selection_id.as_deref() != target {
+                self.pending_editor_paste = None;
+            }
+            return;
+        }
+        if self.selected_paste.as_ref().map(|paste| paste.id.as_str()) != target
+            || self.editor_shortcuts_blocked()
+        {
+            return;
+        }
+        let Some(pending) = self.pending_editor_paste.take() else {
+            return;
+        };
+        let mut text = pending.text;
+        let len = self.virtual_editor_buffer.len_chars();
+        if len > 0
+            && !matches!(
+                self.virtual_editor_buffer
+                    .slice_chars(len - 1..len)
+                    .as_str(),
+                "\n" | "\r"
+            )
+        {
+            // Appended text starts after the last line rather than extending it.
+            text.insert(0, '\n');
+        }
+        self.apply_editor_paste(
+            ctx,
+            &[
+                VirtualInputCommand::MoveDocEnd { select: false },
+                VirtualInputCommand::Paste(text),
+            ],
+        );
+    }
+
+    fn apply_editor_paste(&mut self, ctx: &egui::Context, commands: &[VirtualInputCommand]) {
+        if self.apply_virtual_commands(ctx, commands).changed {
+            self.mark_dirty();
+        }
+        self.focus_editor_next = true;
+        ctx.request_repaint();
     }
 
     /// Returns whether a virtual paste command should be skipped due to explicit paste-as-new intent.

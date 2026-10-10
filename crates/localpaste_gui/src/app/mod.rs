@@ -158,6 +158,7 @@ pub(crate) struct LocalPasteApp {
     paste_as_new_pending_frames: u8,
     paste_as_new_clipboard_requested_at: Option<Instant>,
     canceled_paste_request_at: Option<Instant>,
+    pending_editor_paste: Option<PendingEditorPaste>,
     db_path: String,
     locks: Arc<PasteLockManager>,
     lock_owner_id: LockOwnerId,
@@ -212,6 +213,13 @@ struct StagedHighlightInvalidation {
 enum PaletteCopyAction {
     Raw(String),
     Fenced(String),
+}
+
+/// `Ctrl/Cmd+Shift+V` text waiting for its target paste to load.
+#[derive(Debug, Clone)]
+struct PendingEditorPaste {
+    id: String,
+    text: String,
 }
 
 /// Picker search context retained until its accepted paste selection finishes loading.
@@ -508,6 +516,7 @@ impl eframe::App for LocalPasteApp {
         }
         self.poll_export_result();
         self.replay_pending_picker_input(ctx);
+        self.maybe_apply_pending_editor_paste(ctx);
 
         self.flush_clipboard_output(ctx);
         // Exclude older queued writes; native TextEdit and selectable labels copy
@@ -547,8 +556,8 @@ impl eframe::App for LocalPasteApp {
                 break;
             }
         }
-        // A dismissal returns ownership before the following native paste.
-        let mut request_paste_as_new = self.maybe_arm_paste_as_new_shortcut_intent(ctx);
+        let mut request_paste_as_new = false;
+        let mut paste_into_editor_pressed = false;
         // TextEdit treats Ctrl+K (including Shift) as delete-to-paragraph-end.
         // Consume the shifted chord first: egui's plain pattern accepts extra Shift.
         ctx.input_mut(|input| {
@@ -576,7 +585,7 @@ impl eframe::App for LocalPasteApp {
                 && matches!(
                     action,
                     RuntimeShortcutAction::NewPaste
-                        | RuntimeShortcutAction::PasteAsNew
+                        | RuntimeShortcutAction::PasteIntoEditor
                         | RuntimeShortcutAction::Save
                         | RuntimeShortcutAction::DeleteSelected
                         | RuntimeShortcutAction::ToggleProperties
@@ -651,11 +660,20 @@ impl eframe::App for LocalPasteApp {
                         plain_paste_shortcut_pressed = true;
                     }
                 }
-                RuntimeShortcutAction::PasteAsNew => {
-                    if mutation_shortcut_blocked.is_some() {
-                        self.set_mutation_shortcut_blocked_status();
-                    } else {
-                        request_paste_as_new = true;
+                RuntimeShortcutAction::PasteIntoEditor => {
+                    // A focused editor receives the native paste itself. Elsewhere
+                    // the payload is redirected into the open paste below. Read
+                    // ownership live: a same-frame dismissal may return focus.
+                    let editor_focused = self.focus_editor_next
+                        || self.virtual_editor_state.has_focus
+                        || ctx.memory(|memory| memory.has_focus(focus_id));
+                    if self.editor_shortcuts_blocked() {
+                        if mutation_shortcut_blocked.is_some() {
+                            self.set_mutation_shortcut_blocked_status();
+                        }
+                    } else if !editor_focused {
+                        self.cancel_paste_as_new_intent();
+                        paste_into_editor_pressed = true;
                     }
                 }
                 RuntimeShortcutAction::ToggleShortcutHelp => {
@@ -717,6 +735,17 @@ impl eframe::App for LocalPasteApp {
                 }
             }
         });
+        if paste_into_editor_pressed {
+            if let Some(text) = pasted_text.take() {
+                // The payload belongs to the open paste, not a focused field.
+                ctx.input_mut(|input| {
+                    input
+                        .events
+                        .retain(|event| !matches!(event, egui::Event::Paste(_)));
+                });
+                self.paste_into_editor(ctx, text);
+            }
+        }
         if self.paste_as_new_pending_frames > 0 {
             // The explicit payload was captured above. It belongs to the new
             // paste, so metadata/search TextEdits must not also insert it.

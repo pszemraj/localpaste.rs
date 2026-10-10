@@ -725,7 +725,8 @@ fn deferred_picker_target_survives_input_transfer_before_save_ack() {
 }
 
 #[test]
-fn native_paste_during_deferred_picker_open_retains_only_plain_paste_input() {
+fn native_paste_during_deferred_picker_open_retains_editor_paste_input() {
+    // Both chords paste into the editor, so both wait for the opening paste.
     for shift in [false, true] {
         let (mut harness, _event_tx) = make_app_with_event_tx();
         let ctx = egui::Context::default();
@@ -742,29 +743,21 @@ fn native_paste_during_deferred_picker_open_retains_only_plain_paste_input() {
             ..Default::default()
         };
         harness.app.stage_discovery_input(&ctx, &mut input);
-        assert_eq!(harness.app.pending_picker_open.is_none(), shift);
-        assert_eq!(input.events.is_empty(), !shift);
+        assert!(input.events.is_empty(), "shift={shift}");
         assert_eq!(
             harness.app.pending_picker_selection_pin.as_deref(),
             Some("picked")
         );
-        if shift {
-            run_full_update_with_input(&mut harness.app, &ctx, input);
-            let commands: Vec<_> = harness.cmd_rx.try_iter().collect();
-            assert!(commands.iter().any(|command| matches!(command,
-                CoreCmd::CreatePaste { content } if content == "native payload")));
-        } else {
-            assert_eq!(
-                harness
-                    .app
-                    .pending_picker_open
-                    .as_ref()
-                    .unwrap()
-                    .input_events,
-                vec![egui::Event::Paste("native payload".into())]
-            );
-            assert!(harness.cmd_rx.try_recv().is_err());
-        }
+        assert_eq!(
+            harness
+                .app
+                .pending_picker_open
+                .as_ref()
+                .unwrap()
+                .input_events,
+            vec![egui::Event::Paste("native payload".into())]
+        );
+        assert!(harness.cmd_rx.try_recv().is_err());
         assert_eq!(harness.app.active_snapshot(), before);
     }
 }

@@ -263,7 +263,7 @@ impl LocalPasteApp {
         });
         items.push(CommandPaletteItem {
             label: "Paste as new paste".to_string(),
-            hint: shortcut_hint(RuntimeShortcutAction::PasteAsNew),
+            hint: String::new(),
             action: CommandPaletteAction::PasteAsNew,
         });
         items.push(CommandPaletteItem {

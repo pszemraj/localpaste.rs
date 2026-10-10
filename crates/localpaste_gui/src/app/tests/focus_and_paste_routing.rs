@@ -522,46 +522,6 @@ fn paste_as_new_viewport_request_only_when_clipboard_payload_missing() {
 }
 
 #[test]
-fn command_shift_v_arms_paste_as_new_before_virtual_routing() {
-    let mut harness = make_app();
-    let ctx = egui::Context::default();
-    let modifiers = egui::Modifiers {
-        command: true,
-        shift: true,
-        ..Default::default()
-    };
-
-    let _ = ctx.run(
-        egui::RawInput {
-            modifiers,
-            events: vec![egui::Event::Paste("from clipboard".to_string())],
-            ..Default::default()
-        },
-        |ctx| {
-            assert!(harness.app.maybe_arm_paste_as_new_shortcut_intent(ctx));
-            let commands = ctx.input(|input| commands_from_events(&input.events, true));
-            assert!(
-                commands
-                    .iter()
-                    .any(|command| matches!(command, VirtualInputCommand::Paste(_))),
-                "expected virtual paste command from same-frame paste event"
-            );
-            for command in &commands {
-                if matches!(command, VirtualInputCommand::Paste(_)) {
-                    assert!(harness
-                        .app
-                        .should_skip_virtual_command_for_paste_as_new(command));
-                }
-            }
-        },
-    );
-    assert_eq!(
-        harness.app.paste_as_new_pending_frames,
-        PASTE_AS_NEW_PENDING_TTL_FRAMES
-    );
-}
-
-#[test]
 fn plain_paste_shortcut_routes_by_editor_focus_contract() {
     struct Case {
         name: &'static str,
@@ -858,42 +818,6 @@ fn version_overlay_allows_content_and_metadata_persistence_dispatches() {
             "version overlays should not fence save dispatch"
         );
     }
-}
-
-#[test]
-fn explicit_paste_as_new_shortcut_is_rejected_while_version_overlay_is_open() {
-    let mut harness = make_app();
-    harness.app.version_ui.history_modal_open = true;
-    let ctx = egui::Context::default();
-    let modifiers = egui::Modifiers {
-        command: true,
-        shift: true,
-        ..Default::default()
-    };
-
-    let mut armed = false;
-    let _ = ctx.run(
-        egui::RawInput {
-            modifiers,
-            events: vec![egui::Event::Paste("blocked clipboard".into())],
-            ..Default::default()
-        },
-        |ctx| {
-            armed = harness.app.maybe_arm_paste_as_new_shortcut_intent(ctx);
-        },
-    );
-
-    assert!(!armed);
-    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
-    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
-    assert_eq!(
-        harness
-            .app
-            .status
-            .as_ref()
-            .map(|status| status.text.as_str()),
-        Some("Close the open version window before mutating the selected paste.")
-    );
 }
 
 #[test]
