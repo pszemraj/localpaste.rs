@@ -11,7 +11,8 @@ impl LocalPasteApp {
     ///
     /// Call after the status bar panel so the stack anchors above it; the
     /// newest toast sits closest to the status bar. Keeping toasts out of the
-    /// top bar and editor toolbar means they never cover those controls.
+    /// top bar and editor toolbar means they never cover those controls. The
+    /// stack paints above floating windows and below popups and tooltips.
     pub(crate) fn render_toasts(&mut self, ctx: &egui::Context) {
         if self.toasts.is_empty() {
             return;
@@ -21,7 +22,7 @@ impl LocalPasteApp {
         let above_status_bar =
             ctx.available_rect().right_bottom() - egui::vec2(TOAST_MARGIN, TOAST_MARGIN);
         let mut restore_undo_token: Option<String> = None;
-        egui::Area::new(egui::Id::new("toast_area"))
+        let stack = egui::Area::new(egui::Id::new("toast_area"))
             .pivot(egui::Align2::RIGHT_BOTTOM)
             .fixed_pos(above_status_bar)
             .interactable(true)
@@ -51,6 +52,10 @@ impl LocalPasteApp {
                     }
                 });
             });
+        // Toasts share the floating-window order, so popups, menus, and tooltips
+        // stay above them. Raising the stack every frame keeps it above Diff and
+        // History, which a click inside them would otherwise bring forward.
+        ctx.move_to_top(stack.response.layer_id);
         if let Some(undo_token) = restore_undo_token {
             self.restore_deleted_paste(undo_token);
         }

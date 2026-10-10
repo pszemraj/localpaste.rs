@@ -565,3 +565,143 @@ fn toasts_stack_bottom_right_above_the_status_bar() {
         "the newest toast sits nearest the status bar"
     );
 }
+
+/// Renders `count` full frames in the toast test viewport, sending `events` with the first.
+fn toast_frames(
+    harness: &mut TestHarness,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    count: usize,
+) -> egui::FullOutput {
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 800.0));
+    let mut events = Some(events);
+    let mut output = None;
+    for _ in 0..count {
+        output = Some(run_full_update_with_input(
+            &mut harness.app,
+            ctx,
+            egui::RawInput {
+                screen_rect: Some(screen),
+                events: events.take().unwrap_or_default(),
+                ..Default::default()
+            },
+        ));
+    }
+    output.expect("at least one frame")
+}
+
+/// Paint-order positions and rects of every text shape reading `label`.
+fn text_indices(output: &egui::FullOutput, label: &str) -> Vec<(usize, egui::Rect)> {
+    output
+        .shapes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, clipped)| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.job.text == label => Some((
+                index,
+                egui::Rect::from_min_size(text.pos, text.galley.size()),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Presses and releases the primary button at `pos` over two frames.
+fn toast_click(harness: &mut TestHarness, ctx: &egui::Context, pos: egui::Pos2) {
+    for pressed in [true, false] {
+        toast_frames(harness, ctx, primary_pointer_events(pos, pressed), 1);
+    }
+}
+
+#[test]
+fn toasts_stay_above_diff_and_history_and_keep_undo_clickable() {
+    for title in ["Diff", "History"] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        if title == "Diff" {
+            harness.app.open_diff_modal();
+        } else {
+            harness.app.open_history_modal();
+        }
+        toast_frames(&mut harness, &ctx, vec![], 4);
+        harness.app.notify_with_action(
+            "Deleted paste.",
+            ToastAction::UndoDelete {
+                undo_token: "token".into(),
+            },
+        );
+        toast_frames(&mut harness, &ctx, vec![], 2);
+        let window_rect = || {
+            ctx.memory(|memory| memory.area_rect(egui::Id::new(title)))
+                .expect(title)
+        };
+
+        // Dragging the title bar raises the window and moves it over the toasts.
+        let grab = egui::pos2(window_rect().center().x, window_rect().top() + 12.0);
+        let drop = grab + egui::vec2(0.0, 500.0);
+        toast_frames(&mut harness, &ctx, primary_pointer_events(grab, true), 1);
+        for step in 1..=4 {
+            let pos = grab.lerp(drop, step as f32 / 4.0);
+            toast_frames(&mut harness, &ctx, vec![egui::Event::PointerMoved(pos)], 1);
+        }
+        toast_frames(&mut harness, &ctx, primary_pointer_events(drop, false), 1);
+        let output = toast_frames(&mut harness, &ctx, vec![], 2);
+
+        let (title_index, _) = *text_indices(&output, title).last().expect(title);
+        let (toast_index, _) = *text_indices(&output, "Deleted paste.")
+            .last()
+            .expect("toast");
+        let (_, undo) = *text_indices(&output, "Undo").last().expect("Undo");
+        assert!(
+            window_rect().contains(undo.center()),
+            "{title} lies under Undo"
+        );
+        assert!(toast_index > title_index, "{title} paints over the toast");
+        assert_eq!(
+            ctx.layer_id_at(undo.center()).map(|layer| layer.id),
+            Some(egui::Id::new("toast_area")),
+            "{title}"
+        );
+        let _ = harness.cmd_rx.try_iter().count();
+        toast_click(&mut harness, &ctx, undo.center());
+        assert!(
+            harness.cmd_rx.try_iter().any(|cmd| matches!(
+                cmd,
+                CoreCmd::RestoreDeletedPaste { undo_token } if undo_token == "token"
+            )),
+            "{title}"
+        );
+    }
+}
+
+#[test]
+fn open_popups_stay_above_a_toast_raised_after_them() {
+    let mut harness = make_app();
+    // A language gives the sidebar its language filter combo.
+    let rust = test_summary("alpha", "Alpha", Some("rust"), 7);
+    harness.app.all_pastes = vec![rust.clone()];
+    harness.app.pastes = vec![rust];
+    let ctx = egui::Context::default();
+    let output = toast_frames(&mut harness, &ctx, vec![], 2);
+    let (_, combo) = text_indices(&output, "All languages")[0];
+    toast_click(&mut harness, &ctx, combo.center());
+    let output = toast_frames(&mut harness, &ctx, vec![], 2);
+    assert_eq!(
+        text_indices(&output, "All languages").len(),
+        2,
+        "popup open"
+    );
+
+    harness.app.notify("Search failed.");
+    let output = toast_frames(&mut harness, &ctx, vec![], 2);
+
+    let options = text_indices(&output, "All languages");
+    assert_eq!(options.len(), 2, "popup still open");
+    let (toast_index, _) = *text_indices(&output, "Search failed.")
+        .last()
+        .expect("toast");
+    assert!(
+        options[1].0 > toast_index,
+        "the toast covers the open popup"
+    );
+}

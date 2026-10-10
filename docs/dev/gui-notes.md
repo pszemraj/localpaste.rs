@@ -168,7 +168,7 @@ The `F1` window has a stable scrollable layout with key labels in the native pla
 
 ### Status and notifications
 
-Routine confirmations and progress, such as `Copied paste content.` or `Saving current paste before switching...`, appear only in the status bar. Failures, warnings, and refused actions also raise a toast and show in the status bar's attention color, and a deletion raises a toast that offers Undo. Toasts stack bottom-right just above the status bar, newest nearest it, so they never cover the top bar or the editor toolbar. In code, `set_status` is status-bar only and `notify`/`notify_with_action` add the toast ([`state_feedback.rs`](../../crates/localpaste_gui/src/app/state_feedback.rs)).
+Routine confirmations and progress, such as `Copied paste content.` or `Saving current paste before switching...`, appear only in the status bar. Failures, warnings, and refused actions also raise a toast and show in the status bar's attention color, and a deletion raises a toast that offers Undo. Toasts stack bottom-right just above the status bar, newest nearest it, so they never cover the top bar or the editor toolbar. They paint above the Diff and History windows, even after a click brings one forward, so a refusal or Undo stays visible and clickable, and below open popups, menus, and tooltips. In code, `set_status` is status-bar only and `notify`/`notify_with_action` add the toast ([`state_feedback.rs`](../../crates/localpaste_gui/src/app/state_feedback.rs)).
 
 ### Startup and styling
 
