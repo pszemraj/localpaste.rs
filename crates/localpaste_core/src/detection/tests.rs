@@ -447,6 +447,10 @@ fn assert_detection_cases(cases: &[(&str, Option<&str>)]) {
 fn heuristic_detects_existing_language_matrix() {
     let cases = [
         ("fn main() { let x = 1; }", Some("rust")),
+        (
+            "fn handle_request(input: &str) -> usize {\n    input.len()\n}",
+            Some("rust"),
+        ),
         ("def main():\n    print('hi')", Some("python")),
         ("const x = () => console.log('hi');", Some("javascript")),
         ("#!/bin/bash\necho hello", Some("shell")),
@@ -610,6 +614,8 @@ fn heuristic_avoids_common_single_token_false_positives() {
             "fn main() { let d = std::time::Duration::from_secs(1); println!(\"{:?}\", d); }",
             Some("rust"),
         ),
+        ("The fn keyword declares a function in Rust.", None),
+        ("fn foo() -> Bar is the signature I want", None),
         ("status report:\ndone\n", None),
         ("status report: done", None),
         ("please select one option from menu where possible", None),

@@ -923,7 +923,7 @@ fn standalone_fence_kind_does_not_invoke_magika() {
     );
     assert_eq!(crate::detection::model_step_call_count(), before);
     // The counter is live: full detection of a plain body reaches the model step.
-    let _ = crate::detection::detect_language("fn main() { println!(\"hello\"); }");
+    let _ = crate::detection::detect_language("const x = () => console.log('hi');");
     assert_eq!(crate::detection::model_step_call_count(), before + 1);
 }
 

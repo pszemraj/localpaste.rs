@@ -39,6 +39,10 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     if super::python::compound_body(trimmed) && looks_like_python_source(trimmed) {
         return Some("python".to_string());
     }
+    // A lone Rust function has too few keywords for the scores below.
+    if super::rust::leading_item(trimmed) {
+        return Some("rust".to_string());
+    }
 
     // JSON Lines needs independently valid records; ordinary JSON keeps the
     // cheap structural fallback for large or sampled payloads.

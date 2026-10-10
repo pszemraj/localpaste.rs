@@ -6,6 +6,7 @@ mod extensions;
 pub use extensions::preferred_extension;
 mod heuristic;
 mod python;
+mod rust;
 pub(crate) use heuristic::looks_like_python_source;
 #[cfg(test)]
 mod classification_tests;
@@ -27,6 +28,11 @@ pub fn detect_language(content: &str) -> Option<String> {
     }
     if python::compound_body(content) && heuristic::looks_like_python_source(content) {
         return Some("python".to_string());
+    }
+    // Magika reports many short Rust functions as generic text, and some (a
+    // `where` clause, an HTML string body) as Swift or HCL.
+    if rust::leading_item(content) {
+        return Some("rust".to_string());
     }
     if crate::semantic::makefile_note_body(content) {
         return Some("markdown".to_string());
