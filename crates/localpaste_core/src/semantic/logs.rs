@@ -41,14 +41,14 @@ const MONTHS: &[&str] = &[
 ///
 /// # Returns
 /// Whether the sample opens with a run of level-prefixed lines, consists mostly
-/// of timestamped lines, or is a Rust panic, Python traceback, Java stack
-/// trace, or rustc diagnostic.
+/// of timestamped lines, or is a Rust panic, crash output (a Python traceback
+/// or a fatal signal or exit report), Java stack trace, or rustc diagnostic.
 pub(crate) fn looks_like_runtime_log(content: &str) -> bool {
     let sample = super::sample_prefix(content);
     looks_like_multiline_log(sample)
         || looks_like_timestamped_log(sample)
         || looks_like_rust_panic(sample)
-        || looks_like_python_traceback(sample)
+        || looks_like_crash_output(sample)
         || looks_like_java_stack_trace(sample)
         || looks_like_rustc_diagnostic(sample)
 }
@@ -387,46 +387,164 @@ fn looks_like_rust_panic(content: &str) -> bool {
     false
 }
 
-/// Recognize a complete Python traceback with a frame and final exception row.
+/// Recognize output that ends with a process failing: a Python traceback block
+/// or a line reporting a fatal signal or exit status, with no commentary
+/// around it.
+///
+/// The traceback may start anywhere, after training output, a `$ ` command, or
+/// other program lines, and exit or signal reports may follow it. Every other
+/// line must be output rather than a note about it (see [`is_commentary`]), so
+/// a bug report that quotes a traceback stays a document.
 ///
 /// # Returns
-/// Whether runtime structure occupies the sampled body, including quoted exception rows.
-pub(crate) fn looks_like_python_traceback(content: &str) -> bool {
+/// Whether the sample holds a crash anchor and no commentary, including quoted rows.
+pub(crate) fn looks_like_crash_output(content: &str) -> bool {
     let sample = crate::text::complete_line_prefix_by_bytes(
         content.trim(),
         crate::text::TEXT_SAMPLE_MAX_BYTES,
     );
-    let mut lines = sample
+    let lines: Vec<&str> = sample
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(|line| line.strip_prefix("> ").unwrap_or(line).trim_start());
-    let first = lines.next().unwrap_or_default();
-    let first = if matches!(first, "stderr:" | "stdout:") {
-        lines.next().unwrap_or_default()
-    } else {
-        first
-    };
-    if first != "Traceback (most recent call last):" {
+        .map(|line| line.strip_prefix("> ").unwrap_or(line).trim_start())
+        .collect();
+    let traceback = traceback_block(&lines);
+    if traceback.is_none() && !lines.iter().any(|line| is_termination_line(line)) {
         return false;
     }
+    lines.iter().enumerate().all(|(index, line)| {
+        traceback
+            .as_ref()
+            .is_some_and(|block| block.contains(&index))
+            || is_termination_line(line)
+            || !is_commentary(line)
+    })
+}
+
+/// Line span from the first `Traceback (most recent call last):` header to the
+/// last exception line, such as `ValueError: boom`, that follows a
+/// `File "...", line N` frame. Chained tracebacks and the sentences Python
+/// prints between them fall inside the span.
+fn traceback_block(lines: &[&str]) -> Option<std::ops::RangeInclusive<usize>> {
+    let header = lines
+        .iter()
+        .position(|line| *line == "Traceback (most recent call last):")?;
     let mut frame = false;
-    let mut last = "";
-    for line in lines {
-        frame |= line.starts_with("File \"") && line.contains("\", line ");
-        last = line;
+    let mut end = None;
+    for (index, line) in lines.iter().enumerate().skip(header + 1) {
+        if line.starts_with("File \"") && line.contains("\", line ") {
+            frame = true;
+        } else if frame && is_exception_line(line) {
+            end = Some(index);
+        }
     }
-    let name = last.split_once(':').map_or(last, |(name, _)| name);
-    frame
-        && name.rsplit('.').next().is_some_and(|class| {
-            class
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_uppercase())
-        })
+    end.map(|end| header..=end)
+}
+
+/// Recognize `ValueError`, `ValueError: boom`, or `requests.HTTPError: ...`.
+fn is_exception_line(line: &str) -> bool {
+    let name = line.split_once(':').map_or(line, |(name, _)| name);
+    name.rsplit('.')
+        .next()
+        .is_some_and(|class| class.starts_with(|ch: char| ch.is_ascii_uppercase()))
         && name
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'))
+}
+
+/// Signal descriptions a shell prints when a process dies.
+const FATAL_SIGNALS: &[&str] = &[
+    "Segmentation fault",
+    "Bus error",
+    "Illegal instruction",
+    "Floating point exception",
+    "Aborted",
+    "Killed",
+];
+
+/// Recognize the line that reports how a process ended.
+///
+/// A shell names a fatal signal alone or with `(core dumped)`
+/// (`Segmentation fault (core dumped)`), macOS adds the signal number
+/// (`Segmentation fault: 11`), zsh prefixes its name and appends the command
+/// (`zsh: segmentation fault  ./a.out`), and Make quotes the report after the
+/// target. Runners and IDEs print the status: `exit code 1`, `exit status 2`,
+/// `Process finished with exit code 1`. A sentence that merely starts with one
+/// of these words, such as `Killed the old worker`, does not match.
+fn is_termination_line(line: &str) -> bool {
+    if line.ends_with("(core dumped)") {
+        return true;
+    }
+    if let Some(code) = [
+        "Process finished with exit code ",
+        "exit code ",
+        "exit status ",
+    ]
+    .iter()
+    .find_map(|prefix| line.strip_prefix(prefix))
+    {
+        return code.parse::<i32>().is_ok();
+    }
+    let (zsh, report) = line
+        .strip_prefix("zsh: ")
+        .map_or((false, line), |rest| (true, rest));
+    FATAL_SIGNALS.iter().any(|signal| {
+        let Some(rest) = report
+            .get(..signal.len())
+            .filter(|head| head.eq_ignore_ascii_case(signal) && (zsh || head == signal))
+            .and_then(|_| report.get(signal.len()..))
+        else {
+            return false;
+        };
+        rest.is_empty()
+            || rest
+                .strip_prefix(": ")
+                .is_some_and(|number| number.parse::<u8>().is_ok())
+            || (zsh && rest.starts_with(char::is_whitespace))
+    })
+}
+
+/// Recognize a line written about output rather than printed by it.
+///
+/// A `#` heading or comment is commentary, and so is a line with English
+/// grammar ([`super::commands::has_prose_grammar`]) that asks a question,
+/// speaks in the first or second person (`Getting this error when I run it`),
+/// or is a whole sentence ending in `.`, `!`, or `:`. Program status lines read
+/// as English too (`Loading data from /data/train`), but rarely do any of
+/// these, and labeled runtime lines (`UserWarning: ...`, `wandb: ...`), prompt
+/// lines, progress lines with an ellipsis, and Python's `Exception in thread`
+/// header are never commentary.
+fn is_commentary(line: &str) -> bool {
+    if line.starts_with('#') {
+        return true;
+    }
+    let labeled = line
+        .split_whitespace()
+        .next()
+        .is_some_and(|word| word.len() > 1 && word.ends_with(':'));
+    if labeled
+        || line.starts_with("$ ")
+        || line.starts_with("% ")
+        || line.contains("...")
+        || line.starts_with("Exception in thread ")
+        || !super::commands::has_prose_grammar(line)
+    {
+        return false;
+    }
+    let personal = line.split_whitespace().any(|word| {
+        let word = word
+            .split(['\'', '’'])
+            .next()
+            .unwrap_or_default()
+            .trim_matches(|ch: char| !ch.is_alphabetic());
+        word == "I"
+            || ["me", "my", "we", "us", "our", "you", "your"]
+                .contains(&word.to_lowercase().as_str())
+    });
+    line.ends_with('?')
+        || personal
+        || (line.ends_with(['.', '!', ':']) && super::looks_like_prose(line))
 }
 
 /// Recognize a Java exception header followed by an `at Class.method(File.java:N)` frame.

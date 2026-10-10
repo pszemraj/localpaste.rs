@@ -174,3 +174,67 @@ fn tool_output_is_recognized_by_its_line_format() {
         }
     }
 }
+
+#[test]
+fn crash_output_is_a_log_wherever_the_traceback_starts() {
+    for content in [
+        "Epoch 1/10\nloss: 0.53\nTraceback (most recent call last):\n  File \"train.py\", line 3, in <module>\n    main()\nRuntimeError: CUDA out of memory.",
+        "Traceback (most recent call last):\n  File \"app.py\", line 3, in <module>\n    main()\nValueError: boom\n\nProcess finished with exit code 1",
+        "$ python train.py\nTraceback (most recent call last):\n  File \"train.py\", line 3, in <module>\n    main()\nRuntimeError: CUDA out of memory.",
+        "Loading data from /data/train\nUserWarning: You are using the default collate function.\nTraceback (most recent call last):\n  File \"train.py\", line 9, in <module>\n    fit()\nKeyError: 'label'\nwandb: Waiting for W&B process to finish... (failed 1)",
+        "Exception in thread Thread-1:\nTraceback (most recent call last):\n  File \"worker.py\", line 4, in run\n    step()\nValueError: boom\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"worker.py\", line 6, in run\n    cleanup()\nOSError: disk full",
+        "$ ./server --port 8080\nSegmentation fault (core dumped)",
+        "Starting server on port 8080\nLoaded 12 plugins\nSegmentation fault (core dumped)",
+        "Segmentation fault (core dumped)",
+        "./bench\nSegmentation fault: 11",
+        "zsh: segmentation fault  ./a.out",
+        "make: *** [Makefile:5: run] Segmentation fault (core dumped)",
+        "Epoch 3/10\nKilled",
+        "$ cargo run\nexit status 101",
+    ] {
+        for content in with_crlf(content) {
+            for language in [None, Some("text"), Some("python"), Some("shell")] {
+                assert_eq!(
+                    derive(&content, language).kind,
+                    PasteKind::Log,
+                    "{content}: {language:?}"
+                );
+            }
+            assert_eq!(
+                detect_language(&content).as_deref(),
+                Some("log"),
+                "{content}"
+            );
+            assert_eq!(stored_kind(&content), PasteKind::Log, "{content}");
+        }
+    }
+}
+
+#[test]
+fn notes_about_crashes_stay_documents() {
+    for content in [
+        "The traceback showed a segmentation fault in the parser, so we rolled back.",
+        "Note to self: check for a segmentation fault before the release.",
+        "Killed the old worker and restarted the queue.",
+        "Process finished with exit code 0 is what we want to see.",
+        "Getting this error when I run train.py:\n\nTraceback (most recent call last):\n  File \"train.py\", line 3, in <module>\n    main()\nRuntimeError: CUDA out of memory.\n\nAny idea how to fix it?",
+        "We hit a segfault again today.\nSegmentation fault (core dumped)\nAny ideas?",
+        "Traceback (most recent call last):\n  File \"app.py\", line 3, in <module>\n    main()\nValueError: boom\nThis happens every time the batch size exceeds the limit.",
+    ] {
+        for content in with_crlf(content) {
+            assert!(!super::logs::looks_like_runtime_log(&content), "{content}");
+            assert_ne!(
+                detect_language(&content).as_deref(),
+                Some("log"),
+                "{content}"
+            );
+            for language in [None, Some("text")] {
+                assert_eq!(
+                    derive(&content, language).kind,
+                    PasteKind::Document,
+                    "{content}: {language:?}"
+                );
+            }
+        }
+    }
+}

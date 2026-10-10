@@ -321,7 +321,7 @@ pub(crate) fn markdown_technical_language(content: &str) -> Option<&'static str>
     }) {
         return None;
     }
-    if logs::looks_like_python_traceback(sample) {
+    if logs::looks_like_crash_output(sample) {
         return Some("log");
     }
     if crate::detection::looks_like_python_source(sample) {
