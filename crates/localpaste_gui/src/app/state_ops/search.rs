@@ -43,7 +43,7 @@ impl LocalPasteApp {
         self.palette_search_last_input_at = None;
         self.palette_search_error = Some(message.clone());
         if self.status.as_ref().map(|status| status.text.as_str()) != Some(message.as_str()) {
-            self.set_status(message);
+            self.notify(message);
         }
     }
 
@@ -194,7 +194,7 @@ impl LocalPasteApp {
             self.search_last_input_at = Some(Instant::now());
             const SEARCH_UNAVAILABLE: &str = "Search failed: backend unavailable.";
             if self.status.as_ref().map(|status| status.text.as_str()) != Some(SEARCH_UNAVAILABLE) {
-                self.set_status(SEARCH_UNAVAILABLE);
+                self.notify(SEARCH_UNAVAILABLE);
             }
             return;
         }
@@ -283,7 +283,7 @@ impl LocalPasteApp {
         self.search_last_input_at = None;
         self.query_perf.search_last_sent_at = None;
         self.search_error = Some(message.clone());
-        self.set_status(message);
+        self.notify(message);
     }
 
     /// Forgets the last sent sidebar query when its reply arrives while the query

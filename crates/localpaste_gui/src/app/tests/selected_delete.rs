@@ -707,7 +707,7 @@ fn selected_picker_delete_failed_save_requeue_releases_ownership_fence() {
             .status
             .as_ref()
             .map(|status| status.text.as_str()),
-        Some("Delete cancelled because current paste could not be saved.")
+        Some("Delete canceled because current paste could not be saved.")
     );
 }
 

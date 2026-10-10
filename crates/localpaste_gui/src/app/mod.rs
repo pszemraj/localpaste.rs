@@ -298,6 +298,8 @@ const PASTE_AS_NEW_CLIPBOARD_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 struct StatusMessage {
     text: String,
+    /// Failure or warning text, also raised as a toast; routine messages are `false`.
+    alert: bool,
     expires_at: Instant,
 }
 
@@ -382,7 +384,7 @@ impl LocalPasteApp {
                     "failed to acquire paste lock '{}' for GUI owner: {}",
                     id, err
                 );
-                self.set_status("Lock acquire failed; close and reopen the paste.");
+                self.notify("Lock acquire failed; close and reopen the paste.");
                 false
             }
         }
@@ -397,7 +399,7 @@ impl LocalPasteApp {
                 "failed to release paste lock '{}' for GUI owner: {}",
                 id, err
             );
-            self.set_status("Lock release failed; restart app if edits remain blocked.");
+            self.notify("Lock release failed; restart app if edits remain blocked.");
         }
     }
 

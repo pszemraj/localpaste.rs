@@ -54,20 +54,17 @@ impl LocalPasteApp {
                 }
             }
             if let Some(undo_token) = undo_token {
-                self.set_status_with_action(
-                    "Paste deleted.",
-                    ToastAction::UndoDelete { undo_token },
-                );
+                self.notify_with_action("Paste deleted.", ToastAction::UndoDelete { undo_token });
             } else {
-                self.set_status("Paste deleted. Undo unavailable.");
+                self.notify("Paste deleted. Undo unavailable.");
             }
         } else if let Some(undo_token) = undo_token {
-            self.set_status_with_action(
+            self.notify_with_action(
                 "Paste deleted; list refreshed.",
                 ToastAction::UndoDelete { undo_token },
             );
         } else {
-            self.set_status("Paste deleted; list refreshed. Undo unavailable.");
+            self.notify("Paste deleted; list refreshed. Undo unavailable.");
         }
         self.request_refresh();
     }
@@ -90,7 +87,7 @@ impl LocalPasteApp {
 
     /// Reports the shared status while the selected-picker delete is settling.
     pub(super) fn set_picker_delete_transition_blocked_status(&mut self) {
-        self.set_status(PICKER_DELETE_TRANSITION_BLOCKED_STATUS);
+        self.notify(PICKER_DELETE_TRANSITION_BLOCKED_STATUS);
     }
 
     /// Clears a transition when `id` is its successfully loaded or failed replacement paste.
@@ -204,7 +201,7 @@ impl LocalPasteApp {
             rollback_deferred_save_dispatches(self, content_save_needed, metadata_save_needed);
             self.pending_delete_id = None;
             self.clear_picker_delete_transition_for_deleted(id.as_str());
-            self.set_status("Delete cancelled because current paste could not be saved.");
+            self.notify("Delete canceled because current paste could not be saved.");
             return false;
         }
 
@@ -228,7 +225,7 @@ impl LocalPasteApp {
         if self.selected_id.as_deref() != Some(paste_id.as_str()) {
             self.pending_delete_id = None;
             self.clear_picker_delete_transition_for_deleted(paste_id.as_str());
-            self.set_status("Delete cancelled because the selected paste changed.");
+            self.notify("Delete canceled because the selected paste changed.");
             return;
         }
         if self.delete_requires_selected_flush(paste_id.as_str()) {

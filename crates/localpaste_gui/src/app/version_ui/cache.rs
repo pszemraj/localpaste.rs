@@ -196,7 +196,7 @@ impl LocalPasteApp {
             right_text,
         }) {
             self.version_ui.clear_diff_preview_cache();
-            self.set_status("Diff preview failed: backend unavailable.");
+            self.notify("Diff preview failed: backend unavailable.");
             return false;
         }
         self.version_ui.diff_preview_cache_key = Some(cache_key);

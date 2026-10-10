@@ -369,7 +369,7 @@ impl LocalPasteApp {
             request_id: self.palette_copy_request_id,
         }) {
             self.pending_copy_action = None;
-            self.set_status("Load paste for copy failed: backend unavailable.");
+            self.notify("Load paste for copy failed: backend unavailable.");
             return;
         }
         self.set_status("Loading paste for copy...");
@@ -397,7 +397,7 @@ impl LocalPasteApp {
             .take_pending_palette_copy_for(id.as_str(), request_id)
             .is_some()
         {
-            self.set_status("Paste is no longer available to copy.");
+            self.notify("Paste is no longer available to copy.");
         }
     }
 
@@ -417,7 +417,7 @@ impl LocalPasteApp {
             .take_pending_palette_copy_for(id.as_str(), request_id)
             .is_some()
         {
-            self.set_status(message);
+            self.notify(message);
         }
     }
 

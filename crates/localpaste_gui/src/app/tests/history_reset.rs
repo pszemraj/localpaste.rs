@@ -412,7 +412,7 @@ fn history_reset_flush_dispatch_failure_cancels_queue_with_status() {
     assert!(!app.history_reset_flush_active());
     assert_eq!(
         app.status.as_ref().map(|status| status.text.as_str()),
-        Some("Reset cancelled because current paste could not be saved.")
+        Some("Reset canceled because current paste could not be saved.")
     );
 }
 
@@ -444,7 +444,7 @@ fn queued_history_reset_cancels_when_selection_changes_before_flush_finishes() {
             .status
             .as_ref()
             .map(|status| status.text.as_str()),
-        Some("Reset cancelled because the selected paste changed.")
+        Some("Reset canceled because the selected paste changed.")
     );
     assert!(matches!(
         harness.cmd_rx.try_recv(),

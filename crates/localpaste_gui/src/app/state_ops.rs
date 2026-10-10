@@ -147,7 +147,7 @@ impl LocalPasteApp {
         if self.dispatch_backend_cmd(command) {
             return true;
         }
-        self.set_status(error_message);
+        self.notify(error_message);
         false
     }
 
@@ -165,13 +165,13 @@ impl LocalPasteApp {
         let picker_copy_pending = self.pending_copy_action.take().is_some();
         if !self.pending_undo_restore_tokens.is_empty() {
             self.pending_undo_restore_tokens.clear();
-            self.set_status("Undo delete canceled: backend unavailable.");
+            self.notify("Undo delete canceled: backend unavailable.");
         } else if picker_delete_pending {
-            self.set_status("Delete canceled: backend unavailable.");
+            self.notify("Delete canceled: backend unavailable.");
         } else if picker_copy_pending {
-            self.set_status("Paste copy canceled: backend unavailable.");
+            self.notify("Paste copy canceled: backend unavailable.");
         } else if picker_search_pending {
-            self.set_status("Paste picker search canceled: backend unavailable.");
+            self.notify("Paste picker search canceled: backend unavailable.");
         }
     }
 
@@ -183,7 +183,7 @@ impl LocalPasteApp {
         self.save_status = SaveStatus::Dirty;
         self.save_request_revision = None;
         self.last_edit_at = Some(Instant::now());
-        self.set_status(format!("{mode} failed: backend unavailable."));
+        self.notify(format!("{mode} failed: backend unavailable."));
         false
     }
 
@@ -270,7 +270,7 @@ impl LocalPasteApp {
                     || self.save_status == SaveStatus::Saving;
                 if paste_visible && self.selection_transition_block_reason().is_some() {
                     self.queue_pending_selection(paste_id);
-                    self.set_status(
+                    self.notify(
                         "Created new paste; current selection stays pinned until the version workflow finishes.",
                     );
                     return;
@@ -288,12 +288,11 @@ impl LocalPasteApp {
                     return;
                 }
                 self.ensure_selection_after_list_update();
-                let status = if search_active {
-                    "Created new paste; refreshing search results."
+                if search_active {
+                    self.set_status("Created new paste; refreshing search results.");
                 } else {
-                    "Created new paste; current filters keep it hidden."
-                };
-                self.set_status(status);
+                    self.notify("Created new paste; current filters keep it hidden.");
+                }
             }
             CoreEvent::PasteSaved { paste } => {
                 let paste_id = paste.id.clone();
@@ -440,7 +439,7 @@ impl LocalPasteApp {
                 if self.pending_delete_id.as_deref() == Some(id.as_str()) {
                     self.cancel_pending_delete();
                 }
-                self.set_status(message);
+                self.notify(message);
             }
             CoreEvent::PasteRestored { paste, undo_token } => {
                 let paste_id = paste.id.clone();
@@ -476,7 +475,7 @@ impl LocalPasteApp {
                 if !retryable {
                     self.remove_undo_toast(&undo_token);
                 }
-                self.set_status(message);
+                self.notify(message);
             }
             CoreEvent::PasteUndoEvicted { undo_token } => {
                 self.pending_undo_restore_tokens.remove(&undo_token);
@@ -498,10 +497,10 @@ impl LocalPasteApp {
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
                     if !restored {
-                        self.set_status("Selected paste was deleted; list refreshed.");
+                        self.notify("Selected paste was deleted; list refreshed.");
                     }
                 } else {
-                    self.set_status("Paste was deleted; list refreshed.");
+                    self.notify("Paste was deleted; list refreshed.");
                 }
                 self.request_refresh();
             }
@@ -513,10 +512,10 @@ impl LocalPasteApp {
                 self.clear_picker_selection_context_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
-                    self.set_status("Selected paste was deleted; list refreshed.");
+                    self.notify("Selected paste was deleted; list refreshed.");
                 } else if diff_target_was_active {
                     self.version_ui.clear_diff_target_state();
-                    self.set_status("Comparison paste was deleted; list refreshed.");
+                    self.notify("Comparison paste was deleted; list refreshed.");
                 }
                 self.request_refresh();
             }
@@ -524,7 +523,7 @@ impl LocalPasteApp {
                 self.clear_picker_delete_transition_for_replacement(id.as_str());
                 self.clear_picker_selection_context_for(id.as_str());
                 self.clear_selection();
-                self.set_status(message);
+                self.notify(message);
             }
             CoreEvent::PasteVersionsLoaded { .. }
             | CoreEvent::PasteVersionLoaded { .. }
@@ -554,9 +553,9 @@ impl LocalPasteApp {
                         self.metadata_save_request = None;
                         self.clear_pending_selection_request();
                         if message.to_ascii_lowercase().contains("metadata") {
-                            self.set_status(message);
+                            self.notify(message);
                         } else {
-                            self.set_status(format!("Metadata save failed: {}", message));
+                            self.notify(format!("Metadata save failed: {}", message));
                         }
                     }
                     CoreErrorSource::SaveContent if self.save_in_flight => {
@@ -571,9 +570,9 @@ impl LocalPasteApp {
                         self.save_in_flight = false;
                         self.save_request_revision = None;
                         self.clear_pending_selection_request();
-                        self.set_status(message);
+                        self.notify(message);
                     }
-                    _ => self.set_status(message),
+                    _ => self.notify(message),
                 }
             }
         }
@@ -586,7 +585,7 @@ impl LocalPasteApp {
             limit: DEFAULT_LIST_PASTES_LIMIT,
             folder_id: None,
         }) {
-            self.set_status("List failed: backend unavailable.");
+            self.notify("List failed: backend unavailable.");
             return;
         }
         self.query_perf.list_requests_sent = self.query_perf.list_requests_sent.saturating_add(1);
@@ -757,7 +756,7 @@ impl LocalPasteApp {
             selection_epoch: self.active_buffer_epoch,
         }) {
             self.clear_selection();
-            self.set_status("Get paste failed: backend unavailable.");
+            self.notify("Get paste failed: backend unavailable.");
             return false;
         }
         true
@@ -893,7 +892,7 @@ impl LocalPasteApp {
             folder_id: None,
             tags,
         }) {
-            self.set_status("Metadata save failed: backend unavailable.");
+            self.notify("Metadata save failed: backend unavailable.");
             return;
         }
         self.metadata_save_in_flight = true;
@@ -903,11 +902,11 @@ impl LocalPasteApp {
     /// Starts asynchronous export of the selected paste to a user-chosen file path.
     pub(super) fn export_selected_paste(&mut self) {
         let Some(paste_id) = self.selected_paste.as_ref().map(|paste| paste.id.clone()) else {
-            self.set_status("Nothing selected to export.");
+            self.notify("Nothing selected to export.");
             return;
         };
         if self.export_result_rx.is_some() {
-            self.set_status("Export already in progress.");
+            self.notify("Export already in progress.");
             return;
         }
         let extension = language_extension(self.edit_language.as_deref());

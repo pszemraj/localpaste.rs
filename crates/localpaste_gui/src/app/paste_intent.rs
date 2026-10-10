@@ -346,7 +346,7 @@ impl LocalPasteApp {
                 self.create_new_paste_with_content(text);
                 return true;
             }
-            self.set_status("Clipboard was empty.");
+            self.notify("Clipboard was empty.");
             return false;
         }
         if let Some(request_started_at) = self.paste_as_new_clipboard_requested_at {
@@ -356,7 +356,7 @@ impl LocalPasteApp {
                 return false;
             }
             self.cancel_paste_as_new_intent();
-            self.set_status("Paste-as-new clipboard request timed out; try again.");
+            self.notify("Paste-as-new clipboard request timed out; try again.");
             return false;
         }
         self.paste_as_new_pending_frames = self.paste_as_new_pending_frames.saturating_sub(1);

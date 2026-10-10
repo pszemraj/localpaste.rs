@@ -48,7 +48,7 @@ impl LocalPasteApp {
     /// - `now`: Timestamp used to update the buffer and caret after cancellation.
     ///
     /// # Returns
-    /// Whether the active buffer changed after cancelling its preedit range.
+    /// Whether the active buffer changed after canceling its preedit range.
     pub(super) fn cancel_virtual_ime_preedit_if_active(&mut self, now: Instant) -> bool {
         let changed = if let Some(range) = self.virtual_editor_state.ime.preedit_range.take() {
             let original = std::mem::take(&mut self.virtual_editor_state.ime.original_text);
