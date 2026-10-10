@@ -417,14 +417,8 @@ fn render_shortcut_sections(ui: &mut egui::Ui, query: &str) {
     );
     let mut shown_section = false;
     for (title, entries) in sections {
-        let matches = entries
-            .iter()
-            .filter_map(|entry| {
-                let keys = platform_shortcut_keys(entry.keys, cfg!(target_os = "macos"))?;
-                shortcut_matches(*entry, query).then_some((keys, entry.description))
-            })
-            .collect::<Vec<_>>();
-        if matches.is_empty() {
+        let rows = shortcut_help_rows(entries, query, cfg!(target_os = "macos"));
+        if rows.is_empty() {
             continue;
         }
         if shown_section {
@@ -439,19 +433,29 @@ fn render_shortcut_sections(ui: &mut egui::Ui, query: &str) {
             .min_row_height(0.0)
             .spacing(egui::vec2(16.0, 8.0))
             .show(ui, |ui| {
-                for (keys, description) in matches {
+                for row in rows {
                     shortcut_cell(
                         ui,
                         180.0,
-                        egui::RichText::new(keys)
+                        egui::RichText::new(row.keys)
                             .monospace()
                             .color(COLOR_ACCENT_TEXT),
                     );
-                    shortcut_cell(
-                        ui,
-                        description_width,
-                        egui::RichText::new(description).color(COLOR_TEXT_PRIMARY),
-                    );
+                    let mut description = egui::text::LayoutJob::default();
+                    let mut append = |text: egui::RichText| {
+                        text.append_to(
+                            &mut description,
+                            ui.style(),
+                            egui::FontSelection::Default,
+                            ui.text_valign(),
+                        );
+                    };
+                    append(egui::RichText::new(row.description).color(COLOR_TEXT_PRIMARY));
+                    if !row.also.is_empty() {
+                        let also = format!("  also {}", row.also.join(", "));
+                        append(egui::RichText::new(also).color(COLOR_TEXT_MUTED));
+                    }
+                    shortcut_cell(ui, description_width, description);
                     ui.end_row();
                 }
             });
@@ -461,8 +465,60 @@ fn render_shortcut_sections(ui: &mut egui::Ui, query: &str) {
     }
 }
 
+/// One help row: an action's primary chord and description, plus chords that also run it.
+#[derive(Debug, PartialEq, Eq)]
+struct ShortcutHelpRow {
+    keys: String,
+    description: &'static str,
+    also: Vec<String>,
+}
+
+/// Builds the help rows for the `entries` that match `query`.
+///
+/// Adjacent entries with one description are chords for the same action, such
+/// as the palette's `Ctrl/Cmd+K` and its `Ctrl/Cmd+Shift+P` alias, so they share
+/// the first entry's row, and the row matches when any of its chords does.
+///
+/// # Arguments
+/// - `entries`: One help section's entries, primary chords first.
+/// - `query`: Help search text.
+/// - `macos`: Whether to spell chords for macOS.
+///
+/// # Returns
+/// Matching rows in entry order, omitting chords the platform lacks.
+fn shortcut_help_rows(
+    entries: &[ShortcutHelpEntry],
+    query: &str,
+    macos: bool,
+) -> Vec<ShortcutHelpRow> {
+    let mut rows: Vec<(ShortcutHelpRow, bool)> = Vec::new();
+    for entry in entries {
+        let Some(keys) = platform_shortcut_keys(entry.keys, macos) else {
+            continue;
+        };
+        let matched = shortcut_matches(*entry, query);
+        match rows.last_mut() {
+            Some((row, row_matched)) if row.description == entry.description => {
+                row.also.push(keys);
+                *row_matched |= matched;
+            }
+            _ => rows.push((
+                ShortcutHelpRow {
+                    keys,
+                    description: entry.description,
+                    also: Vec::new(),
+                },
+                matched,
+            )),
+        }
+    }
+    rows.into_iter()
+        .filter_map(|(row, matched)| matched.then_some(row))
+        .collect()
+}
+
 /// Keep each wrapped table cell left aligned within its fixed column width.
-fn shortcut_cell(ui: &mut egui::Ui, width: f32, text: egui::RichText) {
+fn shortcut_cell(ui: &mut egui::Ui, width: f32, text: impl Into<egui::WidgetText>) {
     ui.allocate_ui_with_layout(
         egui::vec2(width, 0.0),
         egui::Layout::top_down(egui::Align::Min),
@@ -548,6 +604,40 @@ mod tests {
             assert!(shortcut_matches(entry, query), "{query}");
         }
         assert!(!shortcut_matches(entry, "export"));
+    }
+
+    #[test]
+    fn help_rows_list_the_palette_alias_on_the_primary_row_for_either_chord() {
+        let app_entries = RUNTIME_SHORTCUTS
+            .iter()
+            .map(|shortcut| shortcut.help())
+            .collect::<Vec<_>>();
+        for (macos, command) in [(true, "Cmd"), (false, "Ctrl")] {
+            let (primary, alias) = (format!("{command}+K"), format!("{command}+Shift+P"));
+            let palette_rows = |query: &str| {
+                shortcut_help_rows(&app_entries, query, macos)
+                    .into_iter()
+                    .filter(|row| row.description == "Toggle command palette")
+                    .collect::<Vec<_>>()
+            };
+            for query in ["", "palette", &primary, &alias, "shift p"] {
+                assert_eq!(
+                    palette_rows(query),
+                    [ShortcutHelpRow {
+                        keys: primary.clone(),
+                        description: "Toggle command palette",
+                        also: vec![alias.clone()],
+                    }],
+                    "macos={macos} query={query:?}"
+                );
+            }
+            assert!(palette_rows("Shift+K").is_empty(), "macos={macos}");
+        }
+        assert_eq!(
+            shortcut_help_rows(&app_entries, "", true).len(),
+            app_entries.len() - 1,
+            "only the palette alias shares a row"
+        );
     }
 
     #[test]

@@ -233,7 +233,8 @@ fn palette_hints_show_the_primary_chord_on_each_platform() {
         });
     }
 
-    // Shortcut help lists the primary chord before the Shift+P alias.
+    // Shortcut help keys the palette row by the primary chord and names the
+    // Shift+P alias after its description.
     let mut harness = make_app();
     let ctx = egui::Context::default();
     harness.app.shortcut_help_open = true;
@@ -246,8 +247,10 @@ fn palette_hints_show_the_primary_chord_on_each_platform() {
     } else {
         ("Ctrl+K", "Ctrl+Shift+P")
     };
+    let keys = text_bounds(&output, primary);
+    let row = text_bounds(&output, &format!("Toggle command palette  also {alias}"));
     assert!(
-        text_bounds(&output, primary).top() < text_bounds(&output, alias).top(),
-        "{primary} should be listed above {alias}"
+        keys.right() < row.left() && (keys.center().y - row.center().y).abs() < 2.0,
+        "{primary} should key the palette row that names {alias}: {keys:?} {row:?}"
     );
 }

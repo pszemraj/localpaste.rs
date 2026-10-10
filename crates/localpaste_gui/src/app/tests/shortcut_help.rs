@@ -363,3 +363,59 @@ fn shortcut_help_window_geometry_is_stable_across_search_results() {
         );
     }
 }
+
+#[test]
+fn shortcut_help_lists_the_palette_alias_on_its_primary_row() {
+    let macos = cfg!(target_os = "macos");
+    let keys = |label| super::super::shortcuts::platform_shortcut_keys(label, macos).unwrap();
+    let (primary, alias) = (keys("Ctrl/Cmd+K"), keys("Ctrl/Cmd+Shift+P"));
+    for query in ["", "palette", primary.as_str(), alias.as_str()] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            shortcut_help_input(vec![key_event(egui::Key::F1, egui::Modifiers::NONE)]),
+        );
+        run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            shortcut_help_input(vec![egui::Event::Text(query.into())]),
+        );
+        let mut output =
+            run_full_update_with_input(&mut harness.app, &ctx, shortcut_help_input(Vec::new()));
+        for _ in 0..3 {
+            output =
+                run_full_update_with_input(&mut harness.app, &ctx, shortcut_help_input(Vec::new()));
+        }
+        // Key labels are the only monospace text; the query field shows the query too.
+        let texts = |keep: &dyn Fn(&str, &egui::FontFamily) -> bool| {
+            output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text)
+                        if keep(
+                            &text.galley.job.text,
+                            &text.galley.job.sections[0].format.font_id.family,
+                        ) =>
+                    {
+                        Some(text.galley.job.text.clone())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            texts(&|text, _| text.starts_with("Toggle command palette")),
+            [format!("Toggle command palette  also {alias}")],
+            "query {query:?} should show one palette row naming the alias"
+        );
+        assert_eq!(
+            texts(&|text, family| *family == egui::FontFamily::Monospace
+                && (text == primary || text == alias)),
+            std::slice::from_ref(&primary),
+            "query {query:?} should key the row by the primary chord"
+        );
+    }
+}
