@@ -1,6 +1,6 @@
 //! Derived-term extraction regressions.
 
-use super::{derive, MAX_TERM_CHARS};
+use super::{derive, MAX_HANDLE_ATOM_CHARS, MAX_TERM_CHARS};
 
 #[test]
 fn giant_single_token_yields_no_terms_or_synthesized_handle() {
@@ -67,5 +67,253 @@ fn realistic_long_identifiers_remain_terms() {
             "{identifier} missing from {:?}",
             derived.terms
         );
+    }
+}
+
+/// Assert the derived handle of each `(content, handle)` pair.
+fn assert_handles(language: Option<&str>, cases: &[(&str, &str)]) {
+    for (content, handle) in cases {
+        let derived = derive(content, language);
+        assert_eq!(derived.handle.as_deref(), Some(*handle), "{content:?}");
+    }
+}
+
+#[test]
+fn observed_pastes_get_clean_terms_and_synthesized_handles() {
+    for (content, language, terms, handle) in [
+        (
+            "quick note: call the vet tomorrow",
+            "text",
+            &["quick", "note", "call", "tomorrow"][..],
+            "quick note",
+        ),
+        (
+            "Hi Sam,\nplease review and deploy.\nThanks",
+            "text",
+            &["please", "review", "deploy", "thanks"][..],
+            "please review",
+        ),
+        (
+            "name: web\nservice: api\nreplicas: 3\n",
+            "yaml",
+            &["name", "service", "replicas", "web"][..],
+            "name web",
+        ),
+        (
+            "https://example.com/docs/getting-started",
+            "text",
+            &["getting-started", "example.com", "docs"][..],
+            "example.com",
+        ),
+        (
+            "http://localhost:8080/api",
+            "text",
+            &["localhost:8080", "api"][..],
+            "localhost:8080",
+        ),
+    ] {
+        let derived = derive(content, Some(language));
+        assert_eq!(derived.terms, terms, "{content:?}");
+        assert_eq!(derived.handle.as_deref(), Some(handle), "{content:?}");
+    }
+}
+
+#[test]
+fn key_names_count_once_and_only_url_schemes_are_stopwords() {
+    // `name` and `name:` used to be counted as two distinct terms.
+    let repeated = derive("name: a\nname: b\nname: c\n", Some("yaml"));
+    assert_eq!(repeated.terms.first().map(String::as_str), Some("name"));
+
+    // `www` is a stopword only on its own, not as the front of a host.
+    let host = derive("www.example.com", Some("text"));
+    assert_eq!(host.terms, ["www.example.com"]);
+}
+
+#[test]
+fn edge_trimming_keeps_internal_punctuation() {
+    let identifiers = [
+        "std::collections::hash_map::entry",
+        "localpaste.rs",
+        "p.id",
+        "max_paste_bytes",
+        "127.0.0.1",
+        "my-long-kebab-case-name",
+        // Underscores are identifier characters and are not trimmed.
+        "__init__",
+        "_private",
+    ];
+    for identifier in identifiers {
+        for body in [
+            format!("see {identifier}"),
+            format!("see {identifier}."),
+            format!("see {identifier}:"),
+            format!("see {identifier}..."),
+            format!("see {identifier}-"),
+            format!("see --{identifier}"),
+            format!("see {identifier}, then stop"),
+        ] {
+            let derived = derive(body.as_str(), Some("text"));
+            assert!(
+                derived.terms.iter().any(|term| term == identifier),
+                "{identifier} missing from {:?} for {body:?}",
+                derived.terms
+            );
+        }
+    }
+}
+
+#[test]
+fn tokens_that_are_short_after_trimming_are_dropped() {
+    let derived = derive("ab. cd: ef- --- ... :: x-.", Some("text"));
+    assert!(derived.terms.is_empty(), "{:?}", derived.terms);
+    assert_eq!(derived.handle, None);
+
+    // `1.` and `10.` trim to digits only, which are never terms.
+    assert!(derive("1. 10. 200:", Some("text")).terms.is_empty());
+}
+
+#[test]
+fn command_handles_keep_path_operands_whole_or_cut_them() {
+    assert_handles(
+        None,
+        &[
+            ("cd ~/projects/app", "cd ~/projects/app"),
+            ("cd ~/projects/app\ncargo build", "cd ~/projects/app"),
+            (
+                "cd C:\\Users\\me\\app\ncargo build",
+                "cd C:\\Users\\me\\app",
+            ),
+            ("ls ./a/b.txt", "ls ./a/b.txt"),
+            ("scp user@host:/srv/x.tgz .", "scp user@host:/srv/x.tgz"),
+            // The operand stops at the first character that is not path-like,
+            // so the handle never contains text that is absent from the paste.
+            ("ls *.txt", "ls"),
+            ("echo $HOME/bin", "echo"),
+            ("grep foo; ls", "grep foo"),
+            ("rm %TEMP%\\x", "rm"),
+            ("cp file.txt>out", "cp file.txt"),
+        ],
+    );
+}
+
+#[test]
+fn handle_operands_are_capped_at_a_prefix_of_the_paste_text() {
+    let path = "~/projects/a-very-long-directory-name/with/nested/parts";
+    assert!(path.len() > MAX_HANDLE_ATOM_CHARS);
+    let derived = derive(format!("cd {path}\ncargo build").as_str(), None);
+    let handle = derived.handle.expect("command handle");
+    let operand = handle.strip_prefix("cd ").expect("cd handle");
+    assert_eq!(operand.chars().count(), MAX_HANDLE_ATOM_CHARS);
+    assert!(path.starts_with(operand), "{operand:?}");
+}
+
+#[test]
+fn config_handles_keep_path_values_and_unmangled_text() {
+    assert_handles(
+        Some("yaml"),
+        &[
+            (
+                "dataset: /data/train/v2\nmodel: gpt-4\n",
+                "dataset /data/train/v2",
+            ),
+            ("project: ~/projects/app\n", "project ~/projects/app"),
+            ("image: ghcr.io/org/app:1.2\n", "image ghcr.io/org/app:1.2"),
+            ("name = \"build\\out\"\n", "name build\\out"),
+            // Surrounding quotes and a trailing comma are not part of the value.
+            ("{\n  \"name\": \"web\",\n}\n", "name web"),
+            ("name: web,\n", "name web"),
+            ("name: web, api\n", "name web, api"),
+            // Flow-style one-liners still open with their container.
+            ("{\"name\":\"Ada\"}", "name Ada"),
+        ],
+    );
+}
+
+#[test]
+fn config_keys_must_match_exactly_so_prose_does_not_become_a_config_handle() {
+    // Keeping spaces in values must not let a prose line pose as `service ...`:
+    // the whole text before the separator has to be a preferred key.
+    assert_handles(
+        Some("text"),
+        &[
+            ("service is down: restart it", "service down"),
+            ("name of the file = report.txt", "name file"),
+        ],
+    );
+}
+
+#[test]
+fn config_values_keep_internal_spaces_and_cap_at_a_word_boundary() {
+    assert_handles(
+        Some("yaml"),
+        &[
+            ("name: My Project\n", "name My Project"),
+            // Whitespace runs collapse to one space.
+            ("name:   My \t  Project  \n", "name My Project"),
+            ("name: \"My Project\"\n", "name My Project"),
+            // The value ends at the first character outside the allowed set.
+            ("name: web # prod\n", "name web"),
+            ("name: \"My Project\", extra\n", "name My Project"),
+            ("name: web {prod}\n", "name web"),
+            // Past the cap only whole words are kept: 20 characters here, and
+            // the next word would reach 26.
+            (
+                "task: Fix the flaky upload retry in the nightly build\n",
+                "task Fix the flaky upload",
+            ),
+            // A value that fits exactly is kept whole.
+            (
+                "task: aaaa bbbb cccc dddd eeee\n",
+                "task aaaa bbbb cccc dddd eeee",
+            ),
+        ],
+    );
+
+    // A first word longer than the cap is the only mid-word cut.
+    let long_word = "w".repeat(MAX_HANDLE_ATOM_CHARS + 10);
+    let derived = derive(format!("name: {long_word} tail\n").as_str(), Some("yaml"));
+    assert_eq!(
+        derived.handle.as_deref(),
+        Some(format!("name {}", &long_word[..MAX_HANDLE_ATOM_CHARS]).as_str())
+    );
+}
+
+#[test]
+fn assigned_values_are_not_copied_into_handles() {
+    // The variable name is the useful part of the handle; the value after `=`
+    // is often a secret or noise.
+    assert_handles(
+        None,
+        &[
+            ("export API_KEY=sk-live-abc123", "export API_KEY"),
+            (
+                "export API_KEY=sk-live-abc123\ncargo build",
+                "export API_KEY",
+            ),
+            ("export RUST_LOG=debug\ncargo run", "export RUST_LOG"),
+            ("set FOO=bar\ncargo build", "set FOO"),
+            ("set /p prompt=Enter your full name", "set /p"),
+        ],
+    );
+    // Config values stop at `=` too, and a URL query is cut at `?` before that.
+    assert_handles(
+        Some("yaml"),
+        &[
+            ("name: a=b\n", "name a"),
+            ("name: token=sk-live-abc123\n", "name token"),
+            (
+                "project: https://example.com/p?id=1\n",
+                "project https://example.com/p",
+            ),
+        ],
+    );
+
+    for content in [
+        "export API_KEY=sk-live-abc123",
+        "set TOKEN=sk-live-abc123\ncargo build",
+        "name: token=sk-live-abc123",
+    ] {
+        let handle = derive(content, None).handle.expect("handle");
+        assert!(!handle.contains("sk-live"), "{content:?} -> {handle:?}");
     }
 }

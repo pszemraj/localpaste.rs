@@ -81,7 +81,7 @@ fn git_subcommands_quoted_operands_and_transcripts_stay_commands() {
         ("echo 'this is a test'", "echo this"),
         ("npm i", "npm i"),
         ("docker compose up -d", "docker compose"),
-        ("set /p prompt=Enter your full name", "set p"),
+        ("set /p prompt=Enter your full name", "set /p"),
         (
             "$ git status\nOn branch main\nnothing to commit, working tree clean",
             "git status",

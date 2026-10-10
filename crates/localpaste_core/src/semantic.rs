@@ -17,6 +17,10 @@ pub(crate) use makefile::{
 const SAMPLE_MAX_LINES: usize = 256;
 const MAX_TERMS: usize = 4;
 const MAX_HANDLE_CHARS: usize = 48;
+/// Longest command operand or config value copied into a handle. Longer ones
+/// keep their leading characters (a config value keeps whole leading words), so
+/// the handle stays a prefix of text that appears in the paste.
+const MAX_HANDLE_ATOM_CHARS: usize = 24;
 /// Longest token kept as a derived term. Longer tokens (minified blobs, base64
 /// lines, a single giant word) are not retrieval terms and would otherwise be
 /// persisted in the metadata projection and shown in full by the UI.
@@ -612,13 +616,19 @@ fn extract_config_handle(sample: &str) -> Option<String> {
             let Some((key, value)) = trimmed.split_once(separator) else {
                 continue;
             };
-            let key = clean_atom(key);
-            let value = clean_atom(value);
-            if PREFERRED_KEYS
+            // The key must match whole: cutting it at its first space would
+            // turn prose such as `service is down: restart it` into a config
+            // entry. A flow-style one-liner such as `{"name": "Ada"}` opens
+            // its first key with the container.
+            let key = unquote(unquote(key).trim_start_matches(['{', '[']));
+            if !PREFERRED_KEYS
                 .iter()
-                .any(|candidate| candidate.eq_ignore_ascii_case(key.as_str()))
-                && !value.is_empty()
+                .any(|candidate| candidate.eq_ignore_ascii_case(key))
             {
+                continue;
+            }
+            let value = clean_config_value(value);
+            if !value.is_empty() {
                 return Some(format!("{} {}", key, value));
             }
         }
@@ -669,7 +679,7 @@ fn extract_terms(sample: &str, language: Option<&str>) -> Vec<String> {
     let mut ordinal = 0usize;
 
     for token in tokenize(sample) {
-        let lower = token.to_ascii_lowercase();
+        let lower = trim_term_edges(token.as_str()).to_ascii_lowercase();
         if !is_search_worthy_token(lower.as_str(), lang.as_str()) {
             continue;
         }
@@ -747,6 +757,18 @@ fn tokenize(input: &str) -> Vec<String> {
     out
 }
 
+/// Strip sentence and key punctuation from both ends of a token.
+///
+/// `.`, `:`, and `-` are token characters so that `localpaste.rs`,
+/// `hash_map::entry`, and `kebab-case` stay whole, but at an edge they come
+/// from prose, YAML keys, URL schemes, or CLI flags (`deploy.`, `name:`,
+/// `https:`, `--release`) and would make `name` and `name:` distinct terms.
+/// Underscores are kept because leading and trailing ones are part of
+/// identifiers such as `__init__` and `_private`.
+fn trim_term_edges(token: &str) -> &str {
+    token.trim_matches(['.', ':', '-'])
+}
+
 fn is_search_worthy_token(token: &str, language: &str) -> bool {
     // Tokens are ASCII (see `tokenize`), so byte length equals character count.
     if token.len() < 3
@@ -760,7 +782,7 @@ fn is_search_worthy_token(token: &str, language: &str) -> bool {
         "the", "and", "for", "with", "from", "that", "this", "into", "your", "have", "has", "was",
         "were", "are", "but", "not", "all", "any", "none", "some", "then", "when", "true", "false",
         "null", "body", "line", "lines", "text", "paste", "failed", "after", "before", "retry",
-        "retries", "repeated", "error", "errors", "warning", "warnings",
+        "retries", "repeated", "error", "errors", "warning", "warnings", "http", "https", "www",
     ];
     if STOPWORDS.contains(&token) {
         return false;
@@ -775,16 +797,66 @@ fn is_search_worthy_token(token: &str, language: &str) -> bool {
     !language_keywords.contains(&token)
 }
 
+/// Strip surrounding whitespace, quotes, and backticks from a handle operand.
+fn unquote(value: &str) -> &str {
+    value.trim().trim_matches(['"', '\'', '`'])
+}
+
+/// Characters that may appear inside a handle operand: identifier and path
+/// characters, including `~`, both slashes, `@`, `+`, and `,`. `=` is
+/// deliberately absent: the text after it is an assigned value, often a secret
+/// or noise, and the name before it is the useful part of the handle.
+fn is_atom_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric()
+        || matches!(
+            ch,
+            '_' | '-' | '.' | ':' | '/' | '\\' | '~' | '@' | '+' | ','
+        )
+}
+
+/// Copy a command operand into a handle.
+///
+/// The operand is taken verbatim from its start up to the first character that
+/// is not an identifier or path character (a space, quote, glob, `$`, `;`, `=`,
+/// and so on) and is capped at [`MAX_HANDLE_ATOM_CHARS`]. Characters are never
+/// deleted from the middle, so the result is always a prefix of text that
+/// appears in the paste, with a trailing separator comma dropped.
 fn clean_atom(value: &str) -> String {
-    value
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .trim_matches('`')
+    let atom: String = unquote(value)
         .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | ':'))
-        .take(24)
-        .collect()
+        .take_while(|ch| is_atom_char(*ch))
+        .take(MAX_HANDLE_ATOM_CHARS)
+        .collect();
+    atom.trim_end_matches(',').to_string()
+}
+
+/// Copy a config value into a handle.
+///
+/// Unlike a command operand, a config value may hold several words, so the
+/// same character set plus whitespace is read up to the first other character
+/// (`#`, a quote, `{`, `=`, and so on) and whitespace runs collapse to one
+/// space. A value longer than [`MAX_HANDLE_ATOM_CHARS`] keeps whole words, and
+/// only a first word that is itself too long is cut mid-word.
+fn clean_config_value(value: &str) -> String {
+    let text = unquote(value);
+    let end = text
+        .find(|ch: char| !(is_atom_char(ch) || ch.is_whitespace()))
+        .unwrap_or(text.len());
+    let mut out = String::new();
+    for word in text[..end].split_whitespace() {
+        let separator = usize::from(!out.is_empty());
+        if out.chars().count() + separator + word.chars().count() > MAX_HANDLE_ATOM_CHARS {
+            if out.is_empty() {
+                out = truncate_chars(word, MAX_HANDLE_ATOM_CHARS);
+            }
+            break;
+        }
+        if separator == 1 {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    out.trim_end_matches(',').to_string()
 }
 
 fn truncate_chars(value: &str, max_chars: usize) -> String {
