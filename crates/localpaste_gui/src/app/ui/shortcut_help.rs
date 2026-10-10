@@ -3,6 +3,7 @@
 use super::super::shortcuts::{
     platform_shortcut_keys, ShortcutHelpEntry, RUNTIME_SHORTCUTS, STATIC_SHORTCUT_SECTIONS,
 };
+use super::super::virtual_editor::uses_mac_shortcuts;
 use super::super::*;
 use super::ModalWindowExt as _;
 use eframe::egui;
@@ -409,19 +410,61 @@ fn discovery_escape(event: &egui::Event) -> bool {
     } if modifiers.is_none())
 }
 
+/// Gap between the key and description columns.
+const HELP_COLUMN_GAP: f32 = 16.0;
+/// Gap between one row's taller cell and the next row.
+const HELP_ROW_GAP: f32 = 8.0;
+/// Narrowest key column, so a set of short labels keeps help's usual proportions.
+const KEY_COLUMN_MIN_WIDTH: f32 = 180.0;
+/// Narrowest description column; a key label too wide to leave this much room wraps instead.
+const DESCRIPTION_MIN_WIDTH: f32 = 200.0;
+
+/// Renders the help sections that have rows matching `query`.
+///
+/// Rows are a key column and a description column. The key column is as wide
+/// as the widest key label in the platform's whole list, measured with the font
+/// it is drawn in, so labels stay on one line at any display scale or zoom
+/// while the description column keeps [`DESCRIPTION_MIN_WIDTH`]. Measuring the
+/// whole list keeps both columns still while the query filters rows. Cells are
+/// top-aligned, so a wrapped cell grows its own row and never reaches the next.
 fn render_shortcut_sections(ui: &mut egui::Ui, query: &str) {
+    let macos = uses_mac_shortcuts();
     let app_entries = RUNTIME_SHORTCUTS
         .iter()
         .map(|shortcut| shortcut.help())
         .collect::<Vec<_>>();
-    let sections = std::iter::once(("App actions", app_entries.as_slice())).chain(
-        STATIC_SHORTCUT_SECTIONS
-            .iter()
-            .map(|section| (section.title, section.entries)),
+    let sections = std::iter::once(("App actions", app_entries.as_slice()))
+        .chain(
+            STATIC_SHORTCUT_SECTIONS
+                .iter()
+                .map(|section| (section.title, section.entries)),
+        )
+        .collect::<Vec<_>>();
+    let widest_key = sections
+        .iter()
+        .flat_map(|(_, entries)| shortcut_help_rows(entries, "", macos))
+        .map(|row| {
+            egui::WidgetText::from(key_text(&row.keys))
+                .into_galley(
+                    ui,
+                    Some(egui::TextWrapMode::Extend),
+                    f32::INFINITY,
+                    egui::FontSelection::Default,
+                )
+                .size()
+                .x
+        })
+        .fold(0.0, f32::max);
+    let available = ui.available_width();
+    // A point of slack covers egui snapping the cell's edges at fractional scales.
+    let key_width = (widest_key + 1.0).ceil().clamp(
+        KEY_COLUMN_MIN_WIDTH,
+        (available - HELP_COLUMN_GAP - DESCRIPTION_MIN_WIDTH).max(KEY_COLUMN_MIN_WIDTH),
     );
+    let description_width = (available - key_width - HELP_COLUMN_GAP).max(DESCRIPTION_MIN_WIDTH);
     let mut shown_section = false;
     for (title, entries) in sections {
-        let rows = shortcut_help_rows(entries, query, cfg!(target_os = "macos"));
+        let rows = shortcut_help_rows(entries, query, macos);
         if rows.is_empty() {
             continue;
         }
@@ -431,20 +474,11 @@ fn render_shortcut_sections(ui: &mut egui::Ui, query: &str) {
         }
         shown_section = true;
         section_title(ui, title);
-        let description_width = (ui.available_width() - 196.0).max(100.0);
-        egui::Grid::new(("shortcut_help_section", title))
-            .num_columns(2)
-            .min_row_height(0.0)
-            .spacing(egui::vec2(16.0, 8.0))
-            .show(ui, |ui| {
-                for row in rows {
-                    shortcut_cell(
-                        ui,
-                        180.0,
-                        egui::RichText::new(row.keys)
-                            .monospace()
-                            .color(COLOR_ACCENT_TEXT),
-                    );
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(HELP_COLUMN_GAP, HELP_ROW_GAP);
+            for row in rows {
+                ui.horizontal_top(|ui| {
+                    shortcut_cell(ui, key_width, key_text(&row.keys));
                     let mut description = egui::text::LayoutJob::default();
                     let mut append = |text: egui::RichText| {
                         text.append_to(
@@ -460,9 +494,9 @@ fn render_shortcut_sections(ui: &mut egui::Ui, query: &str) {
                         append(egui::RichText::new(also).color(COLOR_TEXT_MUTED));
                     }
                     shortcut_cell(ui, description_width, description);
-                    ui.end_row();
-                }
-            });
+                });
+            }
+        });
     }
     if !shown_section {
         ui.label("No matching shortcuts.");
@@ -519,6 +553,13 @@ fn shortcut_help_rows(
     rows.into_iter()
         .filter_map(|(row, matched)| matched.then_some(row))
         .collect()
+}
+
+/// A help row's key label, styled as the key column draws and measures it.
+fn key_text(keys: &str) -> egui::RichText {
+    egui::RichText::new(keys)
+        .monospace()
+        .color(COLOR_ACCENT_TEXT)
 }
 
 /// Keep each wrapped table cell left aligned within its fixed column width.

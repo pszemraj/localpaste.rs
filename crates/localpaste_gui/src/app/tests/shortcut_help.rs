@@ -504,3 +504,192 @@ fn shortcut_help_reopens_at_the_top_of_its_list() {
         );
     }
 }
+
+/// One painted help row: its key label galley and where its description sits.
+struct RenderedHelpRow {
+    label: String,
+    key: egui::Rect,
+    key_lines: usize,
+    description: egui::Rect,
+}
+
+/// The help rows painted in `output`, in paint order.
+///
+/// # Arguments
+/// - `output`: A settled frame with help open.
+/// - `window`: Help's window rect, so text elsewhere in the app is ignored.
+/// - `expected`: Each key-column label, mapped to the description on its row.
+fn rendered_help_rows(
+    output: &egui::FullOutput,
+    window: egui::Rect,
+    expected: &std::collections::BTreeMap<String, &str>,
+) -> Vec<RenderedHelpRow> {
+    let texts = output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if window.contains(text.pos) => Some(text),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    texts
+        .iter()
+        .filter(|text| {
+            text.galley.job.sections[0].format.font_id.family == egui::FontFamily::Monospace
+        })
+        .filter_map(|key| {
+            let label = &key.galley.job.text;
+            let description = expected.get(label)?;
+            let description = texts
+                .iter()
+                .find(|text| text.galley.job.text.starts_with(description))
+                .unwrap_or_else(|| panic!("{label} row should show {description:?}"));
+            Some(RenderedHelpRow {
+                label: label.clone(),
+                key: egui::Rect::from_min_size(key.pos, key.galley.size()),
+                key_lines: key.galley.rows.len(),
+                description: egui::Rect::from_min_size(description.pos, description.galley.size()),
+            })
+        })
+        .collect()
+}
+
+/// Display scales help is checked at: whole and fractional, where text widths snap differently.
+const HELP_DISPLAY_SCALES: [f32; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
+
+/// Renders help in the app's default-size window and checks every row it lists.
+///
+/// Each key label must be one line, its description must start level with it,
+/// and each row must keep the row gap below the previous one, wrapped
+/// description included. The list is taller than its scroll area, so the check
+/// wheels through it until every key label has been drawn.
+///
+/// # Arguments
+/// - `platform`: Whose key spelling help uses.
+/// - `pixels_per_point`: Native display scale; the app's zoom stays at 1.0.
+fn check_help_rows_at_default_window_size(
+    platform: super::super::virtual_editor::PlatformFlavor,
+    pixels_per_point: f32,
+) {
+    use super::super::shortcuts::{
+        platform_shortcut_keys, RUNTIME_SHORTCUTS, STATIC_SHORTCUT_SECTIONS,
+    };
+
+    let macos = platform == super::super::virtual_editor::PlatformFlavor::Mac;
+    let what = format!("macos={macos} scale={pixels_per_point}");
+    let viewport = egui::Rect::from_min_size(
+        egui::Pos2::ZERO,
+        egui::vec2(DEFAULT_WINDOW_SIZE[0], DEFAULT_WINDOW_SIZE[1]),
+    );
+    // The palette alias shares its primary chord's row, so it never keys one.
+    let expected = RUNTIME_SHORTCUTS
+        .iter()
+        .map(|shortcut| shortcut.help())
+        .chain(
+            STATIC_SHORTCUT_SECTIONS
+                .iter()
+                .flat_map(|section| section.entries.iter().copied()),
+        )
+        .filter(|entry| entry.keys != "Ctrl/Cmd+Shift+P")
+        .filter_map(|entry| {
+            Some((
+                platform_shortcut_keys(entry.keys, macos)?,
+                entry.description,
+            ))
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    with_platform(platform, || {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        // Half-second steps let egui's smooth wheel scrolling finish between frames.
+        let mut time = 0.0;
+        let mut frame = |app: &mut LocalPasteApp, events: Vec<egui::Event>| {
+            time += 0.5;
+            let mut input = egui::RawInput {
+                screen_rect: Some(viewport),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            input
+                .viewports
+                .entry(egui::ViewportId::ROOT)
+                .or_default()
+                .native_pixels_per_point = Some(pixels_per_point);
+            run_full_update_with_input(app, &ctx, input)
+        };
+        frame(
+            &mut harness.app,
+            vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
+        );
+        let mut seen = std::collections::BTreeSet::new();
+        for _ in 0..12 {
+            let mut output = frame(&mut harness.app, Vec::new());
+            for _ in 0..2 {
+                output = frame(&mut harness.app, Vec::new());
+            }
+            let window = ctx
+                .memory(|memory| memory.area_rect(egui::Id::new(SHORTCUT_HELP_WINDOW_ID)))
+                .expect("help should be open");
+            assert!(viewport.contains_rect(window), "{what}: {window:?}");
+            let rows = rendered_help_rows(&output, window, &expected);
+            for row in &rows {
+                assert_eq!(
+                    row.key_lines, 1,
+                    "{what}: {} should not wrap in the key column ({:?})",
+                    row.label, row.key
+                );
+                assert!(
+                    (row.description.top() - row.key.top()).abs() <= 0.5,
+                    "{what}: the {} description should start level with its key: key {:?}, \
+                     description {:?}",
+                    row.label,
+                    row.key,
+                    row.description
+                );
+                seen.insert(row.label.clone());
+            }
+            for pair in rows.windows(2) {
+                let bottom = pair[0].key.bottom().max(pair[0].description.bottom());
+                assert!(
+                    pair[1].key.top() - bottom >= 8.0 - 0.5,
+                    "{what}: the {} row should keep its gap below the {} row, which ends at \
+                     {bottom}; it starts at {}",
+                    pair[1].label,
+                    pair[0].label,
+                    pair[1].key.top()
+                );
+            }
+            if seen.len() == expected.len() {
+                break;
+            }
+            frame(
+                &mut harness.app,
+                vec![
+                    egui::Event::PointerMoved(window.center()),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, -200.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert_eq!(
+            seen,
+            expected.keys().cloned().collect(),
+            "{what}: every key label should be shown"
+        );
+    });
+}
+
+#[test]
+fn shortcut_help_key_labels_stay_on_one_line_at_the_default_window_size() {
+    use super::super::virtual_editor::PlatformFlavor;
+
+    for platform in [PlatformFlavor::Mac, PlatformFlavor::Other] {
+        for pixels_per_point in HELP_DISPLAY_SCALES {
+            check_help_rows_at_default_window_size(platform, pixels_per_point);
+        }
+    }
+}
