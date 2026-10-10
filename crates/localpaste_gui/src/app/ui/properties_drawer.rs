@@ -506,9 +506,10 @@ impl LocalPasteApp {
             return;
         }
 
-        let mutation_block_reason = self.mutation_shortcut_block_reason();
         let save_blocked = self.save_block_reason().is_some();
-        let background_mutation_blocked = mutation_block_reason.is_some();
+        // The editor shows the reason beside the paste id; an extra row here would
+        // shift the drawer whenever a block starts or ends.
+        let background_mutation_blocked = self.mutation_shortcut_block_reason().is_some();
         let mut keep_open = true;
         egui::SidePanel::right("properties_drawer")
             .default_width(320.0)
@@ -570,10 +571,6 @@ impl LocalPasteApp {
                         self.save_metadata_now();
                     }
                 });
-                if let Some(reason) = mutation_block_reason {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(reason).small().color(COLOR_TEXT_MUTED));
-                }
                 if let Some(summary) = self.selected_paste_summary() {
                     render_derived_meta_section(ui, &summary.derived);
                 }

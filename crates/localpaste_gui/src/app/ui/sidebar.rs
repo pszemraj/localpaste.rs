@@ -195,29 +195,28 @@ impl LocalPasteApp {
 
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(
-                            !background_mutation_blocked,
-                            egui::Button::new("+ New Paste").sense(non_focusable_click_sense()),
-                        )
-                        .clicked()
+                    // The block reason is hover text, so it cannot push the list down.
+                    let explain_block = |response: egui::Response| match mutation_block_reason {
+                        Some(reason) => response.on_disabled_hover_text(reason),
+                        None => response,
+                    };
+                    if explain_block(ui.add_enabled(
+                        !background_mutation_blocked,
+                        egui::Button::new("+ New Paste").sense(non_focusable_click_sense()),
+                    ))
+                    .clicked()
                     {
                         self.create_new_paste();
                     }
-                    if ui
-                        .add_enabled(
-                            self.selected_id.is_some() && !background_mutation_blocked,
-                            egui::Button::new("Delete").sense(non_focusable_click_sense()),
-                        )
-                        .clicked()
+                    if explain_block(ui.add_enabled(
+                        self.selected_id.is_some() && !background_mutation_blocked,
+                        egui::Button::new("Delete").sense(non_focusable_click_sense()),
+                    ))
+                    .clicked()
                     {
                         self.delete_selected();
                     }
                 });
-                if let Some(reason) = mutation_block_reason {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(reason).small().color(COLOR_TEXT_MUTED));
-                }
 
                 ui.add_space(10.0);
                 self.render_collection_filters(ui);

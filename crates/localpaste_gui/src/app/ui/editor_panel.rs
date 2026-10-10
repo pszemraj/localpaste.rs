@@ -65,18 +65,27 @@ impl LocalPasteApp {
                     ui.add_space(4.0);
                 }
 
-                ui.label(
-                    RichText::new(id.clone())
-                        .small()
-                        .monospace()
-                        .color(COLOR_TEXT_MUTED),
+                // A block reason shares the id's row, so it never pushes the editor down.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), ui.text_style_height(&TextStyle::Monospace)),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.label(
+                            RichText::new(id.clone())
+                                .small()
+                                .monospace()
+                                .color(COLOR_TEXT_MUTED),
+                        );
+                        if let Some(reason) = mutation_block_reason {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(reason).small().color(COLOR_TEXT_MUTED),
+                                )
+                                .truncate(),
+                            );
+                        }
+                    },
                 );
-                if let Some(reason) = mutation_block_reason {
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(reason).small().color(COLOR_TEXT_MUTED),
-                    );
-                }
                 ui.add_space(6.0);
                 let editor_height = ui.available_height();
                 let editor_style = TextStyle::Name(EDITOR_TEXT_STYLE.into());
