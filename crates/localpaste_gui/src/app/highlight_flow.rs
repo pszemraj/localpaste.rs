@@ -9,6 +9,7 @@ use super::{
     HIGHLIGHT_DEBOUNCE_LARGE_BYTES, HIGHLIGHT_DEBOUNCE_MEDIUM, HIGHLIGHT_DEBOUNCE_TINY,
     HIGHLIGHT_PLAIN_THRESHOLD, HIGHLIGHT_TINY_EDIT_MAX_CHARS,
 };
+use eframe::egui;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 use tracing::info;
@@ -628,6 +629,63 @@ impl LocalPasteApp {
             }
         }
         size_window
+    }
+
+    /// Lets the highlight worker repaint the window when it finishes a pass.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context of the window that displays the highlights.
+    pub(crate) fn attach_highlight_repaint_context(&self, ctx: &egui::Context) {
+        self.highlight_worker.attach_repaint_context(ctx);
+    }
+
+    /// Records when a request held back by the debounce window becomes sendable.
+    ///
+    /// The editor panel only dispatches during a frame, and eframe skips frames
+    /// without input, so the end of the window needs its own repaint.
+    ///
+    /// # Arguments
+    /// - `held`: Whether this frame withheld a request because of the debounce window.
+    /// - `debounce_window`: Debounce window measured from the last edit.
+    pub(super) fn track_highlight_debounce_wake(&mut self, held: bool, debounce_window: Duration) {
+        self.highlight_debounce_wake_at = if held {
+            self.last_edit_at
+                .map(|last_edit| last_edit + debounce_window)
+        } else {
+            None
+        };
+    }
+
+    /// Returns when the UI must repaint to make progress on highlighting.
+    ///
+    /// Two waits end without any input: a request held back by the debounce
+    /// window, and a staged render waiting for the editor to go idle. A request
+    /// in flight needs no timer, because the worker repaints the window when it
+    /// replies. Idle highlight state schedules nothing.
+    ///
+    /// # Arguments
+    /// - `now`: Current time.
+    ///
+    /// # Returns
+    /// `Some` with the delay until the next highlight wake, or `None` when no wait is pending.
+    pub(super) fn highlight_repaint_after(&mut self, now: Instant) -> Option<Duration> {
+        let mut wake = None;
+        if let Some(wake_at) = self.highlight_debounce_wake_at {
+            // An expired marker repaints once and is cleared, so it cannot
+            // keep the app awake if the editor panel stops running.
+            if wake_at <= now {
+                self.highlight_debounce_wake_at = None;
+            }
+            wake = Some(wake_at.saturating_duration_since(now));
+        }
+        if self.highlight_staged.is_some() {
+            if let Some(last_interaction) = self.last_interaction_at {
+                let until =
+                    (last_interaction + HIGHLIGHT_APPLY_IDLE).saturating_duration_since(now);
+                wake = Some(wake.map_or(until, |current| current.min(until)));
+            }
+        }
+        wake
     }
 
     /// Dispatches a highlight request to the worker and tracks pending metadata.

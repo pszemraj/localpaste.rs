@@ -50,6 +50,16 @@ A staged render is applied only while it still matches the active text by paste 
 
 Between applies, the editor draws the render that matches the buffer exactly if it has one, and otherwise the latest render for the same paste, language, and theme even when it is slightly stale. Plain text is used only when no such render exists or the buffer is above the plain-render threshold. Applying a render evicts cached text layouts only for the lines it changed, taken from the merged patch ranges or from the render's changed range when its base lines up with the displayed render, and evicts everything when the context or line count differs or the base is unknown.
 
+## Waking The UI
+
+eframe repaints only on input or an explicit request, so every wait in this pipeline that ends without input needs its own wake. There are three, and a state with none of them pending schedules nothing.
+
+The worker holds a clone of the window's `egui::Context`, attached at startup, and calls `request_repaint` after queueing each reply. A request in flight therefore needs no polling timer. A worker without an attached context, as in headless tests, wakes nothing.
+
+When the debounce window withholds a request, the editor panel records the instant the window ends, and the frame schedules its repaint for that instant so the request goes out on time instead of at the next input or caret blink. The record is cleared when the request is sent, when nothing is withheld, and once it has fired, so it cannot keep the app awake.
+
+While a staged render is held back for `HIGHLIGHT_APPLY_IDLE`, the frame schedules a repaint for the end of the idle wait, measured from the last input, so the colors appear when typing stops. The end-of-frame scheduling for the debounce and idle waits is `highlight_repaint_after`, which returns the nearer deadline.
+
 ## Large Buffers
 
 The editor compares the buffer's byte length with `HIGHLIGHT_PLAIN_THRESHOLD`. At or above it, no requests are sent, any pending, staged, and current highlight state is cleared the moment a buffer crosses the threshold, and the buffer is drawn plain. The sidebar and paste picker apply the same threshold when choosing to display `plain` as a paste's language.
@@ -66,4 +76,4 @@ At load time the module also appends scope mappings to every bundled theme so th
 
 `LOCALPASTE_HIGHLIGHT_TRACE=1` logs request, queue, drop, and apply events from the UI and a timing line for each worker pass, under the `localpaste_gui::highlight` target; see [gui-notes.md](gui-notes.md).
 
-Tests for this pipeline are `localpaste_gui::app::tests::highlight_behaviors` for debounce, staging, and the plain threshold, `localpaste_gui::app::highlight::worker::resolver_tests` for the worker's incremental passes and grammar resolution, and the tests in `highlight/markdown.rs` for the grammar. Manual typing and large-paste checks are in [gui-perf-protocol.md](gui-perf-protocol.md).
+Tests for this pipeline are `localpaste_gui::app::tests::highlight_behaviors` for debounce, staging, and the plain threshold, `localpaste_gui::app::tests::highlight_repaint` for the repaint wakes, `localpaste_gui::app::highlight::worker::resolver_tests` for the worker's incremental passes and grammar resolution, and the tests in `highlight/markdown.rs` for the grammar. Manual typing and large-paste checks are in [gui-perf-protocol.md](gui-perf-protocol.md).

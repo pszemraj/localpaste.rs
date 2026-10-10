@@ -157,6 +157,7 @@ impl LocalPasteApp {
             highlight_staged_invalidation: None,
             highlight_version: 0,
             highlight_edit_hint: None,
+            highlight_debounce_wake_at: None,
             db_path: config.db_path.clone(),
             locks,
             lock_owner_id,

@@ -7,8 +7,10 @@ use super::{
     HighlightWorkerResult, SyntectSettings,
 };
 use crossbeam_channel::{Receiver, Sender};
+use eframe::egui;
 use localpaste_core::config::env_flag_enabled;
 use std::ops::Range;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Instant;
 use syntect::highlighting::{HighlightState, Highlighter};
@@ -19,6 +21,42 @@ use tracing::info;
 pub(crate) struct HighlightWorker {
     pub(crate) tx: Sender<HighlightRequest>,
     pub(crate) rx: Receiver<HighlightWorkerReply>,
+    /// Repaint target the worker thread wakes after each reply. It is set once
+    /// the window exists, so workers without a window never wake anything.
+    repaint: Arc<OnceLock<egui::Context>>,
+}
+
+impl HighlightWorker {
+    /// Wraps request and reply channels in a worker handle with no repaint target.
+    ///
+    /// # Arguments
+    /// - `tx`: Sender for highlight requests.
+    /// - `rx`: Receiver for highlight replies.
+    ///
+    /// # Returns
+    /// A worker handle whose replies wake nothing until a repaint context is attached.
+    pub(crate) fn from_channels(
+        tx: Sender<HighlightRequest>,
+        rx: Receiver<HighlightWorkerReply>,
+    ) -> Self {
+        Self {
+            tx,
+            rx,
+            repaint: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// Lets the worker thread repaint `ctx` whenever it sends a reply.
+    ///
+    /// eframe repaints only on input or an explicit request, so without this
+    /// wake a finished highlight pass would sit unread until the next input
+    /// event. Only the first context is kept.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context of the window that displays the highlights.
+    pub(crate) fn attach_repaint_context(&self, ctx: &egui::Context) {
+        let _ = self.repaint.set(ctx.clone());
+    }
 }
 
 #[derive(Default)]
@@ -48,6 +86,8 @@ struct HighlightWorkerLine {
 pub(crate) fn spawn_highlight_worker() -> HighlightWorker {
     let (tx, rx_cmd) = crossbeam_channel::unbounded();
     let (tx_evt, rx_evt) = crossbeam_channel::unbounded();
+    let worker = HighlightWorker::from_channels(tx, rx_evt);
+    let repaint = Arc::clone(&worker.repaint);
     let trace_enabled = env_flag_enabled("LOCALPASTE_HIGHLIGHT_TRACE");
 
     thread::Builder::new()
@@ -69,10 +109,16 @@ pub(crate) fn spawn_highlight_worker() -> HighlightWorker {
                 let trace_len = latest.text.len_bytes();
                 let buffer_epoch = latest.buffer_epoch;
                 let render = highlight_in_worker(settings, &mut cache, latest);
-                let _ = tx_evt.send(HighlightWorkerReply {
+                let sent = tx_evt.send(HighlightWorkerReply {
                     buffer_epoch,
                     result: render,
                 });
+                // Wake the UI only after the reply is queued so the next frame can drain it.
+                if sent.is_ok() {
+                    if let Some(ctx) = repaint.get() {
+                        ctx.request_repaint();
+                    }
+                }
                 if trace_enabled {
                     let elapsed_ms = started.elapsed().as_secs_f32() * 1000.0;
                     info!(
@@ -89,7 +135,7 @@ pub(crate) fn spawn_highlight_worker() -> HighlightWorker {
         })
         .expect("spawn highlight worker");
 
-    HighlightWorker { tx, rx: rx_evt }
+    worker
 }
 
 fn worker_line_to_render_line(line: &HighlightWorkerLine) -> HighlightRenderLine {

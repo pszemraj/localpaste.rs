@@ -116,6 +116,10 @@ impl LocalPasteApp {
                         debounce_active,
                         id.as_str(),
                     );
+                self.track_highlight_debounce_wake(
+                    async_mode && debounce_active && !should_request,
+                    debounce_window,
+                );
                 if should_request {
                     let request_text =
                         HighlightRequestText::Rope(self.virtual_editor_buffer.rope().clone());

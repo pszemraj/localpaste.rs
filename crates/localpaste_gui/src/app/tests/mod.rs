@@ -481,6 +481,7 @@ mod editor_toolbar;
 mod editor_ux_regressions;
 mod focus_and_paste_routing;
 mod highlight_behaviors;
+mod highlight_repaint;
 mod history_reset;
 mod keyboard_navigation_audit;
 mod paste_into_editor;

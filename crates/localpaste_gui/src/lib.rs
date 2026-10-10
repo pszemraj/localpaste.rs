@@ -374,6 +374,7 @@ pub fn run() -> eframe::Result<()> {
         Box::new(move |cc| {
             let mut app = app;
             app.ensure_style(&cc.egui_ctx);
+            app.attach_highlight_repaint_context(&cc.egui_ctx);
             app.restore_gui_storage(cc.storage);
             Ok(Box::new(app))
         }),

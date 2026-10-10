@@ -348,10 +348,7 @@ fn virtual_editor_requests_highlight_for_small_markdown_buffers() {
     let mut harness = make_app();
     let (req_tx, req_rx) = crossbeam_channel::unbounded();
     let (_evt_tx, evt_rx) = crossbeam_channel::unbounded();
-    harness.app.highlight_worker = HighlightWorker {
-        tx: req_tx,
-        rx: evt_rx,
-    };
+    harness.app.highlight_worker = HighlightWorker::from_channels(req_tx, evt_rx);
     let markdown = "# Title\n\n- item\n";
     harness.app.edit_language = Some("markdown".to_string());
     harness.app.edit_language_is_manual = true;
@@ -397,10 +394,7 @@ fn virtual_editor_plain_threshold_clears_stale_highlight_state() {
     let mut harness = make_app();
     let (req_tx, req_rx) = crossbeam_channel::unbounded();
     let (_evt_tx, evt_rx) = crossbeam_channel::unbounded();
-    harness.app.highlight_worker = HighlightWorker {
-        tx: req_tx,
-        rx: evt_rx,
-    };
+    harness.app.highlight_worker = HighlightWorker::from_channels(req_tx, evt_rx);
     harness.app.edit_language = Some("markdown".to_string());
     harness.app.edit_language_is_manual = true;
     let large_markdown = format!("# {}\n", "x".repeat(HIGHLIGHT_PLAIN_THRESHOLD));
@@ -924,7 +918,7 @@ fn dispatch_highlight_request_clears_pending_when_worker_channel_is_closed() {
     let (tx, rx_cmd) = unbounded();
     drop(rx_cmd);
     let (_tx_evt, rx_evt) = unbounded();
-    harness.app.highlight_worker = HighlightWorker { tx, rx: rx_evt };
+    harness.app.highlight_worker = HighlightWorker::from_channels(tx, rx_evt);
 
     harness.app.dispatch_highlight_request(
         harness.app.active_revision(),

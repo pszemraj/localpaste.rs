@@ -155,6 +155,8 @@ pub(crate) struct LocalPasteApp {
     highlight_staged_invalidation: Option<StagedHighlightInvalidation>,
     highlight_version: u64,
     highlight_edit_hint: Option<VirtualEditHint>,
+    /// When the debounce window ends for a highlight request the editor panel is holding back.
+    highlight_debounce_wake_at: Option<Instant>,
     last_interaction_at: Option<Instant>,
     last_virtual_click_at: Option<Instant>,
     last_virtual_click_pos: Option<egui::Pos2>,
@@ -802,6 +804,9 @@ impl eframe::App for LocalPasteApp {
             repaint_after = repaint_after.min(until);
         }
         if let Some(until) = self.backend_event_poll_repaint_after(Instant::now()) {
+            repaint_after = repaint_after.min(until);
+        }
+        if let Some(until) = self.highlight_repaint_after(Instant::now()) {
             repaint_after = repaint_after.min(until);
         }
         if ctx.memory(|m| m.has_focus(focus_id)) || self.virtual_editor_state.has_focus {
