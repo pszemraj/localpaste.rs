@@ -655,3 +655,80 @@ fn sidebar_row_hover_is_neutral_and_weaker_than_the_selected_row() {
         "hovered selected row keeps the selection fill: {fills:?}"
     );
 }
+
+/// The sidebar text shape painting exactly `label`, with the clip rect it was painted under.
+fn sidebar_text_shape<'a>(
+    output: &'a egui::FullOutput,
+    label: &str,
+) -> (&'a egui::epaint::TextShape, egui::Rect) {
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.job.text == label && text.pos.x < 300.0 => {
+                Some((text, clipped.clip_rect))
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing sidebar text {label}"))
+}
+
+/// Rendered rect of the language label painted on the same row as `title`.
+fn row_language_rect(
+    output: &egui::FullOutput,
+    title: &egui::epaint::TextShape,
+    language: &str,
+) -> egui::Rect {
+    let title_center = title.pos.y + title.galley.size().y / 2.0;
+    label_rects(output, language, |pos| pos.x < 300.0)
+        .into_iter()
+        .find(|rect| (rect.center().y - title_center).abs() < 4.0)
+        .unwrap_or_else(|| panic!("missing {language} label beside {}", title.galley.job.text))
+}
+
+#[test]
+fn a_long_sidebar_name_ends_in_an_ellipsis_just_before_its_language_label() {
+    let mut harness = make_app();
+    let long_name = "retry_with_backoff.rs (no jitter) after the queue drains at night";
+    let short_name = "checkout panic 2026-10-09";
+    let rows = vec![
+        test_summary("long", long_name, Some("rust"), 1),
+        test_summary("short", short_name, Some("rust"), 1),
+    ];
+    let language = paste_list_language_label(&rows[0]);
+    harness.app.all_pastes = rows.clone();
+    harness.app.pastes = rows;
+    let mut frames = SidebarFrames::new();
+    let output = frames.render(&mut harness.app, vec![]);
+    // Title and language label keep the theme's item spacing between them.
+    let gap = frames.ctx.style().spacing.item_spacing.x;
+
+    let (long, _) = sidebar_text_shape(&output, long_name);
+    let long_right = long.pos.x + long.galley.size().x;
+    let long_language = row_language_rect(&output, long, &language);
+    assert!(long.galley.elided, "{long_name} is cut without an ellipsis");
+    let last_glyph = long.galley.rows.last().and_then(|row| row.glyphs.last());
+    assert_eq!(last_glyph.map(|glyph| glyph.chr), Some('…'));
+    assert!(
+        long_right <= long_language.left() - gap + 0.5,
+        "name ends at {long_right}, overlapping the label at {}",
+        long_language.left()
+    );
+    assert!(
+        long_language.left() - long_right < 2.0 * gap,
+        "name ends at {long_right}, short of the label at {} by more than the gap",
+        long_language.left()
+    );
+
+    let (short, clip) = sidebar_text_shape(&output, short_name);
+    let short_rect = egui::Rect::from_min_size(short.pos, short.galley.size());
+    assert!(
+        !short.galley.elided,
+        "{short_name} fits and keeps every character"
+    );
+    assert!(
+        clip.contains_rect(short_rect),
+        "{short_rect:?} clipped by {clip:?}"
+    );
+    assert!(short_rect.right() < row_language_rect(&output, short, &language).left());
+}

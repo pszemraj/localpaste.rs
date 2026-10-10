@@ -40,13 +40,29 @@ fn sidebar_hover_text(paste: &PasteSummary) -> String {
     lines.join("\n")
 }
 
+/// Splits a sidebar row into its title and language-label areas.
+///
+/// The language label is right-aligned and only as wide as its text, up to
+/// [`SIDEBAR_LANGUAGE_COLUMN_WIDTH`], so the title gets the rest of the row
+/// up to `spacing_x` before the label.
+///
+/// # Arguments
+/// - `row_rect`: The whole row.
+/// - `padding_x`: Horizontal inset from each row edge.
+/// - `spacing_x`: Gap kept between the title and the language label.
+/// - `lang_width`: Width of the laid-out language label.
+///
+/// # Returns
+/// The title area and the language-label area.
 fn sidebar_row_text_rects(
     row_rect: egui::Rect,
     padding_x: f32,
     spacing_x: f32,
+    lang_width: f32,
 ) -> (egui::Rect, egui::Rect) {
     let content_rect = row_rect.shrink2(egui::vec2(padding_x, 0.0));
-    let lang_left = (content_rect.right() - SIDEBAR_LANGUAGE_COLUMN_WIDTH).max(content_rect.left());
+    let lang_width = lang_width.clamp(0.0, SIDEBAR_LANGUAGE_COLUMN_WIDTH);
+    let lang_left = (content_rect.right() - lang_width).max(content_rect.left());
     let title_right = (lang_left - spacing_x).max(content_rect.left());
     let title_rect = egui::Rect::from_min_max(
         content_rect.min,
@@ -55,6 +71,32 @@ fn sidebar_row_text_rects(
     let lang_rect =
         egui::Rect::from_min_max(egui::pos2(lang_left, content_rect.min.y), content_rect.max);
     (title_rect, lang_rect)
+}
+
+/// Lays out one line of sidebar row text, ending in an ellipsis when it is wider than `max_width`.
+///
+/// # Arguments
+/// - `ui`: Row UI whose style resolves `style`.
+/// - `text`: Text to lay out.
+/// - `style`: Text style of the line.
+/// - `color`: Text color.
+/// - `max_width`: Widest the line may be.
+///
+/// # Returns
+/// The single-row galley, elided when the text did not fit.
+fn sidebar_row_galley(
+    ui: &egui::Ui,
+    text: &str,
+    style: egui::TextStyle,
+    color: egui::Color32,
+    max_width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat::simple(style.resolve(ui.style()), color),
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(max_width.max(0.0));
+    ui.fonts_mut(|fonts| fonts.layout_job(job))
 }
 
 impl LocalPasteApp {
@@ -244,23 +286,40 @@ impl LocalPasteApp {
                                     egui::StrokeKind::Middle,
                                 );
 
+                                let lang_galley = sidebar_row_galley(
+                                    ui,
+                                    lang_label.as_str(),
+                                    egui::TextStyle::Small,
+                                    COLOR_TEXT_MUTED,
+                                    SIDEBAR_LANGUAGE_COLUMN_WIDTH,
+                                );
                                 let (title_rect, lang_rect) = sidebar_row_text_rects(
                                     row_rect,
                                     ui.spacing().button_padding.x,
                                     ui.spacing().item_spacing.x,
+                                    lang_galley.size().x,
                                 );
-                                ui.painter().with_clip_rect(title_rect).text(
-                                    egui::pos2(title_rect.left(), title_rect.center().y),
-                                    egui::Align2::LEFT_CENTER,
+                                let title_galley = sidebar_row_galley(
+                                    ui,
                                     paste.name.as_str(),
-                                    egui::TextStyle::Button.resolve(ui.style()),
+                                    egui::TextStyle::Button,
+                                    row_visuals.text_color(),
+                                    title_rect.width(),
+                                );
+                                let title_pos = egui::Align2::LEFT_CENTER
+                                    .anchor_size(title_rect.left_center(), title_galley.size())
+                                    .min;
+                                ui.painter().with_clip_rect(title_rect).galley(
+                                    title_pos,
+                                    title_galley,
                                     row_visuals.text_color(),
                                 );
-                                ui.painter().with_clip_rect(lang_rect).text(
-                                    egui::pos2(lang_rect.right(), lang_rect.center().y),
-                                    egui::Align2::RIGHT_CENTER,
-                                    lang_label.as_str(),
-                                    egui::TextStyle::Small.resolve(ui.style()),
+                                let lang_pos = egui::Align2::RIGHT_CENTER
+                                    .anchor_size(lang_rect.right_center(), lang_galley.size())
+                                    .min;
+                                ui.painter().with_clip_rect(lang_rect).galley(
+                                    lang_pos,
+                                    lang_galley,
                                     COLOR_TEXT_MUTED,
                                 );
 
@@ -436,30 +495,29 @@ mod tests {
 
     #[test]
     fn sidebar_row_text_layout_matrix() {
+        let wide = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(300.0, 28.0));
+        let narrow = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(80.0, 28.0));
+        // (row, language label width, title left, title right, label left, label right)
         let cases = [
-            (
-                egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(300.0, 28.0)),
-                18.0,
-                Some(302.0),
-            ),
-            (
-                egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(80.0, 28.0)),
-                8.0,
-                Some(72.0),
-            ),
+            // The title runs up to the spacing before a short label.
+            (wide, 30.0, 18.0, 266.0, 272.0, 302.0),
+            // A label wider than the language column is held to the column.
+            (wide, 200.0, 18.0, 212.0, 218.0, 302.0),
+            (narrow, 30.0, 8.0, 36.0, 42.0, 72.0),
+            (narrow, 200.0, 8.0, 8.0, 8.0, 72.0),
         ];
 
-        for (row_rect, expected_title_left, expected_lang_right) in cases {
-            let (title_rect, lang_rect) = sidebar_row_text_rects(row_rect, 8.0, 6.0);
+        for (row_rect, lang_width, title_left, title_right, lang_left, lang_right) in cases {
+            let (title_rect, lang_rect) = sidebar_row_text_rects(row_rect, 8.0, 6.0, lang_width);
 
-            assert!((title_rect.left() - expected_title_left).abs() < f32::EPSILON);
+            assert!((title_rect.left() - title_left).abs() < f32::EPSILON);
+            assert!((title_rect.right() - title_right).abs() < f32::EPSILON);
             assert!(title_rect.width() >= 0.0);
             assert!(lang_rect.left() >= title_rect.left());
             assert!(title_rect.right() <= lang_rect.left());
+            assert!((lang_rect.left() - lang_left).abs() < f32::EPSILON);
             assert!(lang_rect.width() > 0.0);
-            if let Some(expected_lang_right) = expected_lang_right {
-                assert!((lang_rect.right() - expected_lang_right).abs() < f32::EPSILON);
-            }
+            assert!((lang_rect.right() - lang_right).abs() < f32::EPSILON);
         }
     }
 
