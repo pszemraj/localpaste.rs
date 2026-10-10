@@ -16,6 +16,7 @@ Pastes, folders, and version history are committed durably and survive restarts.
 - Database file: `DB_PATH/data.redb`.
 - Writer coordination lock file: `DB_PATH/db.owner.lock`.
 - Embedded GUI endpoint discovery file (GUI runtime only): `DB_PATH/.api-addr`.
+- GUI window and session state (GUI runtime only, non-default `DB_PATH` only): `DB_PATH/gui-state.ron`. It is not part of the database or its backups; see [where GUI state lives](dev/gui-notes.md#startup-and-styling).
 
 ## Tables And Projections
 

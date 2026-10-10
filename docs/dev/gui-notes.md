@@ -178,7 +178,9 @@ The app has a single dark palette. It selects the dark theme before installing c
 
 Every floating window (the command palette, paste picker, shortcut help, History, Diff, and the reset confirmation) shows its title bar through one helper, `ModalWindowExt::show_modal` in [`ui/mod.rs`](../../crates/localpaste_gui/src/app/ui/mod.rs): the topmost window's title bar is filled with `COLOR_MODAL_CHROME`, no window can be collapsed, and windows that close by mouse keep their close button. The chrome applies only to the title bar; window content keeps the app's widget colors.
 
-Startup reopens the paste that was open when the app last closed, along with the smart and language filters. If that paste no longer exists, for example under a different `DB_PATH`, the selection clears without a deletion message; a paste deleted while open still reports it.
+Startup reopens the paste that was open when the app last closed, along with the smart and language filters. If that paste no longer exists, for example after `lpaste delete` while the app was closed, the selection clears without a deletion message; a paste deleted while open still reports it.
+
+GUI state belongs to the database it was saved with: the open paste and filters above, plus eframe's window size and position and egui memory such as zoom, floating-window positions, and scroll offsets. The default store keeps it in eframe's per-user file (macOS `~/Library/Application Support/LocalPaste.rs/app.ron`, Linux `~/.local/share/io.github.pszemraj.localpaste/app.ron` or under `XDG_DATA_HOME`, Windows `%APPDATA%\LocalPaste.rs\data\app.ron`). Any other `DB_PATH` keeps it in `DB_PATH/gui-state.ron`, so a second store, a dev build, or a probe run never reads or overwrites the default store's GUI state. A `DB_PATH` that resolves to the default store, such as `~/.cache/localpaste/db/` or a symlink to it, counts as the default ([`is_default_db_path`](../../crates/localpaste_core/src/config/default_store.rs)).
 
 ## Diff And History Workflows
 

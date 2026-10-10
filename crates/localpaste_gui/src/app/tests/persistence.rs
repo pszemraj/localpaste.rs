@@ -1,6 +1,7 @@
 //! Headless tests for eframe GUI-state persistence.
 
 use super::*;
+use localpaste_core::env::{env_lock, EnvGuard};
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -125,4 +126,35 @@ fn restored_selection_that_no_longer_exists_clears_without_a_message() {
             .map(|status| status.text.as_str()),
         Some("Selected paste was deleted; list refreshed.")
     );
+}
+
+#[test]
+fn native_options_keep_custom_database_gui_state_in_its_directory() {
+    // Point the default store into a temp home so the check never touches the real one.
+    let _lock = env_lock().lock().expect("env lock");
+    let home = TempDir::new().expect("temp home");
+    let _home = EnvGuard::set("HOME", home.path().to_str().expect("home path"));
+    let harness = make_app();
+    let db_dir = std::path::absolute(&harness.app.db_path).expect("absolute db path");
+
+    let options = crate::native_options(&harness.app);
+    assert_eq!(
+        options.persistence_path,
+        Some(db_dir.join("gui-state.ron")),
+        "a non-default store must not share eframe's per-user state file"
+    );
+}
+
+#[test]
+fn gui_state_file_does_not_disturb_opening_its_database() {
+    let dir = TempDir::new().expect("temp dir");
+    let db_dir = dir.path().join("db");
+    std::fs::create_dir_all(&db_dir).expect("create db dir");
+    let state_file = db_dir.join("gui-state.ron");
+    std::fs::write(&state_file, "{}").expect("write state file");
+
+    let db = Database::new(db_dir.to_str().expect("db path"))
+        .expect("a GUI state file alone must not read as a legacy store");
+    drop(db);
+    assert_eq!(std::fs::read_to_string(&state_file).expect("read"), "{}");
 }
