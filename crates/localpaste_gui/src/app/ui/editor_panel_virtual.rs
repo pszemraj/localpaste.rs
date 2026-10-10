@@ -486,15 +486,17 @@ impl LocalPasteApp {
                             .or_else(|| input.pointer.latest_pos())
                     });
                     let pointer_down = ui.input(|input| input.pointer.primary_down());
-                    let released_owned_drag = !self.virtual_drag_active
+                    let unclaimed_owned_drag = !self.virtual_drag_active
                         && self.virtual_pointer_press_modifiers.is_some()
-                        && primary_release.is_some()
+                        && (pointer_down || primary_release.is_some())
                         && ui.input(|input| input.pointer.is_decidedly_dragging());
-                    if released_owned_drag {
-                        // egui clears a potential drag when the first threshold-crossing
-                        // movement and release arrive in one frame, so no row response
-                        // reports `drag_started`. The remembered content press still owns
-                        // that gesture; finish it through the ordinary drag endpoint path.
+                    if unclaimed_owned_drag {
+                        // No row reports `drag_started` for a press below the last
+                        // line (EOF padding rows or the empty space beneath them), nor
+                        // when egui clears a potential drag because the first
+                        // threshold-crossing movement and release arrive in one frame.
+                        // The remembered content press still owns that gesture; drive it
+                        // through the ordinary drag path so the selection stays live.
                         self.virtual_drag_active = true;
                         self.virtual_editor_state.clear_preferred_column();
                         self.reset_virtual_click_streak();
