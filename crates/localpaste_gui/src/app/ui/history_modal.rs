@@ -306,8 +306,7 @@ impl LocalPasteApp {
                             .max_height(620.0)
                             .show(left, |ui| {
                                 let current_selected = self.version_ui.history_selected_index == 0;
-                                if ui
-                                    .selectable_label(current_selected, "Current working copy")
+                                if super::list_row(ui, current_selected, "Current working copy", "")
                                     .clicked()
                                 {
                                     pending_selected_index = Some(0);
@@ -320,8 +319,7 @@ impl LocalPasteApp {
                                     let selected_row =
                                         self.version_ui.history_selected_index == row_index;
                                     let label = format_history_row_label(history_label_now, meta);
-                                    let response = ui
-                                        .selectable_label(selected_row, label)
+                                    let response = super::list_row(ui, selected_row, &label, "")
                                         .on_hover_text(meta.created_at.to_rfc3339());
                                     if response.clicked() {
                                         pending_selected_index = Some(row_index);

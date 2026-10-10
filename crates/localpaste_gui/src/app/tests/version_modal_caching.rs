@@ -431,3 +431,103 @@ fn diff_rows_tint_changed_lines_across_the_pane() {
     let context = text_rect(" same").center();
     assert!(!removed.contains(context) && !added.contains(context));
 }
+
+/// Opens History over three stored versions with the first one selected.
+///
+/// Version lengths are 11, 22, and 33 bytes so each row label is distinct.
+fn open_history_with_versions(app: &mut LocalPasteApp) {
+    let now = chrono::Utc::now();
+    app.open_history_modal();
+    app.version_ui.history_versions = [11, 22, 33]
+        .into_iter()
+        .enumerate()
+        .map(|(index, len)| localpaste_core::models::paste::VersionMeta {
+            version_id_ms: index as u64 + 1,
+            created_at: now,
+            content_hash: format!("hash-{len}"),
+            len,
+            language: Some("rust".to_string()),
+            language_is_manual: false,
+        })
+        .collect();
+    app.version_ui.history_selected_index = 1;
+}
+
+/// Rests the pointer on the History row whose label contains `size`, letting fades finish.
+fn hover_history_row(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    size: &str,
+) -> (egui::FullOutput, egui::Pos2) {
+    let input = |time: f64, events: Vec<egui::Event>| egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1600.0, 1000.0),
+        )),
+        time: Some(time),
+        events,
+        ..Default::default()
+    };
+    let _ = run_full_update_with_input(app, ctx, input(0.0, Vec::new()));
+    let settled = run_full_update_with_input(app, ctx, input(1.0, Vec::new()));
+    let label = format!("| {size} |");
+    let center = settled
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.job.text.contains(&label) => {
+                Some(egui::Rect::from_min_size(text.pos, text.galley.size()).center())
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing History row {label}"));
+    // Hover resolves against the previous frame's widget rects.
+    let mut output = settled;
+    for step in 0..4 {
+        output = run_full_update_with_input(
+            app,
+            ctx,
+            input(
+                2.0 + f64::from(step),
+                vec![egui::Event::PointerMoved(center)],
+            ),
+        );
+    }
+    (output, center)
+}
+
+#[test]
+fn history_rows_hover_neutral_and_keep_the_selection_fill() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    open_history_with_versions(&mut harness.app);
+    let (output, center) = hover_history_row(&mut harness.app, &ctx, "22 B");
+    let fills = fills_behind(&output, center);
+    assert!(
+        fills.contains(&COLOR_BG_TERTIARY),
+        "hovered version row should use the neutral list fill: {fills:?}"
+    );
+    assert!(
+        !fills.contains(&COLOR_ACCENT_SURFACE_HOVER) && !fills.contains(&COLOR_ACCENT_SURFACE),
+        "version rows must not hover with the toolbar accent: {fills:?}"
+    );
+    assert_eq!(
+        harness.app.version_ui.history_selected_index, 1,
+        "hover keeps selection"
+    );
+
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    open_history_with_versions(&mut harness.app);
+    let (output, center) = hover_history_row(&mut harness.app, &ctx, "11 B");
+    let fills = fills_behind(&output, center);
+    let selection = ctx.style().visuals.selection.bg_fill;
+    assert!(
+        fills.contains(&selection),
+        "hovered selected version keeps the selection fill: {fills:?}"
+    );
+    assert!(
+        !fills.contains(&COLOR_BG_TERTIARY) && !fills.contains(&COLOR_ACCENT_SURFACE_HOVER),
+        "hover must not replace the selection fill: {fills:?}"
+    );
+}
