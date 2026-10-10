@@ -492,6 +492,7 @@ mod selected_delete;
 mod selection_guard_regressions;
 mod shortcut_help;
 mod shutdown_behavior;
+mod sidebar_layout;
 mod startup_styles;
 mod state_basics;
 mod state_toasts;
