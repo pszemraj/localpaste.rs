@@ -35,6 +35,8 @@ fn non_python_compound_shapes_keep_their_language() {
         ("else:\n  retries: 3\n  timeout: 10\n", "yaml"),
         ("switch (op) {\ncase 1:\n  run();\n  break;\n}\n", "c"),
         ("values = (\n switch (op) {\n case 1:\n  run();\n  break;\n }\n)\n", "c"),
+        ("switch (op) { // dispatch\n  case 1:\n    run();\n    break;\n  default:\n    stop();\n}\n", "javascript"),
+        ("switch (op) { /* dispatch */\n  case 1:\n    run();\n    break;\n  default:\n    stop();\n}\n", "javascript"),
     ] {
         for body in [source.to_owned(), source.replace('\n', "\r\n")] {
             assert!(!python::compound_body(&body), "{body}");
@@ -346,5 +348,131 @@ fn makefile_constructs_and_lowercase_notes_keep_their_meaning() {
         "// let the function finish for you",
     ] {
         assert_eq!(derive(body, Some("javascript")).kind, PasteKind::Code);
+    }
+}
+
+#[test]
+fn tabbed_code_logs_and_labels_without_command_shape_are_not_makefiles() {
+    for source in [
+        "_start:\n\tmov rax, 60\n\txor rdi, rdi\n\tsyscall\n",
+        "loop:\n\tadd eax, 1\n\tcmp eax, 10\n\tjl loop\n",
+        "start:\n\tmov ax, 4c00h\n\tint 21h\n",
+        "main:\n\tpush {r7, lr}\n\tmov r7, sp\n\tbl puts\n\tpop {r7, pc}\n",
+        "main:\n\tcall helper\n\tret\nhelper:\n\tnop\n\tret\n",
+        "func _ready():\n\tprint(\"hi\")\n\tqueue_free()\n",
+        "parent(X, Y) :-\n\tfather(X, Y).\n",
+        "main :: IO ()\nmain = do\n\tputStrLn \"hi\"\n",
+        "case 1:\n\tfmt.Println(\"one\")\ncase 2:\n\tfmt.Println(\"two\")\ndefault:\n\tfmt.Println(\"other\")\n",
+    ] {
+        for body in [source.to_owned(), source.replace('\n', "\r\n")] {
+            assert_eq!(crate::semantic::makefile_body_language(&body), None, "{body}");
+            assert_ne!(detect_language(&body).as_deref(), Some("makefile"), "{body}");
+            #[cfg(feature = "magika")]
+            if let Some(raw) = magika::detect(&body) {
+                assert_eq!(detect_language(&body).as_deref(), Some(canonical::canonicalize(&raw).as_str()), "{body}");
+            }
+        }
+    }
+    for source in [
+        "Exception in thread \"main\" java.lang.NullPointerException: x is null\n\tat com.foo.Bar.run(Bar.java:10)\n\tat com.foo.Main.main(Main.java:5)\n",
+        "java.lang.IllegalStateException: boom\n\tat com.foo.Bar.run(Bar.java:10)\nCaused by: java.io.IOException: disk\n\tat com.foo.Io.read(Io.java:3)\n\t... 5 more\n",
+        "Feature: Login\n\tScenario: Successful login\n\t\tGiven a user\n\t\tWhen he logs in\n",
+        "Usage: foo [options]\nOptions:\n\t-h\tshow help\n\t-v\tverbose\n",
+        "Output:\n\tHello\n",
+        "Output:\n\ttotal 48\n\tdrwxr-xr-x 2 user user 4096 bin\n",
+        "Summary:\n\tThe migration finished without errors and all services are healthy.\n",
+        "Packing:\n\tpassport\n",
+        "Packing:\n\t2 shirts\n\t3 pairs of socks\n",
+        "Todo:\n\t1 milk\n\t2 eggs\n",
+    ] {
+        for body in [source.to_owned(), source.replace('\n', "\r\n")] {
+            assert_eq!(crate::semantic::makefile_body_language(&body), None, "{body}");
+            assert_ne!(detect_language(&body).as_deref(), Some("makefile"), "{body}");
+            // The recognizer is not reachable through the refinement of a stray label.
+            assert_ne!(
+                refine_magika_label("markdown", &body).as_deref(),
+                Some("shell"),
+                "{body}"
+            );
+        }
+    }
+    let traceback = "Traceback (most recent call last):\n\tFile \"x.py\", line 1, in <module>\n\tfoo()\nNameError: name 'foo' is not defined\n";
+    assert_eq!(detect_language(traceback).as_deref(), Some("log"));
+}
+
+#[test]
+fn invocation_shaped_recipes_remain_makefiles_under_note_words() {
+    for source in [
+        "# Python\ninstall:\n\tpoetry install\n\tpoetry run pytest\n",
+        "# Mobile\nrun:\n\tflutter run\n\tflutter test\n",
+        "# Deploy\ndeploy:\n\tfly deploy now\n",
+        "# TODO\nbuild:\n\tzig build\n",
+        "# notes on the build\nbuild:\n\tzig build\n",
+        "# todo\nbuild:\n\tbazel build\n",
+        "# TODO\nbuild:\n\tdune build\n",
+        "# List of steps\ndeploy:\n\trun deploy\n",
+        "# notes\nall: deps\n\tzig build\n",
+    ] {
+        for body in [source.to_owned(), source.replace('\n', "\r\n")] {
+            assert!(!crate::semantic::makefile_note_body(&body), "{body}");
+            assert_eq!(
+                detect_language(&body).as_deref(),
+                Some("makefile"),
+                "{body}"
+            );
+            assert_eq!(
+                refine_magika_label("makefile", &body).as_deref(),
+                Some("makefile"),
+                "{body}"
+            );
+            let paste = Paste::new(body.clone(), "build".into());
+            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Config);
+        }
+    }
+    // The note word counts only when the label itself carries it.
+    for source in ["Todo:\n\tgo home\n\tcall mom\n", "Agenda:\n\tbuild docs\n"] {
+        assert!(crate::semantic::makefile_note_body(source), "{source}");
+        assert_eq!(detect_language(source).as_deref(), Some("markdown"));
+    }
+}
+
+#[test]
+fn capitalized_labels_under_markdown_headings_stay_documents() {
+    for source in [
+        "## Install\nInstall:\n\tpip install foo\n",
+        "# Usage\nUsage:\n\tfoo --bar\n",
+        "# Running it\nRun:\n\tnpm start\n",
+        "# Usage\n\nRun it like this:\n\n\t./app --flag\n",
+    ] {
+        for body in [source.to_owned(), source.replace('\n', "\r\n")] {
+            assert_eq!(
+                crate::semantic::makefile_body_language(&body),
+                None,
+                "{body}"
+            );
+            assert_eq!(
+                detect_language(&body).as_deref(),
+                Some("markdown"),
+                "{body}"
+            );
+            let paste = Paste::new(body.clone(), "instructions".into());
+            assert_eq!(paste.language.as_deref(), Some("markdown"), "{body}");
+            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document);
+        }
+    }
+    // Lowercase targets, special targets, and directives are Make structure.
+    for source in [
+        "# Usage\nusage:\n\tfoo --bar\n",
+        "## Install\n.PHONY: Install\nInstall:\n\tpip install foo\n",
+        "## Install\ninclude rules.mk\nInstall:\n\tpip install foo\n",
+        "# Build\nBuild:\n\tzig build\nclean:\n\tzig clean\n",
+    ] {
+        for body in [source.to_owned(), source.replace('\n', "\r\n")] {
+            assert_eq!(
+                detect_language(&body).as_deref(),
+                Some("makefile"),
+                "{body}"
+            );
+        }
     }
 }

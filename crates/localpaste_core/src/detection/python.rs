@@ -36,7 +36,9 @@ pub(super) fn compound_body(sample: &str) -> bool {
         if syntax_chars(line).any(|(_, ch)| ch == '$') {
             return false;
         }
-        let mut header = compound_header(line);
+        // A `case 1:` inside an open brace belongs to a C-family `switch`; Python
+        // compound headers never begin inside an unclosed bracket.
+        let mut header = nesting == 0 && compound_header(line);
         if !compound && matches!(line, "else:" | "except:" | "finally:") {
             return false;
         }
