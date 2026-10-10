@@ -2,6 +2,7 @@
 
 use super::super::shortcuts::{runtime_shortcut_label, RuntimeShortcutAction};
 use super::super::*;
+use super::ModalWindowExt as _;
 use crate::backend::CoreCmd;
 use eframe::egui;
 
@@ -50,11 +51,10 @@ impl LocalPasteApp {
         let mut pending = None;
         egui::Window::new("Command Palette")
             .id(egui::Id::new("command_palette_modal"))
-            .collapsible(false)
             .resizable(false)
             .default_width(680.0)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 60.0))
-            .show(ctx, |ui| {
+            .show_modal(ctx, |ui| {
                 super::focus_visible_query(ui, egui::Id::new(COMMAND_PALETTE_INPUT_ID));
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.command_palette_query)

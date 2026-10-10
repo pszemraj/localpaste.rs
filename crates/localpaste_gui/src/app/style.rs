@@ -57,7 +57,15 @@ fn selection_fill_color() -> Color32 {
     )
 }
 
-fn modal_chrome_style(base_style: &egui::Style) -> egui::Style {
+/// Copies `base_style` with the muted burnt-orange modal chrome in the `active` and
+/// `open` widget visuals, which egui uses for a floating window's title bar.
+///
+/// # Arguments
+/// - `base_style`: The app style to derive the chrome from.
+///
+/// # Returns
+/// The style that floating windows are shown with.
+pub(super) fn modal_chrome_style(base_style: &egui::Style) -> egui::Style {
     let mut style = base_style.clone();
     style.visuals.widgets.active = WidgetVisuals {
         bg_fill: COLOR_MODAL_CHROME,
@@ -94,23 +102,6 @@ impl MutedHintExt for egui::TextEdit<'_> {
     fn muted_hint(self, text: impl Into<String>) -> Self {
         self.hint_text(RichText::new(text).weak())
     }
-}
-
-/// Temporarily applies muted modal chrome so large window title bars do not
-/// overpower the rest of the dark palette.
-///
-/// # Arguments
-/// - `ctx`: Egui context whose style should be overridden for the duration of `render`.
-/// - `render`: Closure that renders a modal using the muted chrome style.
-///
-/// # Returns
-/// Returns whatever value `render` produces after restoring the original style.
-pub(super) fn with_muted_modal_chrome<R>(ctx: &egui::Context, render: impl FnOnce() -> R) -> R {
-    let original_style = (*ctx.style()).clone();
-    ctx.set_style(modal_chrome_style(&original_style));
-    let result = render();
-    ctx.set_style(original_style);
-    result
 }
 
 impl LocalPasteApp {

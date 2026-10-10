@@ -1,6 +1,6 @@
 //! UI panel modules extracted from the main app update loop.
 
-use super::style::{COLOR_BG_TERTIARY, COLOR_BORDER, COLOR_TEXT_PRIMARY};
+use super::style::{modal_chrome_style, COLOR_BG_TERTIARY, COLOR_BORDER, COLOR_TEXT_PRIMARY};
 use eframe::egui;
 
 /// Requests query focus only when its widget can join the accessibility tree.
@@ -64,6 +64,47 @@ impl ViewportFitExt for egui::Window<'_> {
         self.constrain_to(bounds)
             .default_size(preferred.min(max_content))
             .max_size(max_content)
+    }
+}
+
+/// Shows a floating window with the title bar every LocalPaste window shares.
+pub(in crate::app) trait ModalWindowExt {
+    /// Shows the window with a [`COLOR_MODAL_CHROME`](super::style::COLOR_MODAL_CHROME)
+    /// title bar and no collapse toggle.
+    ///
+    /// egui fills the topmost window's title bar from the `open` widget visuals
+    /// in effect when `show` starts, so the chrome style is installed only until
+    /// the content begins; the content and its popups keep the app's visuals.
+    /// A window given an `open` flag keeps its close button.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context the window is shown in.
+    /// - `add_contents`: Renders the window content.
+    ///
+    /// # Returns
+    /// egui's window response; `None` while the window is closed.
+    fn show_modal<R>(
+        self,
+        ctx: &egui::Context,
+        add_contents: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> Option<egui::InnerResponse<Option<R>>>;
+}
+
+impl ModalWindowExt for egui::Window<'_> {
+    fn show_modal<R>(
+        self,
+        ctx: &egui::Context,
+        add_contents: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> Option<egui::InnerResponse<Option<R>>> {
+        let app_style = ctx.style();
+        ctx.set_style(modal_chrome_style(&app_style));
+        let response = self.collapsible(false).show(ctx, |ui| {
+            ctx.set_style(app_style.clone());
+            ui.set_style(app_style.clone());
+            add_contents(ui)
+        });
+        ctx.set_style(app_style);
+        response
     }
 }
 

@@ -4,6 +4,7 @@ use super::super::shortcuts::{
     platform_shortcut_keys, ShortcutHelpEntry, RUNTIME_SHORTCUTS, STATIC_SHORTCUT_SECTIONS,
 };
 use super::super::*;
+use super::ModalWindowExt as _;
 use eframe::egui;
 
 impl LocalPasteApp {
@@ -318,66 +319,63 @@ impl LocalPasteApp {
             ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let results_height = (ctx.content_rect().height() - 260.0).clamp(160.0, 360.0);
 
-        with_muted_modal_chrome(ctx, || {
-            egui::Window::new("Keyboard Shortcuts")
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .default_width(600.0)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .show(ctx, |ui| {
-                    ui.set_width(600.0);
-                    let previous_query = self.shortcut_help_query.clone();
-                    ui.horizontal(|ui| {
-                        let focus_requested = self.shortcut_help_focus_requested
-                            && super::focus_visible_query(ui, egui::Id::new("shortcut_help_query"));
-                        let response = ui.add_sized(
-                            [ui.available_width() - 84.0, ui.spacing().interact_size.y],
-                            egui::TextEdit::singleline(&mut self.shortcut_help_query)
-                                .id(egui::Id::new("shortcut_help_query"))
-                                .muted_hint("Search shortcuts...")
-                                .return_key(None),
-                        );
-                        if focus_requested {
-                            // TextEdit may surrender the pre-requested focus to the
-                            // toolbar pointer release that opened this window.
-                            response.request_focus();
-                            self.shortcut_help_focus_requested = false;
-                        }
-                        if ui
-                            .add_enabled(
-                                !self.shortcut_help_query.is_empty(),
-                                egui::Button::new("Clear"),
-                            )
-                            .clicked()
-                        {
-                            self.shortcut_help_query.clear();
-                            response.request_focus();
-                        }
-                    });
-                    let mut scroll = egui::ScrollArea::vertical()
-                        .id_salt("shortcut_help_results")
-                        .auto_shrink([false, false])
-                        .max_height(results_height);
-                    if self.shortcut_help_query != previous_query {
-                        scroll = scroll.vertical_scroll_offset(0.0);
+        egui::Window::new("Keyboard Shortcuts")
+            .open(&mut open)
+            .resizable(false)
+            .default_width(600.0)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show_modal(ctx, |ui| {
+                ui.set_width(600.0);
+                let previous_query = self.shortcut_help_query.clone();
+                ui.horizontal(|ui| {
+                    let focus_requested = self.shortcut_help_focus_requested
+                        && super::focus_visible_query(ui, egui::Id::new("shortcut_help_query"));
+                    let response = ui.add_sized(
+                        [ui.available_width() - 84.0, ui.spacing().interact_size.y],
+                        egui::TextEdit::singleline(&mut self.shortcut_help_query)
+                            .id(egui::Id::new("shortcut_help_query"))
+                            .muted_hint("Search shortcuts...")
+                            .return_key(None),
+                    );
+                    if focus_requested {
+                        // TextEdit may surrender the pre-requested focus to the
+                        // toolbar pointer release that opened this window.
+                        response.request_focus();
+                        self.shortcut_help_focus_requested = false;
                     }
-                    scroll.show(ui, |ui| {
-                        render_shortcut_sections(ui, &self.shortcut_help_query);
-                    });
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("Esc or F1 to close")
-                                .small()
-                                .color(COLOR_TEXT_SECONDARY),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            close_requested = ui.button("Close").clicked();
-                        });
+                    if ui
+                        .add_enabled(
+                            !self.shortcut_help_query.is_empty(),
+                            egui::Button::new("Clear"),
+                        )
+                        .clicked()
+                    {
+                        self.shortcut_help_query.clear();
+                        response.request_focus();
+                    }
+                });
+                let mut scroll = egui::ScrollArea::vertical()
+                    .id_salt("shortcut_help_results")
+                    .auto_shrink([false, false])
+                    .max_height(results_height);
+                if self.shortcut_help_query != previous_query {
+                    scroll = scroll.vertical_scroll_offset(0.0);
+                }
+                scroll.show(ui, |ui| {
+                    render_shortcut_sections(ui, &self.shortcut_help_query);
+                });
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Esc or F1 to close")
+                            .small()
+                            .color(COLOR_TEXT_SECONDARY),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        close_requested = ui.button("Close").clicked();
                     });
                 });
-        });
+            });
         if close_on_escape || close_requested || !open {
             self.close_shortcut_help(ctx);
         }

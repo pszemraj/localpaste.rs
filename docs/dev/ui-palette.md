@@ -13,7 +13,7 @@ The desktop uses a dark palette defined in the theme module: [`../../crates/loca
 | `COLOR_ACCENT_TEXT`         | `#D0843A`   | Accent text and links                   |
 | `COLOR_ACCENT_SURFACE`      | `#B86724`   | Filled controls                         |
 | `COLOR_ACCENT_SURFACE_HOVER` | `#C37431`  | Hovered buttons (not list rows)         |
-| `COLOR_MODAL_CHROME`        | `#8A522A`   | Modal title bars                        |
+| `COLOR_MODAL_CHROME`        | `#8A522A`   | Title bars of all floating windows      |
 | `COLOR_SELECTION_STROKE`    | `#3B82F6`   | Selection outline                       |
 | `COLOR_SELECTION_FILL_RGBA` | `#3B82F655` | Selection fill RGBA tuple (`[r,g,b,a]`) |
 | `COLOR_BORDER`              | `#30363D`   | Divider strokes, sidebar-row hover      |

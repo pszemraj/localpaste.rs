@@ -2,6 +2,7 @@
 
 use super::super::*;
 use super::command_palette::CommandPaletteAction;
+use super::ModalWindowExt as _;
 
 /// Stable salt used to render and reset the picker results' retained scroll state.
 const RESULTS_SCROLL_ID: &str = "paste_picker_results";
@@ -59,11 +60,10 @@ impl LocalPasteApp {
         let mut pending = None;
         egui::Window::new("Paste Picker")
             .id(egui::Id::new("paste_picker_modal"))
-            .collapsible(false)
             .resizable(false)
             .default_width(720.0)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 60.0))
-            .show(ctx, |ui| {
+            .show_modal(ctx, |ui| {
                 let mut query = self.paste_picker_query.clone();
                 let query_id = egui::Id::new(PASTE_PICKER_INPUT_ID);
                 let query_visible = super::focus_visible_query(ui, query_id);

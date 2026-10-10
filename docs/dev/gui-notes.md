@@ -176,6 +176,8 @@ Routine confirmations and progress, such as `Copied paste content.` or `Saving c
 
 The app has a single dark palette. It selects the dark theme before installing custom fonts and spacing, so a light system theme cannot replace it, and editor geometry uses the resolved font if the named Editor text style is missing.
 
+Every floating window (the command palette, paste picker, shortcut help, History, Diff, and the reset confirmation) shows its title bar through one helper, `ModalWindowExt::show_modal` in [`ui/mod.rs`](../../crates/localpaste_gui/src/app/ui/mod.rs): the topmost window's title bar is filled with `COLOR_MODAL_CHROME`, no window can be collapsed, and windows that close by mouse keep their close button. The chrome applies only to the title bar; window content keeps the app's widget colors.
+
 Startup reopens the paste that was open when the app last closed, along with the smart and language filters. If that paste no longer exists, for example under a different `DB_PATH`, the selection clears without a deletion message; a paste deleted while open still reports it.
 
 ## Diff And History Workflows
@@ -319,7 +321,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
 17. Version workflow sanity:
     - Open `Diff`, select another paste, and verify current unsaved edits appear on the left side.
     - Open `History`, navigate with `Older/Newer`, duplicate a historical snapshot, and verify a new paste is created.
-    - With Documents active, open a Code paste from the picker, then History or Diff. Collapse or resize the window to expose a sidebar row, click it, then press Escape. The refused click must leave the Code paste open.
+    - With Documents active, open a Code paste from the picker, then History or Diff. Move or resize the window to expose a sidebar row, click it, then press Escape. The refused click must leave the Code paste open.
     - Trigger reset-to-version and verify current paste updates to the selected snapshot.
 18. Trace sanity (if enabled):
     - Input trace logs show deterministic virtual input routing.
