@@ -230,6 +230,7 @@ impl LocalPasteApp {
             }
             CoreEvent::PasteLoaded { paste, .. } => {
                 let paste_id = paste.id.clone();
+                self.restored_selection_id = None;
                 self.select_loaded_paste(paste);
                 self.clear_picker_delete_transition_for_replacement(paste_id.as_str());
             }
@@ -493,9 +494,12 @@ impl LocalPasteApp {
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
                 self.clear_picker_selection_context_for(id.as_str());
+                let restored = self.take_restored_selection(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
-                    self.set_status("Selected paste was deleted; list refreshed.");
+                    if !restored {
+                        self.set_status("Selected paste was deleted; list refreshed.");
+                    }
                 } else {
                     self.set_status("Paste was deleted; list refreshed.");
                 }

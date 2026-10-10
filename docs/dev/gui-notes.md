@@ -166,6 +166,8 @@ The `F1` window has a stable scrollable layout with key labels in the native pla
 
 The app has a single dark palette. It selects the dark theme before installing custom fonts and spacing, so a light system theme cannot replace it, and editor geometry uses the resolved font if the named Editor text style is missing.
 
+Startup reopens the paste that was open when the app last closed, along with the smart and language filters. If that paste no longer exists, for example under a different `DB_PATH`, the selection clears without a deletion message; a paste deleted while open still reports it.
+
 ## Diff And History Workflows
 
 ![History window with an older snapshot selected and its content previewed beside the version list](../../assets/screenshots/history.png)

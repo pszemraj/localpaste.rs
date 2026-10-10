@@ -35,6 +35,21 @@ impl LocalPasteApp {
             normalize_storage_language(storage.get_string(STORAGE_ACTIVE_LANGUAGE_KEY));
         self.pending_selection_id =
             normalize_optional_nonempty(storage.get_string(STORAGE_SELECTED_ID_KEY));
+        // A remembered paste may be gone (another database, or deleted while
+        // closed); that restore clears without reporting a deletion.
+        self.restored_selection_id = self.pending_selection_id.clone();
+    }
+
+    /// Consumes the session-restore marker when `id` is the remembered selection.
+    ///
+    /// # Returns
+    /// `true` when `id` came from session restore, so its absence is not news.
+    pub(super) fn take_restored_selection(&mut self, id: &str) -> bool {
+        let restored = self.restored_selection_id.as_deref() == Some(id);
+        if restored {
+            self.restored_selection_id = None;
+        }
+        restored
     }
 
     /// Persist lightweight GUI state through eframe storage.

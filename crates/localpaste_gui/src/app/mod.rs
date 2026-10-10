@@ -118,6 +118,8 @@ pub(crate) struct LocalPasteApp {
     /// Latest detached picker-copy request identity, advanced before each dispatch.
     palette_copy_request_id: u64,
     pending_selection_id: Option<String>,
+    /// Session-restored selection whose first load has not replied; a missing reply clears quietly.
+    restored_selection_id: Option<String>,
     pending_picker_open: Option<PendingPickerOpen>,
     pending_picker_selection_pin: Option<String>,
     picker_selection_pin: Option<String>,

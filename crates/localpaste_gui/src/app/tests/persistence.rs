@@ -85,3 +85,44 @@ fn pending_restored_selection_loads_even_when_current_filters_hide_it() {
         other => panic!("expected GetPaste command, got {other:?}"),
     }
 }
+
+#[test]
+fn restored_selection_that_no_longer_exists_clears_without_a_message() {
+    let mut storage = MemoryStorage::default();
+    eframe::Storage::set_string(&mut storage, STORAGE_SELECTED_ID_KEY, "gone".to_string());
+    let mut harness = make_app();
+    harness.app.selected_id = None;
+    harness.app.selected_paste = None;
+    harness.app.restore_gui_storage(Some(&storage));
+
+    harness.app.ensure_selection_after_list_update();
+    assert_eq!(harness.app.selected_id.as_deref(), Some("gone"));
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "gone"),
+        other => panic!("expected GetPaste command, got {other:?}"),
+    }
+    harness.app.apply_event(CoreEvent::PasteSelectionMissing {
+        id: "gone".to_string(),
+        selection_epoch: harness.app.active_buffer_epoch,
+    });
+    assert_ne!(harness.app.selected_id.as_deref(), Some("gone"));
+    assert!(harness.app.status.is_none());
+    assert!(harness.app.toasts.is_empty());
+
+    // Deleting an open paste elsewhere is still reported.
+    harness.app.selected_id = Some("alpha".to_string());
+    let mut alpha = Paste::new("content".to_string(), "Alpha".to_string());
+    alpha.id = "alpha".to_string();
+    harness.app.selected_paste = Some(alpha);
+    harness.app.apply_event(CoreEvent::PasteMissing {
+        id: "alpha".to_string(),
+    });
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Selected paste was deleted; list refreshed.")
+    );
+}
