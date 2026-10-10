@@ -63,22 +63,31 @@ pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) ->
 /// Formats selected text as a Markdown link when the clipboard holds one web URL.
 ///
 /// # Arguments
-/// - `label`: Selected editor text to retain as the link label.
+/// - `selection`: Selected editor text to retain as the link label.
 /// - `clipboard`: Clipboard text containing a single HTTP(S) URL.
 ///
 /// # Returns
-/// A link retaining the original URL spelling, or `None` for ordinary pasted text
-/// and for a selection that is itself a URL, which the paste replaces.
+/// A link retaining the original URL spelling, or `None` for ordinary pasted text,
+/// for a whitespace-only selection, and for a selection that is itself a URL,
+/// which the paste replaces. Whitespace and line breaks at either end of the
+/// selection (a triple-clicked line ends with its newline) stay outside the link.
 ///
 /// # Panics
-/// Code-span offsets come from ASCII backtick matches, so slices are always on UTF-8 boundaries.
-pub(super) fn format_markdown_link(label: &str, clipboard: &str) -> Option<String> {
+/// Code-span offsets come from ASCII backtick matches and the trimmed edges from
+/// `str::trim_*`, so slices are always on UTF-8 boundaries.
+pub(super) fn format_markdown_link(selection: &str, clipboard: &str) -> Option<String> {
     let destination = web_url(clipboard)?;
     // Replacing a URL, including one inside an existing link or reference
     // definition, must not nest a new link around it.
-    if web_url(label).is_some() {
+    if web_url(selection).is_some() {
         return None;
     }
+    let label = selection.trim();
+    if label.is_empty() {
+        return None;
+    }
+    let lead = &selection[..selection.len() - selection.trim_start().len()];
+    let trail = &selection[selection.trim_end().len()..];
     // Only equal-length backtick runs delimit code spans. Index their next
     // matches once so many unmatched runs cannot cause repeated suffix scans.
     let mut ticks: Vec<(usize, usize)> = Vec::new();
@@ -95,7 +104,7 @@ pub(super) fn format_markdown_link(label: &str, clipboard: &str) -> Option<Strin
             code_ends.insert(start, close);
         }
     }
-    let mut link = String::from("[");
+    let mut link = format!("{lead}[");
     let mut chars = label.char_indices().peekable();
     while let Some((offset, ch)) = chars.next() {
         if let Some(&end) = (ch == '`').then(|| code_ends.get(&offset)).flatten() {
@@ -141,6 +150,7 @@ pub(super) fn format_markdown_link(label: &str, clipboard: &str) -> Option<Strin
         link.push(ch);
     }
     link.push(')');
+    link.push_str(trail);
     Some(link)
 }
 
@@ -281,9 +291,20 @@ pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usi
 #[cfg(test)]
 mod tests {
     use super::{
-        api_paste_link_for_copy, display_language_label, format_fenced_code_block, parse_tags_csv,
-        word_range_at,
+        api_paste_link_for_copy, display_language_label, format_fenced_code_block,
+        format_markdown_link, parse_tags_csv, word_range_at,
     };
+
+    #[test]
+    fn markdown_link_skips_whitespace_only_selections() {
+        for selection in ["\n", " \r\n\t", "\u{a0}"] {
+            assert_eq!(
+                format_markdown_link(selection, "https://example.test"),
+                None,
+                "{selection:?}"
+            );
+        }
+    }
 
     #[test]
     fn format_fenced_code_block_uses_language_or_text_default() {

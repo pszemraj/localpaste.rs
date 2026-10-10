@@ -108,6 +108,17 @@ fn markdown_url_paste_wraps_selection_and_is_one_reversible_edit() {
                     "https://example.test",
                     "[one&#10;&#10;two](https://example.test)",
                 ),
+                // A triple-clicked line ends with its newline, which stays a line break.
+                (
+                    "two\n",
+                    "https://example.test",
+                    "[two](https://example.test)\n",
+                ),
+                (
+                    " docs\r\n",
+                    "https://example.test",
+                    " [docs](https://example.test)\r\n",
+                ),
                 (
                     "one\r\n\r\ntwo\n> quote",
                     "https://example.test",
