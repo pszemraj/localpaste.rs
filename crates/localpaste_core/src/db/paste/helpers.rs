@@ -330,7 +330,7 @@ fn score_meta_match_with_options(
                 if case_sensitive {
                     term.clone()
                 } else {
-                    term.to_ascii_lowercase()
+                    term.to_lowercase()
                 }
             })
             .collect()
@@ -340,7 +340,7 @@ fn score_meta_match_with_options(
     let handle_for_match = if case_sensitive {
         handle_for_match
     } else {
-        handle_for_match.to_ascii_lowercase()
+        handle_for_match.to_lowercase()
     };
     let tag_candidates: Vec<String> = meta
         .tags
@@ -353,11 +353,7 @@ fn score_meta_match_with_options(
             }
         })
         .collect();
-    let query_terms = if case_sensitive {
-        split_meta_query_terms(query)
-    } else {
-        split_meta_query_terms(query_lower.as_str())
-    };
+    let query_terms = split_meta_query_terms(query, case_sensitive);
     let mut matched_query_terms = 0;
 
     if name_for_match.contains(query_for_match) {
@@ -395,25 +391,26 @@ fn score_meta_match_with_options(
     // Metadata search still uses derived semantic hints so multi-term retrieval
     // stays useful without scanning full content in hot paths.
     for term in &query_terms {
+        let term = term.as_str();
         let mut term_matched = false;
 
-        if name_for_match.contains(*term) {
+        if name_for_match.contains(term) {
             score += 3;
             term_matched = true;
         }
-        if include_derived && !handle_for_match.is_empty() && handle_for_match.contains(*term) {
+        if include_derived && !handle_for_match.is_empty() && handle_for_match.contains(term) {
             score += 4;
             term_matched = true;
         }
         if include_derived
             && derived_terms_for_match
                 .iter()
-                .any(|candidate| candidate.contains(*term))
+                .any(|candidate| candidate.contains(term))
         {
             score += 3;
             term_matched = true;
         }
-        if tag_candidates.iter().any(|tag| tag.contains(*term)) {
+        if tag_candidates.iter().any(|tag| tag.contains(term)) {
             score += 2;
             term_matched = true;
         }
@@ -441,11 +438,25 @@ fn score_meta_match_with_options(
     score
 }
 
-fn split_meta_query_terms(query_lower: &str) -> Vec<&str> {
-    let mut terms = Vec::new();
-    for term in query_lower.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
-    {
-        if term.len() < 2 || terms.contains(&term) {
+/// Split a query into terms compared against names, tags, handles, and
+/// derived terms.
+///
+/// The query splits at every character other than a letter, digit, `_`, or
+/// `-` (in any script), so each part of a dotted or path-like query can match
+/// on its own. Each part then goes through the derived-term normalization
+/// ([`crate::semantic::normalize_term`]), so `--release`, `Note:`, and `Café`
+/// match the stored terms `release`, `note`, and `café`. Case-sensitive search
+/// only trims edge punctuation and keeps the query's case. Parts shorter than
+/// two characters are skipped and repeats are dropped.
+fn split_meta_query_terms(query: &str, case_sensitive: bool) -> Vec<String> {
+    let mut terms: Vec<String> = Vec::new();
+    for part in query.split(|ch: char| !ch.is_alphanumeric() && ch != '_' && ch != '-') {
+        let term = if case_sensitive {
+            crate::semantic::trim_term_edges(part).to_string()
+        } else {
+            crate::semantic::normalize_term(part)
+        };
+        if term.chars().count() < 2 || terms.contains(&term) {
             continue;
         }
         terms.push(term);
@@ -877,11 +888,11 @@ mod tests {
     #[test]
     fn split_meta_query_terms_dedupes_and_skips_short_tokens() {
         assert_eq!(
-            split_meta_query_terms(" cargo test  c c cargo "),
+            split_meta_query_terms(" cargo test  c c cargo ", false),
             vec!["cargo", "test"]
         );
         assert_eq!(
-            split_meta_query_terms("docker-compose postgres"),
+            split_meta_query_terms("docker-compose postgres", false),
             vec!["docker-compose", "postgres"]
         );
     }

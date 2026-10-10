@@ -21,9 +21,11 @@ const MAX_HANDLE_CHARS: usize = 48;
 /// keep their leading characters (a config value keeps whole leading words), so
 /// the handle stays a prefix of text that appears in the paste.
 const MAX_HANDLE_ATOM_CHARS: usize = 24;
-/// Longest token kept as a derived term. Longer tokens (minified blobs, base64
-/// lines, a single giant word) are not retrieval terms and would otherwise be
-/// persisted in the metadata projection and shown in full by the UI.
+/// Longest token kept as a derived term, counted in characters rather than
+/// bytes so non-ASCII words get the same allowance. Longer tokens (minified
+/// blobs, base64 lines, a single giant word) are not retrieval terms and would
+/// otherwise be persisted in the metadata projection and shown in full by the
+/// UI.
 const MAX_TERM_CHARS: usize = 48;
 
 /// Coarse content class used by metadata-only retrieval and GUI filters.
@@ -583,7 +585,7 @@ fn extract_definition_handle_from_line(line: &str, language: Option<&str>) -> Op
         if let Some(rest) = trimmed.strip_prefix(pattern) {
             let ident: String = rest
                 .chars()
-                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
                 .collect();
             if !ident.is_empty() {
                 return Some(format!("{} {}", pattern.trim_end(), ident));
@@ -679,7 +681,7 @@ fn extract_terms(sample: &str, language: Option<&str>) -> Vec<String> {
     let mut ordinal = 0usize;
 
     for token in tokenize(sample) {
-        let lower = trim_term_edges(token.as_str()).to_ascii_lowercase();
+        let lower = normalize_term(token);
         if !is_search_worthy_token(lower.as_str(), lang.as_str()) {
             continue;
         }
@@ -695,15 +697,13 @@ fn extract_terms(sample: &str, language: Option<&str>) -> Vec<String> {
         .into_iter()
         .map(|(token, count)| {
             let mut score = count as i32 * 3;
-            if token.chars().any(|ch| ch.is_ascii_digit())
-                && token.chars().any(|ch| ch.is_ascii_alphabetic())
-            {
+            if token.chars().any(char::is_numeric) && token.chars().any(char::is_alphabetic) {
                 score += 3;
             }
             if token.contains('_') || token.contains('-') || token.contains("::") {
                 score += 2;
             }
-            if (4..=24).contains(&token.len()) {
+            if (4..=24).contains(&token.chars().count()) {
                 score += 1;
             }
             let seen = *first_seen.get(token.as_str()).unwrap_or(&usize::MAX);
@@ -740,21 +740,27 @@ fn synthesize_handle_from_terms(terms: &[String]) -> Option<String> {
     }
 }
 
-fn tokenize(input: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut current = String::new();
+/// Split text into term tokens: runs of letters and digits in any script
+/// (`char::is_alphanumeric`) plus `_`, `-`, `:`, and `.`. Emoji, symbols, and
+/// other punctuation separate tokens. Scripts written without spaces, such as
+/// Chinese and Japanese, yield one token per run between punctuation marks.
+fn tokenize(input: &str) -> impl Iterator<Item = &str> {
+    input
+        .split(|ch: char| !(ch.is_alphanumeric() || matches!(ch, '_' | '-' | ':' | '.')))
+        .filter(|token| !token.is_empty())
+}
 
-    for ch in input.chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | ':' | '.') {
-            current.push(ch);
-        } else if !current.is_empty() {
-            out.push(std::mem::take(&mut current));
-        }
-    }
-    if !current.is_empty() {
-        out.push(current);
-    }
-    out
+/// Bring a token to the form derived terms are stored in: edge punctuation
+/// trimmed ([`trim_term_edges`]) and full Unicode lowercasing applied.
+///
+/// Metadata search normalizes its query terms with this same function, so a
+/// query such as `--release`, `Note:`, or `Café` compares equal to the stored
+/// term `release`, `note`, or `café`.
+///
+/// # Returns
+/// The trimmed, lowercased token, which may be empty.
+pub(crate) fn normalize_term(token: &str) -> String {
+    trim_term_edges(token).to_lowercase()
 }
 
 /// Strip sentence and key punctuation from both ends of a token.
@@ -764,17 +770,20 @@ fn tokenize(input: &str) -> Vec<String> {
 /// from prose, YAML keys, URL schemes, or CLI flags (`deploy.`, `name:`,
 /// `https:`, `--release`) and would make `name` and `name:` distinct terms.
 /// Underscores are kept because leading and trailing ones are part of
-/// identifiers such as `__init__` and `_private`.
-fn trim_term_edges(token: &str) -> &str {
+/// identifiers such as `__init__` and `_private`. Case-sensitive metadata
+/// search applies only this step to its query terms, because stored terms are
+/// lowercase and a differently cased query must not match them.
+///
+/// # Returns
+/// The token without leading or trailing `.`, `:`, or `-`.
+pub(crate) fn trim_term_edges(token: &str) -> &str {
     token.trim_matches(['.', ':', '-'])
 }
 
 fn is_search_worthy_token(token: &str, language: &str) -> bool {
-    // Tokens are ASCII (see `tokenize`), so byte length equals character count.
-    if token.len() < 3
-        || token.len() > MAX_TERM_CHARS
-        || token.chars().all(|ch| ch.is_ascii_digit())
-    {
+    // Tokens may hold any script, so the limits count characters, not bytes.
+    let chars = token.chars().count();
+    if !(3..=MAX_TERM_CHARS).contains(&chars) || token.chars().all(char::is_numeric) {
         return false;
     }
 
@@ -802,12 +811,12 @@ fn unquote(value: &str) -> &str {
     value.trim().trim_matches(['"', '\'', '`'])
 }
 
-/// Characters that may appear inside a handle operand: identifier and path
-/// characters, including `~`, both slashes, `@`, `+`, and `,`. `=` is
+/// Characters that may appear inside a handle operand: letters and digits in
+/// any script, and the path characters `_ - . : / \ ~ @ + ,`. `=` is
 /// deliberately absent: the text after it is an assigned value, often a secret
 /// or noise, and the name before it is the useful part of the handle.
 fn is_atom_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric()
+    ch.is_alphanumeric()
         || matches!(
             ch,
             '_' | '-' | '.' | ':' | '/' | '\\' | '~' | '@' | '+' | ','

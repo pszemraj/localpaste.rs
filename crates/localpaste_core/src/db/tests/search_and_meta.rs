@@ -399,6 +399,45 @@ fn paste_search_meta_matches_derived_handle_and_terms() {
 }
 
 #[test]
+fn paste_search_meta_normalizes_query_terms_like_derived_terms() {
+    let (db, _temp) = setup_test_db();
+    let flag = Paste::new(
+        "cargo build --release\ncargo build --release\n".to_string(),
+        "silent-forest".to_string(),
+    );
+    let note = Paste::new(
+        "Note: rotate the staging keys\nNote: rotate weekly\n".to_string(),
+        "quiet-river".to_string(),
+    );
+    let unicode = Paste::new(
+        "naïve café menu\nnaïve café\n".to_string(),
+        "untamed-tundra".to_string(),
+    );
+    // `ét` is too short to be a term, so only the handle `name ÉT` can match.
+    let handle = Paste::new("name: ÉT\n".to_string(), "misc".to_string());
+    for paste in [&flag, &note, &unicode, &handle] {
+        db.pastes.create(paste).expect("create");
+    }
+
+    for (query, expected) in [
+        ("--release", &flag.id),
+        ("Note:", &note.id),
+        ("Café", &unicode.id),
+        ("NAÏVE", &unicode.id),
+        ("ÉT", &handle.id),
+    ] {
+        let ids: Vec<String> = db
+            .pastes
+            .search_meta(query, 10, None, None)
+            .expect("search")
+            .into_iter()
+            .map(|meta| meta.id)
+            .collect();
+        assert_eq!(ids, [expected.as_str()], "{query}");
+    }
+}
+
+#[test]
 fn paste_search_meta_keeps_name_above_tags_above_language() {
     let (db, _temp) = setup_test_db();
 

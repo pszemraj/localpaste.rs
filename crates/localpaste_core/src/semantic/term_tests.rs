@@ -1,6 +1,6 @@
 //! Derived-term extraction regressions.
 
-use super::{derive, MAX_HANDLE_ATOM_CHARS, MAX_TERM_CHARS};
+use super::{derive, normalize_term, MAX_HANDLE_ATOM_CHARS, MAX_HANDLE_CHARS, MAX_TERM_CHARS};
 
 #[test]
 fn giant_single_token_yields_no_terms_or_synthesized_handle() {
@@ -316,4 +316,82 @@ fn assigned_values_are_not_copied_into_handles() {
         let handle = derive(content, None).handle.expect("handle");
         assert!(!handle.contains("sk-live"), "{content:?} -> {handle:?}");
     }
+}
+
+#[test]
+fn non_ascii_words_stay_whole_and_symbols_separate_them() {
+    let derived = derive("naïve café ☕ — 日本語 🚀", Some("text"));
+    // A run of CJK letters without spaces is one token; emoji and dashes are
+    // separators, never term characters.
+    assert_eq!(derived.terms, ["naïve", "café", "日本語"]);
+    assert_eq!(derived.handle.as_deref(), Some("naïve café"));
+
+    assert_eq!(derive("über über", Some("text")).terms, ["über"]);
+    assert!(derive("🚀🚀🚀 ☕☕☕ —— ★★★", Some("text"))
+        .terms
+        .is_empty());
+}
+
+#[test]
+fn unicode_terms_lowercase_fully_and_query_terms_normalize_the_same_way() {
+    let derived = derive("ÜBER Straße ÉCOLE Μάθημα", Some("text"));
+    assert_eq!(derived.terms, ["über", "straße", "école", "μάθημα"]);
+    for (query, term) in [
+        ("--Release", "release"),
+        ("Note:", "note"),
+        ("CAFÉ.", "café"),
+        ("ÉCOLE", "école"),
+    ] {
+        assert_eq!(normalize_term(query), term);
+    }
+}
+
+#[test]
+fn term_length_limits_count_characters_not_bytes() {
+    // 30 two-byte letters are 60 bytes but well within the 48-character cap.
+    let word = "é".repeat(30);
+    assert_eq!(derive(word.as_str(), Some("text")).terms, [word.as_str()]);
+    let at_cap = "ü".repeat(MAX_TERM_CHARS);
+    assert_eq!(
+        derive(at_cap.as_str(), Some("text")).terms,
+        [at_cap.as_str()]
+    );
+    let over_cap = "ü".repeat(MAX_TERM_CHARS + 1);
+    assert!(derive(over_cap.as_str(), Some("text")).terms.is_empty());
+    // Two characters stay below the three-character minimum despite four bytes.
+    assert!(derive("éé ßß", Some("text")).terms.is_empty());
+}
+
+#[test]
+fn handles_keep_non_ascii_text_and_cap_on_character_boundaries() {
+    assert_handles(
+        Some("yaml"),
+        &[("name: café-münchen-projekt\n", "name café-münchen-projekt")],
+    );
+    assert_handles(
+        None,
+        &[("cd ~/Été/projets\ncargo build", "cd ~/Été/projets")],
+    );
+    assert_handles(
+        Some("python"),
+        &[("def größe(x):\n    return x\n", "def größe")],
+    );
+
+    let long_value = "ü".repeat(MAX_HANDLE_ATOM_CHARS + 10);
+    let config = derive(format!("name: {long_value}\n").as_str(), Some("yaml"));
+    let expected = format!("name {}", "ü".repeat(MAX_HANDLE_ATOM_CHARS));
+    assert_eq!(config.handle.as_deref(), Some(expected.as_str()));
+    let command = derive(format!("cd ~/{long_value}\ncargo build").as_str(), None);
+    let expected = format!("cd ~/{}", "ü".repeat(MAX_HANDLE_ATOM_CHARS - 2));
+    assert_eq!(command.handle.as_deref(), Some(expected.as_str()));
+
+    // A handle synthesized from two long terms is cut at 48 characters.
+    let (first, second) = ("é".repeat(40), "ü".repeat(40));
+    let derived = derive(format!("{first} {second}").as_str(), Some("text"));
+    let handle = derived.handle.expect("synthesized handle");
+    assert_eq!(handle.chars().count(), MAX_HANDLE_CHARS);
+    assert_eq!(
+        handle,
+        format!("{first} {}", "ü".repeat(MAX_HANDLE_CHARS - 41))
+    );
 }
