@@ -153,7 +153,6 @@ pub(crate) fn javascript_keyword_prose(content: &str) -> bool {
 fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
     let sample = sample_prefix(content);
     let lang = canonicalize(language.unwrap_or_default().trim());
-    let lower = sample.to_ascii_lowercase();
 
     // Detection locks inferred labels too. Positive note structure corrects the
     // retrieval kind without rewriting a stored highlighting/export choice.
@@ -199,9 +198,6 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
         if let Some(technical_language) = markdown_technical_language(sample) {
             return classify_kind(sample, Some(technical_language));
         }
-        if has_positive_markdown_document_evidence(sample) {
-            return PasteKind::Document;
-        }
     }
 
     if lang != "markdown" && is_document_language(language) {
@@ -212,14 +208,15 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
         return PasteKind::Link;
     }
 
-    // Statistical detection can lock an incidental code/config label onto a
-    // real log. Structural runtime headers still determine retrieval kind.
-    // Attribute assignments and bare TOML table headers remain configuration.
-    if logs::looks_like_multiline_log(sample)
-        || logs::looks_like_rust_panic(sample)
-        || logs::looks_like_python_traceback(sample)
-    {
+    // Statistical detection can lock an incidental code, config, or Markdown
+    // label onto a real log. Structural runtime output still determines the
+    // retrieval kind; attribute assignments and bare TOML table headers remain
+    // configuration.
+    if logs::looks_like_runtime_log(sample) {
         return PasteKind::Log;
+    }
+    if lang == "markdown" && has_positive_markdown_document_evidence(sample) {
+        return PasteKind::Document;
     }
     let log_header = logs::leading_log_header(sample, lang.as_str());
     if log_header.is_some_and(|header| header.strong_single_line) {
@@ -264,29 +261,6 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
     }
 
     if lang == "log" {
-        return PasteKind::Log;
-    }
-
-    let log_hits = [
-        "traceback",
-        "stack trace",
-        "exception",
-        "panic",
-        "stderr",
-        "stdout",
-        "error:",
-        "warn:",
-        "info:",
-        "caused by:",
-        "exit code",
-        "exit status",
-        "segmentation fault",
-        "cublas_status",
-    ]
-    .iter()
-    .filter(|needle| lower.contains(**needle))
-    .count();
-    if log_hits >= 2 {
         return PasteKind::Log;
     }
 
@@ -809,6 +783,9 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 /// Command-versus-prose regression coverage.
 #[cfg(test)]
 mod command_tests;
+/// Structure-based log recognition regression coverage.
+#[cfg(test)]
+mod log_tests;
 /// Content classification and retrieval regression coverage.
 #[cfg(test)]
 mod tests;

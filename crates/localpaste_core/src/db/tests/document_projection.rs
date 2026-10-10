@@ -135,7 +135,7 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
             "npm ERR! code 1\nnpm ERR! command failed\n> demo@1.0.0 test\n> pytest",
             "markdown",
             PasteKind::Code,
-            PasteKind::Document,
+            PasteKind::Log,
         ),
         (
             "> Traceback (most recent call last):\n>   File \"demo.py\", line 1, in <module>\n> ValueError: bad value",
@@ -452,7 +452,7 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
             PasteKind::Log,
         ),
         (
-            "info Resolving packages\nwarning Retrying request\nsuccess Saved lockfile",
+            "info Resolving packages...\nwarning Retrying request\nsuccess Saved lockfile.",
             "text",
             PasteKind::Document,
             PasteKind::Log,

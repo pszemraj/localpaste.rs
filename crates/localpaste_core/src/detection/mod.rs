@@ -37,9 +37,7 @@ pub fn detect_language(content: &str) -> Option<String> {
     if crate::semantic::commands::looks_like_shell_command_sequence(content) {
         return Some("shell".to_string());
     }
-    if crate::semantic::logs::looks_like_rust_panic(content)
-        || crate::semantic::logs::looks_like_python_traceback(content)
-    {
+    if crate::semantic::logs::looks_like_runtime_log(content) {
         return Some("log".to_string());
     }
 

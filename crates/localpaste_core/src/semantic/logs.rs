@@ -1,9 +1,64 @@
-//! Runtime-output recognition: level headers, panics, and tracebacks.
+//! Runtime-output recognition: level headers, timestamps, panics, and traces.
+//!
+//! Logs are recognized by line structure, never by vocabulary, so prose that
+//! mentions a panic, a stack trace, or an error budget stays prose.
 
-/// Parse a leading log header while excluding record and TSV header shapes.
+/// Level words accepted at the start of a log line.
+const LEVELS: &[&str] = &[
+    "trace", "debug", "info", "warn", "warning", "error", "fatal", "success", "panic",
+];
+
+/// npm's own log prefixes: `npm ERR!`, `npm WARN`, `npm notice`, and the lowercase
+/// levels npm 10 prints.
+const NPM_LEVELS: &[&str] = &[
+    "ERR!", "WARN", "notice", "verb", "http", "timing", "sill", "error", "warn",
+];
+
+/// Cargo's right-aligned status verbs, which precede a panic in `cargo run` output.
+const CARGO_STATUS_VERBS: &[&str] = &[
+    "Adding",
+    "Blocking",
+    "Checking",
+    "Compiling",
+    "Downloaded",
+    "Downloading",
+    "Fetching",
+    "Finished",
+    "Fresh",
+    "Locking",
+    "Running",
+    "Updating",
+];
+
+const MONTHS: &[&str] = &[
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/// Recognize a body that is runtime output by its line structure.
+///
+/// # Arguments
+/// - `content`: Paste body; only its bounded semantic sample is inspected.
+///
+/// # Returns
+/// Whether the sample opens with a run of level-prefixed lines, consists mostly
+/// of timestamped lines, or is a Rust panic, Python traceback, Java stack
+/// trace, or rustc diagnostic.
+pub(crate) fn looks_like_runtime_log(content: &str) -> bool {
+    let sample = super::sample_prefix(content);
+    looks_like_multiline_log(sample)
+        || looks_like_timestamped_log(sample)
+        || looks_like_rust_panic(sample)
+        || looks_like_python_traceback(sample)
+        || looks_like_java_stack_trace(sample)
+        || looks_like_rustc_diagnostic(sample)
+}
+
+/// Parse a leading log header while excluding record, TSV, and list shapes.
 ///
 /// Spaced levels must be uppercase or bracketed. Lowercase words with spaces
-/// introduce ordinary prose; colon-delimited lowercase levels remain supported.
+/// introduce ordinary prose; colon-delimited lowercase levels remain supported
+/// unless several of them open the body without any machine token, which is a
+/// glossary, to-do list, or mapping rather than output.
 pub(super) fn leading_log_header(sample: &str, language: &str) -> Option<ParsedLogHeader> {
     let first_line = sample
         .lines()
@@ -21,6 +76,10 @@ pub(super) fn leading_log_header(sample: &str, language: &str) -> Option<ParsedL
     if language == "tsv" && first_line.contains('\t') && !header.contextual {
         return None;
     }
+    let run = leading_header_run(sample);
+    if !header.strong_single_line && run.headers >= 2 && !run.corroborated {
+        return None;
+    }
     Some(header)
 }
 
@@ -29,28 +88,53 @@ pub(super) fn leading_log_header(sample: &str, language: &str) -> Option<ParsedL
 pub(super) struct ParsedLogHeader {
     /// Bracketed or uppercase spaced levels, which identify a log on their own.
     pub(super) strong_single_line: bool,
-    machine_message: bool,
+    /// An uppercase level or a message with a path, version, quote, or similar
+    /// token, which a note written in lowercase level words lacks.
+    machine_evidence: bool,
     contextual: bool,
 }
 
+/// Parse one log line's level prefix.
+///
+/// # Arguments
+/// - `line`: Candidate line.
+/// - `allow_lowercase_spaced`: Whether `info message` counts; such lines need
+///   corroboration from neighbouring machine output.
+///
+/// # Returns
+/// The header's structural facts, or `None` when the line has no level prefix.
 pub(super) fn parse_log_header(
     line: &str,
     allow_lowercase_spaced: bool,
 ) -> Option<ParsedLogHeader> {
-    const LEVELS: &[&str] = &[
-        "trace", "debug", "info", "warn", "warning", "error", "fatal", "success",
-    ];
-
     let line = line.trim_start();
+    if let Some((level, _)) = line
+        .strip_prefix("npm ")
+        .map(|rest| rest.split_once(' ').unwrap_or((rest, "")))
+    {
+        return NPM_LEVELS.contains(&level).then_some(ParsedLogHeader {
+            strong_single_line: true,
+            machine_evidence: true,
+            contextual: false,
+        });
+    }
     let (level, mut message, bracketed, colon) =
         if let Some(bracketed_line) = line.strip_prefix('[') {
             let (level, message) = bracketed_line.split_once(']')?;
             (level, message, true, false)
         } else {
-            let level = line.split([':', ' ', '\t']).next().unwrap_or("");
-            let rest = line.get(level.len()..)?;
+            let token = line.split([':', ' ', '\t']).next().unwrap_or("");
+            let rest = line.get(token.len()..)?;
             let colon = rest.starts_with(':');
             let message = if colon { rest.get(1..)? } else { rest };
+            // rustc prints a diagnostic code after the level: `error[E0308]:`.
+            let level = token
+                .split_once('[')
+                .filter(|(_, code)| {
+                    code.strip_suffix(']')
+                        .is_some_and(|code| code.chars().all(|ch| ch.is_ascii_alphanumeric()))
+                })
+                .map_or(token, |(level, _)| level);
             (level, message, false, colon)
         };
     let lower = level.to_ascii_lowercase();
@@ -78,46 +162,192 @@ pub(super) fn parse_log_header(
         return None;
     }
 
+    // `error: /var/log/error.log` or `info: "Saved."` is a mapping entry whose
+    // value is one scalar, so its path or quote is not evidence of output.
+    let scalar_value = colon
+        && (!message.contains(char::is_whitespace)
+            || (message.len() > 1 && message.starts_with('"') && message.ends_with('"')));
     Some(ParsedLogHeader {
         strong_single_line: bracketed || (!colon && level == level.to_ascii_uppercase()),
-        machine_message: message.chars().next().is_some_and(char::is_uppercase),
+        machine_evidence: level == level.to_ascii_uppercase()
+            || (!scalar_value && has_machine_token(message)),
         contextual,
     })
 }
 
-pub(super) fn looks_like_multiline_log(sample: &str) -> bool {
-    let mut headers = 0usize;
-    let mut strong_header = false;
-    let mut machine_messages = 0usize;
-    let mut header_run_started = false;
-    let mut yarn_preamble = false;
+/// Recognize a token people rarely type in notes: a path, a quote or backtick,
+/// an `@` or `=` binding, an ellipsis, or a dotted name such as `package.json`.
+fn has_machine_token(text: &str) -> bool {
+    text.contains(['/', '\\', '"', '`', '@', '='])
+        || text.contains("...")
+        || text.split_whitespace().any(|word| {
+            let word = word.trim_end_matches(|ch: char| !ch.is_ascii_alphanumeric());
+            word.char_indices().any(|(index, ch)| {
+                ch == '.'
+                    && word[..index].ends_with(|prev: char| prev.is_ascii_alphanumeric())
+                    && word[index + 1..].starts_with(|next: char| next.is_ascii_alphanumeric())
+            })
+        })
+}
+
+/// The run of level-prefixed lines that opens a sample.
+struct HeaderRun {
+    headers: usize,
+    strong: bool,
+    corroborated: bool,
+}
+
+fn leading_header_run(sample: &str) -> HeaderRun {
+    let mut run = HeaderRun {
+        headers: 0,
+        strong: false,
+        corroborated: false,
+    };
     for line in sample
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
     {
-        if !header_run_started && line.starts_with("yarn ") {
-            yarn_preamble = true;
+        // Yarn prints a version banner and numbered steps around its levels.
+        if (run.headers == 0 && line.starts_with("yarn ")) || is_progress_step(line) {
+            run.corroborated = true;
             continue;
         }
-        if !header_run_started
-            && yarn_preamble
-            && line.starts_with('[')
-            && line.contains('/')
-            && line.contains(']')
-        {
-            continue;
-        }
-        if let Some(header) = parse_log_header(line, true) {
-            header_run_started = true;
-            headers = headers.saturating_add(1);
-            strong_header |= header.strong_single_line;
-            machine_messages = machine_messages.saturating_add(usize::from(header.machine_message));
-        } else {
+        let Some(header) = parse_log_header(line, true) else {
             break;
+        };
+        run.headers = run.headers.saturating_add(1);
+        run.strong |= header.strong_single_line;
+        run.corroborated |= header.machine_evidence;
+    }
+    run
+}
+
+/// Recognize a run of at least two level-prefixed lines that is output.
+///
+/// Lowercase levels are also ordinary words (`debug the crash`, `info: desk
+/// hours`), so a run of only lowercase levels needs a yarn banner or progress
+/// step, or a machine token such as a path or version in some message.
+pub(super) fn looks_like_multiline_log(sample: &str) -> bool {
+    let run = leading_header_run(sample);
+    run.headers >= 2 && (run.strong || run.corroborated)
+}
+
+fn is_progress_step(line: &str) -> bool {
+    line.strip_prefix('[')
+        .and_then(|rest| rest.split_once(']'))
+        .and_then(|(step, _)| step.split_once('/'))
+        .is_some_and(|(done, total)| {
+            !done.is_empty()
+                && !total.is_empty()
+                && done
+                    .chars()
+                    .chain(total.chars())
+                    .all(|ch| ch.is_ascii_digit())
+        })
+}
+
+/// Recognize logs whose lines start with a timestamp that includes seconds.
+///
+/// Most unindented lines must carry the timestamp, so a note that mentions a
+/// date, a dated diary, or a CSV whose first column is a time does not qualify;
+/// indented continuation lines such as stack frames are not counted. A single
+/// stamped line needs a level after the timestamp.
+fn looks_like_timestamped_log(sample: &str) -> bool {
+    let mut rows = 0usize;
+    let mut stamped = 0usize;
+    let mut leveled = false;
+    for line in sample.lines().filter(|line| !line.trim().is_empty()) {
+        if line.starts_with(char::is_whitespace) {
+            continue;
+        }
+        rows += 1;
+        if let Some(end) = timestamp_prefix_len(line) {
+            stamped += 1;
+            leveled |= parse_log_header(&line[end..], false)
+                .is_some_and(|header| header.strong_single_line);
         }
     }
-    headers >= 2 && (strong_header || yarn_preamble || machine_messages == headers)
+    stamped > 0 && stamped * 2 >= rows && (stamped >= 2 || leveled)
+}
+
+/// Byte length of a leading `YYYY-MM-DD[T ]HH:MM:SS` or syslog `Mon DD HH:MM:SS`
+/// timestamp, including fractions, a zone, and an enclosing `[`/`]`.
+///
+/// A comma, tab, or other delimiter right after the timestamp marks a record
+/// field rather than a log message, so delimited data never matches.
+fn timestamp_prefix_len(line: &str) -> Option<usize> {
+    let bytes = line.as_bytes();
+    let start = usize::from(bytes.first() == Some(&b'['));
+    let mut end = iso_timestamp_end(bytes, start).or_else(|| syslog_timestamp_end(bytes, start))?;
+    if start == 1 && bytes.get(end) == Some(&b']') {
+        end += 1;
+    }
+    matches!(bytes.get(end), None | Some(b' ')).then_some(end)
+}
+
+fn digits(bytes: &[u8], at: usize, count: usize) -> Option<usize> {
+    let run = bytes.get(at..at + count)?;
+    run.iter().all(u8::is_ascii_digit).then_some(at + count)
+}
+
+fn byte(bytes: &[u8], at: usize, expected: &[u8]) -> Option<usize> {
+    bytes
+        .get(at)
+        .filter(|found| expected.contains(found))
+        .map(|_| at + 1)
+}
+
+fn clock_end(bytes: &[u8], at: usize) -> Option<usize> {
+    let at = digits(bytes, at, 2)?;
+    let at = byte(bytes, at, b":")?;
+    let at = digits(bytes, at, 2)?;
+    let at = byte(bytes, at, b":")?;
+    digits(bytes, at, 2)
+}
+
+fn iso_timestamp_end(bytes: &[u8], at: usize) -> Option<usize> {
+    let at = digits(bytes, at, 4)?;
+    let separator = *bytes.get(at)?;
+    let at = byte(bytes, at, b"-/")?;
+    let at = digits(bytes, at, 2)?;
+    let at = byte(bytes, at, &[separator])?;
+    let at = digits(bytes, at, 2)?;
+    let at = byte(bytes, at, b"T ")?;
+    let mut at = clock_end(bytes, at)?;
+    if matches!(bytes.get(at), Some(b'.' | b','))
+        && bytes.get(at + 1).is_some_and(u8::is_ascii_digit)
+    {
+        at += 1;
+        while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+            at += 1;
+        }
+    }
+    if bytes.get(at) == Some(&b'Z') {
+        return Some(at + 1);
+    }
+    if let Some(zone) = byte(bytes, at, b"+-").and_then(|zone| digits(bytes, zone, 2)) {
+        let zone = byte(bytes, zone, b":").unwrap_or(zone);
+        if let Some(end) = digits(bytes, zone, 2) {
+            return Some(end);
+        }
+    }
+    Some(at)
+}
+
+fn syslog_timestamp_end(bytes: &[u8], at: usize) -> Option<usize> {
+    let month = bytes.get(at..at + 3)?;
+    if !MONTHS.iter().any(|name| name.as_bytes() == month) {
+        return None;
+    }
+    let at = byte(bytes, at + 3, b" ")?;
+    let at = if bytes.get(at) == Some(&b' ') {
+        digits(bytes, at + 1, 1)?
+    } else {
+        digits(bytes, at, 2).or_else(|| digits(bytes, at, 1))?
+    };
+    let at = byte(bytes, at, b" ")?;
+    clock_end(bytes, at)
 }
 
 /// Recognize Rust's runtime panic header, rather than prose mentioning a panic.
@@ -182,24 +412,58 @@ pub(crate) fn looks_like_python_traceback(content: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'))
 }
 
-/// Accept Cargo's own build/run status and an entered `cargo run` command before
-/// a panic header. Any source, Markdown, or prose line ends the runtime preamble.
-fn is_cargo_run_preamble(line: &str) -> bool {
-    if line.strip_prefix("Compiling ").is_some_and(|status| {
-        status
-            .split_whitespace()
-            .any(|part| part.starts_with('v') && part.get(1..).is_some_and(|v| v.contains('.')))
-    }) || line
-        .strip_prefix("Finished ")
-        .is_some_and(|status| status.contains('`') && status.contains(" profile"))
-        || line.strip_prefix("Running ").is_some_and(|status| {
-            let status = status.trim();
-            status.starts_with('`') && status.get(1..).is_some_and(|rest| rest.contains('`'))
+/// Recognize a Java exception header followed by an `at Class.method(File.java:N)` frame.
+fn looks_like_java_stack_trace(sample: &str) -> bool {
+    let mut lines = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let header = lines.next().is_some_and(|line| {
+        line.starts_with("Exception in thread \"")
+            || line.split(':').next().is_some_and(|name| {
+                name.contains('.')
+                    && !name.contains(' ')
+                    && ["Exception", "Error", "Throwable"]
+                        .iter()
+                        .any(|suffix| name.ends_with(suffix))
+            })
+    });
+    header
+        && lines.next().is_some_and(|frame| {
+            frame
+                .strip_prefix("at ")
+                .is_some_and(|call| call.ends_with(')') && call.contains('('))
         })
-    {
-        return true;
-    }
+}
 
+/// Recognize a rustc diagnostic: an `error`/`warning` header and a `-->` location.
+fn looks_like_rustc_diagnostic(sample: &str) -> bool {
+    let mut lines = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    lines.next().is_some_and(|line| {
+        ["error", "warning"].iter().any(|level| {
+            line.strip_prefix(level)
+                .is_some_and(|rest| rest.starts_with(':') || rest.starts_with('['))
+        })
+    }) && lines
+        .next()
+        .and_then(|line| line.strip_prefix("--> "))
+        .is_some_and(|location| location.contains(':'))
+}
+
+/// Accept Cargo's own status lines and an entered `cargo run` command before a
+/// panic header. A status verb needs a machine token such as a version,
+/// backticked profile, or path, so `Finished painting the wall` ends the preamble.
+fn is_cargo_run_preamble(line: &str) -> bool {
+    if let Some((verb, status)) = line.split_once(' ') {
+        if CARGO_STATUS_VERBS.contains(&verb)
+            && (has_machine_token(status) || status.starts_with(|ch: char| ch.is_ascii_digit()))
+        {
+            return true;
+        }
+    }
     let command = line
         .strip_prefix('$')
         .or_else(|| line.strip_prefix('%'))

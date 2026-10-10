@@ -102,7 +102,7 @@ fn weak_markdown_labels_do_not_hide_whole_technical_bodies() {
         ("# build settings\nexport CC\nCFLAGS += -O2\nVERSION != git describe\n-include local.mk\nifdef DEBUG\nCFLAGS += -g\nendif\nifndef PREFIX\nPREFIX = /usr/local\nendif\nifneq ($(CC),)\nexport READY = yes\nendif\ndefine announce\n@echo $(VERSION)\nendef\nall:\n\t$(CC) main.c", PasteKind::Code),
         (
             "npm ERR! code 1\nnpm ERR! command failed\n> demo@1.0.0 test\n> pytest",
-            PasteKind::Document,
+            PasteKind::Log,
         ),
         (
             "> Traceback (most recent call last):\n>   File \"demo.py\", line 1, in <module>\n> ValueError: bad value",
@@ -838,14 +838,20 @@ fn derive_matrix_covers_code_config_log_link_and_other() {
         ("[WARN] Retry in thirty seconds", "tsv", PasteKind::Log),
         ("INFO (main) Starting the server", "text", PasteKind::Log),
         (
-            "info Resolving packages\nwarning Retrying request\nsuccess Saved lockfile",
+            "info Resolving packages...\nwarning Retrying request\nsuccess Saved lockfile.",
             "text",
             PasteKind::Log,
         ),
         (
-            "info Resolving packages\ninfo Fetching packages",
+            "info No lockfile found.\nwarning package.json: No license field\ninfo Fetching packages...",
             "text",
             PasteKind::Log,
+        ),
+        // Lowercase level words without a machine token read as a to-do list.
+        (
+            "info Resolving packages\ninfo Fetching packages",
+            "text",
+            PasteKind::Document,
         ),
         (
             "INFO\tStarting worker\nERROR\tWorker stopped",

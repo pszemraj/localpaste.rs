@@ -16,7 +16,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    if crate::semantic::logs::looks_like_python_traceback(trimmed) {
+    if crate::semantic::logs::looks_like_runtime_log(trimmed) {
         return Some("log".to_string());
     }
     if crate::semantic::commands::looks_like_shell_command_sequence(trimmed) {
