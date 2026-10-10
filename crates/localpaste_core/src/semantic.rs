@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Shared command recognition and semantic-handle extraction.
 pub(crate) mod commands;
+/// Runtime-output recognition shared by detection and semantic kinds.
+pub(crate) mod logs;
 mod makefile;
 pub(crate) use makefile::{makefile_body_language, makefile_note_body};
 
@@ -213,13 +215,13 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
     // Statistical detection can lock an incidental code/config label onto a
     // real log. Structural runtime headers still determine retrieval kind.
     // Attribute assignments and bare TOML table headers remain configuration.
-    if looks_like_multiline_log(sample)
-        || crate::detection::looks_like_rust_panic(sample)
-        || crate::detection::looks_like_python_traceback(sample)
+    if logs::looks_like_multiline_log(sample)
+        || logs::looks_like_rust_panic(sample)
+        || logs::looks_like_python_traceback(sample)
     {
         return PasteKind::Log;
     }
-    let log_header = leading_log_header(sample, lang.as_str());
+    let log_header = logs::leading_log_header(sample, lang.as_str());
     if log_header.is_some_and(|header| header.strong_single_line) {
         return PasteKind::Log;
     }
@@ -321,7 +323,7 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
 /// reclassifying documentary prose, links, or embedded fenced examples.
 pub(crate) fn markdown_technical_language(content: &str) -> Option<&'static str> {
     let sample = sample_prefix(content);
-    if crate::detection::looks_like_shell_command_sequence(sample)
+    if commands::looks_like_shell_command_sequence(sample)
         || makefile_body_language(sample).is_some()
     {
         return Some("shell");
@@ -332,7 +334,7 @@ pub(crate) fn markdown_technical_language(content: &str) -> Option<&'static str>
     }) {
         return None;
     }
-    if crate::detection::looks_like_python_traceback(sample) {
+    if logs::looks_like_python_traceback(sample) {
         return Some("log");
     }
     if crate::detection::looks_like_python_source(sample) {
@@ -354,7 +356,7 @@ pub(crate) fn markdown_technical_language(content: &str) -> Option<&'static str>
                 runtime_marker = true;
                 return true;
             }
-            if let Some(header) = parse_log_header(line, false) {
+            if let Some(header) = logs::parse_log_header(line, false) {
                 log_lines += 1;
                 runtime_marker |= header.strong_single_line;
                 return true;
@@ -456,7 +458,7 @@ pub(crate) fn looks_like_batch_prose(content: &str) -> bool {
     }
     let arguments: Vec<_> = parts.collect();
     let prose_arguments = if matches!(command, "set" | "export" | "source") {
-        !crate::detection::setup_command_is_valid(command, &arguments, false)
+        !commands::setup_command_is_valid(command, &arguments, false)
     } else {
         !line.starts_with(['@', ':'])
             && !["rem", "if", "for", "dir", "type", "copy", "move", "call"]
@@ -466,128 +468,13 @@ pub(crate) fn looks_like_batch_prose(content: &str) -> bool {
                 .iter()
                 .zip(arguments.iter().skip(1))
                 .any(|(&word, &next)| {
-                    matches!(word, "in" | "at" | "by") && crate::detection::is_shell_path(next)
+                    matches!(word, "in" | "at" | "by") && commands::is_shell_path(next)
                 })
-            && !crate::detection::command_has_explicit_arguments(command, line, &arguments)
+            && !commands::command_has_explicit_arguments(command, line, &arguments)
     };
     prose_arguments
         && commands::extract_command_handle(sample).is_none()
         && looks_like_prose(sample)
-}
-
-/// Parse a leading log header while excluding record and TSV header shapes.
-///
-/// Spaced levels must be uppercase or bracketed. Lowercase words with spaces
-/// introduce ordinary prose; colon-delimited lowercase levels remain supported.
-fn leading_log_header(sample: &str, language: &str) -> Option<ParsedLogHeader> {
-    let first_line = sample
-        .lines()
-        .map(str::trim_start)
-        .find(|line| !line.is_empty())?;
-    let header = parse_log_header(first_line, false)?;
-    if looks_like_delimited_records(sample) && !header.contextual {
-        return None;
-    }
-    // A detector-provided TSV label plus a tab is sufficient to identify a
-    // one-row header. Without this guard, an `INFO`/`ERROR` header is mistaken
-    // for a spaced runtime level before stored-language precedence can apply.
-    // An explicit parsed context such as `(main)` is log structure rather than
-    // a typed table column and may pass the guard.
-    if language == "tsv" && first_line.contains('\t') && !header.contextual {
-        return None;
-    }
-    Some(header)
-}
-
-#[derive(Clone, Copy)]
-struct ParsedLogHeader {
-    strong_single_line: bool,
-    machine_message: bool,
-    contextual: bool,
-}
-
-fn parse_log_header(line: &str, allow_lowercase_spaced: bool) -> Option<ParsedLogHeader> {
-    const LEVELS: &[&str] = &[
-        "trace", "debug", "info", "warn", "warning", "error", "fatal", "success",
-    ];
-
-    let line = line.trim_start();
-    let (level, mut message, bracketed, colon) =
-        if let Some(bracketed_line) = line.strip_prefix('[') {
-            let (level, message) = bracketed_line.split_once(']')?;
-            (level, message, true, false)
-        } else {
-            let level = line.split([':', ' ', '\t']).next().unwrap_or("");
-            let rest = line.get(level.len()..)?;
-            let colon = rest.starts_with(':');
-            let message = if colon { rest.get(1..)? } else { rest };
-            (level, message, false, colon)
-        };
-    let lower = level.to_ascii_lowercase();
-    if !LEVELS.contains(&lower.as_str())
-        || (level != lower && level != level.to_ascii_uppercase())
-        || (!allow_lowercase_spaced && !bracketed && !colon && level != level.to_ascii_uppercase())
-    {
-        return None;
-    }
-
-    message = message.trim_start();
-    let contextual = message.starts_with('(');
-    if let Some(context) = message.strip_prefix('(') {
-        let (name, rest) = context.split_once(')')?;
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
-        {
-            return None;
-        }
-        message = rest.trim_start();
-    }
-    if message.is_empty() || message.starts_with(['=', ':', '{']) {
-        return None;
-    }
-
-    Some(ParsedLogHeader {
-        strong_single_line: bracketed || (!colon && level == level.to_ascii_uppercase()),
-        machine_message: message.chars().next().is_some_and(char::is_uppercase),
-        contextual,
-    })
-}
-
-fn looks_like_multiline_log(sample: &str) -> bool {
-    let mut headers = 0usize;
-    let mut strong_header = false;
-    let mut machine_messages = 0usize;
-    let mut header_run_started = false;
-    let mut yarn_preamble = false;
-    for line in sample
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-    {
-        if !header_run_started && line.starts_with("yarn ") {
-            yarn_preamble = true;
-            continue;
-        }
-        if !header_run_started
-            && yarn_preamble
-            && line.starts_with('[')
-            && line.contains('/')
-            && line.contains(']')
-        {
-            continue;
-        }
-        if let Some(header) = parse_log_header(line, true) {
-            header_run_started = true;
-            headers = headers.saturating_add(1);
-            strong_header |= header.strong_single_line;
-            machine_messages = machine_messages.saturating_add(usize::from(header.machine_message));
-        } else {
-            break;
-        }
-    }
-    headers >= 2 && (strong_header || yarn_preamble || machine_messages == headers)
 }
 
 /// Returns whether untyped text resembles prose rather than a compact data blob.

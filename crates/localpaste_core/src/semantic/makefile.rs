@@ -143,7 +143,7 @@ pub(crate) fn makefile_note_body(content: &str) -> bool {
                 return false;
             }
             let arguments: Vec<_> = trimmed.split_whitespace().skip(1).collect();
-            saw_prose |= crate::detection::has_unquoted_prose_copula(&arguments, false);
+            saw_prose |= commands::has_unquoted_prose_copula(&arguments, false);
             saw_prose |= super::looks_like_prose(trimmed)
                 && (note_label
                     || (note_comment && !recipe_is_invocation(trimmed))
@@ -219,7 +219,7 @@ fn recipe_has_command_evidence(line: &str) -> bool {
                 | "true"
                 | "false"
         )
-        || crate::detection::is_shell_path(command)
+        || commands::is_shell_path(command)
         || recipe.split('$').skip(1).any(|rest| {
             rest.starts_with(['(', '{', '@', '<', '^', '?', '*', '+', '|', '%'])
                 || rest

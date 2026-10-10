@@ -1,4 +1,6 @@
-//! Command-shaped semantic handles and their prose disambiguation.
+//! Command-line recognition shared by language detection and semantic kinds.
+
+use crate::text::{complete_line_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 
 /// Listed executable names shared by detection and semantic command handles.
 pub(crate) const COMMANDS: &[&str] = &[
@@ -68,15 +70,10 @@ pub(super) fn has_unlisted_command_syntax(line: &str) -> bool {
                 .all(|ch| ch.is_ascii_lowercase() || matches!(ch, '_' | '-'))
     });
     leading_executable
-        && !crate::detection::has_unquoted_prose_copula(words.get(1..).unwrap_or_default(), false)
+        && !has_unquoted_prose_copula(words.get(1..).unwrap_or_default(), false)
         && !words.iter().any(|word| sentence_markers.contains(word))
-        && (words
-            .iter()
-            .skip(1)
-            .any(|word| crate::detection::is_shell_option(word))
-            || words
-                .get(1)
-                .is_some_and(|word| crate::detection::is_shell_path(word)))
+        && (words.iter().skip(1).any(|word| is_shell_option(word))
+            || words.get(1).is_some_and(|word| is_shell_path(word)))
 }
 
 /// Extract a compact handle from a leading command-shaped line.
@@ -97,7 +94,7 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
         let _ = lines.next();
     }
     if let Some(line) = lines.next() {
-        let trimmed = crate::detection::strip_shell_prompt(line.trim_matches('`'));
+        let trimmed = strip_shell_prompt(line.trim_matches('`'));
 
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
         let first = *parts.first()?;
@@ -109,25 +106,21 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
         }
 
         let arguments = parts.get(1..).unwrap_or_default();
-        let has_command_syntax = crate::detection::command_has_shell_syntax(trimmed, arguments);
-        let explicit_arguments =
-            crate::detection::command_has_explicit_arguments(&cmd, trimmed, arguments);
-        let comment_evidence =
-            crate::detection::command_has_comment_evidence(&cmd, trimmed, arguments);
+        let has_command_syntax = command_has_shell_syntax(trimmed, arguments);
+        let explicit_arguments = command_has_explicit_arguments(&cmd, trimmed, arguments);
+        let comment_evidence = command_has_comment_evidence(&cmd, trimmed, arguments);
         if (line.starts_with("> ") && !explicit_arguments)
-            || (leading_comment
-                && !comment_evidence
-                && !crate::detection::looks_like_shell_command_sequence(sample))
+            || (leading_comment && !comment_evidence && !looks_like_shell_command_sequence(sample))
         {
             return None;
         }
 
         if is_setup_command {
-            let next_command = crate::detection::looks_like_shell_command_sequence(sample)
+            let next_command = looks_like_shell_command_sequence(sample)
                 || lines
                     .find(|line| !line.starts_with('#'))
                     .is_some_and(starts_with_command_word);
-            if !crate::detection::setup_command_is_valid(&cmd, arguments, next_command) {
+            if !setup_command_is_valid(&cmd, arguments, next_command) {
                 return None;
             }
             if !has_command_syntax && !next_command {
@@ -170,14 +163,14 @@ fn starts_with_command_word(line: &str) -> bool {
         return regular_command_is_valid(
             command,
             arguments.as_slice(),
-            crate::detection::command_has_shell_syntax(line, arguments.as_slice()),
+            command_has_shell_syntax(line, arguments.as_slice()),
         );
     }
     if !SETUP_COMMANDS.contains(&command) {
         return false;
     }
     let arguments: Vec<&str> = parts.collect();
-    crate::detection::setup_command_is_valid(command, &arguments, false)
+    setup_command_is_valid(command, &arguments, false)
 }
 
 /// Reject prose uses of a listed executable while retaining command syntax.
@@ -198,7 +191,7 @@ pub(crate) fn regular_command_is_valid(
         && !has_shell_syntax
         && !arguments
             .first()
-            .is_some_and(|subcommand| crate::detection::SHELL_GIT_SUBCOMMANDS.contains(subcommand))
+            .is_some_and(|subcommand| SHELL_GIT_SUBCOMMANDS.contains(subcommand))
     {
         return false;
     }
@@ -215,11 +208,7 @@ pub(crate) fn regular_command_is_valid(
             })
         });
         if !quoted_operand
-            && !crate::detection::command_has_explicit_arguments(
-                command,
-                &arguments.join(" "),
-                arguments,
-            )
+            && !command_has_explicit_arguments(command, &arguments.join(" "), arguments)
         {
             return false;
         }
@@ -227,7 +216,7 @@ pub(crate) fn regular_command_is_valid(
     // Unquoted copulas near the verb are prose evidence (`echo chamber is`,
     // `sudo is required`). Quoting, options, and shell syntax supply command
     // evidence even when the argument text contains those words.
-    !crate::detection::has_unquoted_prose_copula(arguments, has_shell_syntax)
+    !has_unquoted_prose_copula(arguments, has_shell_syntax)
 }
 
 fn ambiguous_recipe_is_prose(arguments: &[&str]) -> bool {
@@ -261,4 +250,371 @@ fn ambiguous_recipe_is_prose(arguments: &[&str]) -> bool {
         || predicate.ends_with("ing")
         || matches!(predicate.as_str(), "remember" | "sure");
     later_markers >= 2 || (predicate_has_sentence_shape && later_markers >= 1)
+}
+
+/// Git subcommands accepted as command structure without extra shell syntax.
+pub(crate) const SHELL_GIT_SUBCOMMANDS: &[&str] = &[
+    "add",
+    "bisect",
+    "blame",
+    "branch",
+    "checkout",
+    "cherry-pick",
+    "clean",
+    "clone",
+    "commit",
+    "diff",
+    "fetch",
+    "grep",
+    "init",
+    "log",
+    "merge",
+    "mv",
+    "pull",
+    "push",
+    "rebase",
+    "remote",
+    "reset",
+    "restore",
+    "revert",
+    "rev-parse",
+    "rm",
+    "show",
+    "stash",
+    "status",
+    "submodule",
+    "switch",
+    "tag",
+    "worktree",
+];
+
+/// Recognize argument structure specific to shell setup commands.
+///
+/// # Arguments
+/// - `command`: Leading executable or shell builtin word.
+/// - `arguments`: Whitespace-separated arguments following that word.
+/// - `next_command`: Whether the immediately following substantive line is a command.
+///
+/// # Returns
+/// Whether arguments form an assignment, shell option, or setup path rather
+/// than prose that merely contains punctuation or numbers.
+pub(crate) fn setup_command_is_valid(
+    command: &str,
+    arguments: &[&str],
+    next_command: bool,
+) -> bool {
+    let quoted_argument = arguments.first().is_some_and(|first| {
+        ['\'', '"'].iter().any(|quote| {
+            first.starts_with(*quote) && arguments.iter().any(|part| part.ends_with(*quote))
+        })
+    });
+    let compact_arguments = |arguments: &[&str]| {
+        !arguments.is_empty()
+            && !has_unquoted_prose_copula(arguments, false)
+            && !arguments
+                .iter()
+                .any(|part| matches!(*part, "for" | "to" | "the"))
+            && arguments.iter().all(|part| {
+                part.chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+            })
+    };
+    let control_operator = arguments
+        .iter()
+        .enumerate()
+        .find(|(_, part)| part.contains(['&', '|', ';']))
+        .is_some_and(|(index, part)| {
+            let mut prefix: Vec<&str> = arguments.iter().take(index).copied().collect();
+            let head = part.split(['&', '|', ';']).next().unwrap_or_default();
+            if !head.is_empty() {
+                prefix.push(head);
+            }
+            compact_arguments(&prefix)
+        });
+    let structured = match command {
+        "export" => {
+            arguments
+                .first()
+                .is_some_and(|argument| argument.starts_with('-'))
+                || arguments.iter().any(|argument| argument.contains('='))
+        }
+        "set" => {
+            arguments.len() == 1
+                || arguments
+                    .first()
+                    .is_some_and(|argument| argument.starts_with(['-', '+', '/']))
+                || arguments.iter().any(|argument| argument.contains('='))
+        }
+        "cd" => {
+            arguments.len() == 1
+                || arguments
+                    .first()
+                    .is_some_and(|path| path.starts_with('-') || path.contains(['/', '\\']))
+        }
+        "source" => arguments
+            .first()
+            .is_some_and(|path| path.contains(['.', '/', '\\']) || path.starts_with('~')),
+        _ => false,
+    };
+    structured
+        || quoted_argument
+        || control_operator
+        || (next_command && compact_arguments(arguments))
+}
+
+/// Recognize a prose copula near a command-shaped leading word.
+///
+/// # Arguments
+/// - `arguments`: Command arguments following the executable-shaped word.
+/// - `has_shell_syntax`: Whether quoting, options, paths, or operators already
+///   establish command structure.
+///
+/// # Returns
+/// `true` when the first three arguments contain an unquoted copula without
+/// other shell syntax establishing an actual command.
+pub(crate) fn has_unquoted_prose_copula(arguments: &[&str], has_shell_syntax: bool) -> bool {
+    !has_shell_syntax
+        && arguments
+            .iter()
+            .take(3)
+            .any(|part| matches!(*part, "is" | "are" | "was" | "were"))
+}
+
+/// Remove an optional leading shell prompt from a command line.
+///
+/// # Arguments
+/// - `line`: Command line after whitespace and backtick trimming.
+///
+/// # Returns
+/// The line without a leading `$ `, `% `, or `> ` prompt.
+pub(crate) fn strip_shell_prompt(line: &str) -> &str {
+    line.strip_prefix("$ ")
+        .or_else(|| line.strip_prefix("% "))
+        .or_else(|| line.strip_prefix("> "))
+        .unwrap_or(line)
+}
+
+/// Recognize punctuation, options, or digits establishing shell command structure.
+///
+/// # Arguments
+/// - `line`: Command line without a leading shell prompt.
+/// - `arguments`: Whitespace-separated arguments following the command word.
+///
+/// # Returns
+/// Whether shell syntax supplies command evidence beyond the leading word.
+pub(crate) fn command_has_shell_syntax(line: &str, arguments: &[&str]) -> bool {
+    line.contains(['\'', '"', '$', '|', '>', '<', '=', '/', '\\', ';', '&'])
+        || arguments
+            .iter()
+            .any(|part| part.starts_with('-') || part.chars().any(|ch| ch.is_ascii_digit()))
+}
+
+/// Recognize an option token rather than a separated prose dash.
+///
+/// # Returns
+/// Whether a dash-prefixed token contains an option name or number.
+pub(crate) fn is_shell_option(value: &str) -> bool {
+    value
+        .strip_prefix('-')
+        .map(|rest| rest.trim_start_matches('-'))
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|ch| ch.is_ascii_alphanumeric())
+}
+
+/// Recognize a compact path operand, excluding URLs.
+///
+/// # Returns
+/// Whether the argument names a path rather than a prose URL.
+pub(crate) fn is_shell_path(value: &str) -> bool {
+    !value.contains("://")
+        && (value.contains(['/', '\\'])
+            || matches!(value, "." | "..")
+            || value
+                .strip_prefix('.')
+                .and_then(|rest| rest.chars().next())
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_'))
+}
+
+/// Require executable-specific arguments before treating a quote/comment as a command.
+///
+/// # Arguments
+/// - `command`: Executable name.
+/// - `line`: Command line inspected for shell operators and quoting.
+/// - `arguments`: Whitespace-delimited operands after the executable.
+///
+/// # Returns
+/// Whether the command has shell structure or a recognized tool action.
+pub(crate) fn command_has_explicit_arguments(
+    command: &str,
+    line: &str,
+    arguments: &[&str],
+) -> bool {
+    let Some(first) = arguments.first() else {
+        return false;
+    };
+    if arguments.iter().any(|argument| is_shell_option(argument))
+        || is_shell_path(first)
+        || first.contains('$')
+        || line.contains(['|', '>', '<', '=', ';', '&'])
+        || ['\'', '"'].iter().any(|quote| {
+            first.starts_with(*quote) && arguments.iter().any(|part| part.ends_with(*quote))
+        })
+    {
+        return true;
+    }
+    match command {
+        "git" => SHELL_GIT_SUBCOMMANDS.contains(first),
+        "echo" | "printf" => true,
+        "python" | "pytest" | "torchrun" => first.ends_with(".py"),
+        "curl" => first.starts_with("https://") || first.starts_with("http://"),
+        "ssh" => first
+            .split_once('@')
+            .is_some_and(|(user, host)| !user.is_empty() && !host.is_empty()),
+        "docker" if *first == "ps" => true,
+        "npm" if *first == "i" => true,
+        "brew" | "cargo" | "conda" | "docker" | "kubectl" | "npm" | "pip" | "pnpm" | "rustup"
+        | "systemctl" | "uv" | "yarn" => [
+            "activate",
+            "add",
+            "build",
+            "check",
+            "ci",
+            "clippy",
+            "exec",
+            "fmt",
+            "get",
+            "install",
+            "list",
+            "remove",
+            "restart",
+            "run",
+            "show",
+            "start",
+            "status",
+            "stop",
+            "test",
+            "toolchain",
+            "uninstall",
+            "update",
+        ]
+        .contains(first),
+        _ => false,
+    }
+}
+
+/// Accept listed executables after comments without enumerating every tool action.
+///
+/// Quoted lines intentionally continue to require [`command_has_explicit_arguments`]
+/// so ordinary blockquotes do not become shell snippets.
+///
+/// # Arguments
+/// - `command`: Executable name.
+/// - `line`: Command line without a leading prompt.
+/// - `arguments`: Whitespace-delimited operands after the executable.
+///
+/// # Returns
+/// Whether a leading comment plus this command supplies enough technical evidence.
+pub(crate) fn command_has_comment_evidence(command: &str, line: &str, arguments: &[&str]) -> bool {
+    command_has_explicit_arguments(command, line, arguments)
+        || (command != "ls"
+            && !has_unquoted_prose_copula(arguments, false)
+            && !arguments.iter().any(|word| {
+                [
+                    "a", "an", "the", "for", "to", "about", "please", "should", "could", "would",
+                    "we", "you", "our", "your", "in", "at", "by",
+                ]
+                .contains(word)
+            }))
+}
+
+/// Recognize a compact sequence of shell setup and executable command lines.
+///
+/// # Returns
+/// `true` when every non-comment line is a recognized command and at least two
+/// command lines are present.
+pub(crate) fn looks_like_shell_command_sequence(content: &str) -> bool {
+    let sample = complete_line_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
+    if looks_like_shell_for_loop(sample) {
+        return true;
+    }
+    let has_leading_comment = sample.trim_start().starts_with('#');
+    let has_leading_prompt = sample.trim_start().starts_with(['$', '%', '>']);
+    let mut commands = 0usize;
+    let mut next_command = false;
+    let mut explicit_single_command = false;
+    for line in sample
+        .lines()
+        .rev()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if line.starts_with('#') {
+            continue;
+        }
+        let line = line.trim_matches('`');
+        let explicit_prompt = line.starts_with("$ ") || line.starts_with("% ");
+        let quoted = line.starts_with("> ");
+        let line = strip_shell_prompt(line);
+        let mut parts = line.split_whitespace();
+        let Some(command) = parts.next() else {
+            return false;
+        };
+        if command != command.to_ascii_lowercase() {
+            return false;
+        }
+        let arguments: Vec<&str> = parts.collect();
+        let has_shell_syntax = command_has_shell_syntax(line, &arguments);
+        let explicit_arguments = command_has_explicit_arguments(command, line, &arguments);
+        let comment_evidence = command_has_comment_evidence(command, line, &arguments);
+        if quoted && !explicit_arguments {
+            return false;
+        }
+        let command_line = if COMMANDS.contains(&command) {
+            regular_command_is_valid(command, &arguments, has_shell_syntax)
+        } else if SETUP_COMMANDS.contains(&command) {
+            setup_command_is_valid(command, &arguments, next_command)
+        } else {
+            false
+        };
+        if !command_line {
+            return false;
+        }
+        commands = commands.saturating_add(1);
+        explicit_single_command = explicit_prompt || explicit_arguments || comment_evidence;
+        next_command = command_line;
+    }
+    commands >= 2
+        || (commands == 1 && (has_leading_comment || has_leading_prompt) && explicit_single_command)
+}
+
+fn looks_like_shell_for_loop(sample: &str) -> bool {
+    let mut lines = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'));
+    let Some(first) = lines.next().and_then(|line| line.strip_prefix("for ")) else {
+        return false;
+    };
+    let Some((name, values)) = first.split_once(" in ") else {
+        return false;
+    };
+    let name = name.trim();
+    if !name
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        || values.trim().is_empty()
+    {
+        return false;
+    }
+    let mut has_do = values.contains("; do");
+    let mut last = first;
+    for line in lines {
+        has_do |= line == "do" || line.starts_with("do ");
+        last = line;
+    }
+    has_do && (last == "done" || last.ends_with("; done"))
 }

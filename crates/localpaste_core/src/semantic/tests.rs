@@ -719,10 +719,10 @@ fn untyped_structural_content_does_not_default_to_document() {
 
 #[test]
 fn git_subcommands_stay_consistent_across_detection_and_semantics() {
-    for subcommand in crate::detection::SHELL_GIT_SUBCOMMANDS {
+    for subcommand in super::commands::SHELL_GIT_SUBCOMMANDS {
         let content = format!("git {subcommand} fixture\ncargo check\n");
         assert!(
-            crate::detection::looks_like_shell_command_sequence(&content),
+            super::commands::looks_like_shell_command_sequence(&content),
             "{subcommand}"
         );
         let derived = derive(&content, None);

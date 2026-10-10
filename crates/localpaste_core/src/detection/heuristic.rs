@@ -2,7 +2,7 @@
 
 use super::{looks_like_flat_config_yaml, looks_like_yaml};
 use crate::models::paste::is_markdown_content;
-use crate::text::{complete_line_prefix_by_bytes, utf8_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
+use crate::text::{utf8_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 
 /// Best-effort language detection based on simple heuristics.
 ///
@@ -16,10 +16,10 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
-    if super::looks_like_python_traceback(trimmed) {
+    if crate::semantic::logs::looks_like_python_traceback(trimmed) {
         return Some("log".to_string());
     }
-    if looks_like_shell_command_sequence(trimmed) {
+    if crate::semantic::commands::looks_like_shell_command_sequence(trimmed) {
         return Some("shell".to_string());
     }
     let sample = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
@@ -434,101 +434,6 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     }
 
     None
-}
-
-/// Recognize a compact sequence of shell setup and executable command lines.
-///
-/// # Returns
-/// `true` when every non-comment line is a recognized command and at least two
-/// command lines are present.
-pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
-    use crate::semantic::commands::{regular_command_is_valid, COMMANDS};
-    const SETUP_COMMANDS: &[&str] = &["cd", "export", "set", "source"];
-
-    let sample = complete_line_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
-    if looks_like_shell_for_loop(sample) {
-        return true;
-    }
-    let has_leading_comment = sample.trim_start().starts_with('#');
-    let has_leading_prompt = sample.trim_start().starts_with(['$', '%', '>']);
-    let mut commands = 0usize;
-    let mut next_command = false;
-    let mut explicit_single_command = false;
-    for line in sample
-        .lines()
-        .rev()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-    {
-        if line.starts_with('#') {
-            continue;
-        }
-        let line = line.trim_matches('`');
-        let explicit_prompt = line.starts_with("$ ") || line.starts_with("% ");
-        let quoted = line.starts_with("> ");
-        let line = super::strip_shell_prompt(line);
-        let mut parts = line.split_whitespace();
-        let Some(command) = parts.next() else {
-            return false;
-        };
-        if command != command.to_ascii_lowercase() {
-            return false;
-        }
-        let arguments: Vec<&str> = parts.collect();
-        let has_shell_syntax = super::command_has_shell_syntax(line, &arguments);
-        let explicit_arguments = super::command_has_explicit_arguments(command, line, &arguments);
-        let comment_evidence = super::command_has_comment_evidence(command, line, &arguments);
-        if quoted && !explicit_arguments {
-            return false;
-        }
-        let command_line = if COMMANDS.contains(&command) {
-            regular_command_is_valid(command, &arguments, has_shell_syntax)
-        } else if SETUP_COMMANDS.contains(&command) {
-            super::setup_command_is_valid(command, &arguments, next_command)
-        } else {
-            false
-        };
-        if !command_line {
-            return false;
-        }
-        commands = commands.saturating_add(1);
-        explicit_single_command = explicit_prompt || explicit_arguments || comment_evidence;
-        next_command = command_line;
-    }
-    commands >= 2
-        || (commands == 1 && (has_leading_comment || has_leading_prompt) && explicit_single_command)
-}
-
-fn looks_like_shell_for_loop(sample: &str) -> bool {
-    let mut lines = sample
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'));
-    let Some(first) = lines.next().and_then(|line| line.strip_prefix("for ")) else {
-        return false;
-    };
-    let Some((name, values)) = first.split_once(" in ") else {
-        return false;
-    };
-    let name = name.trim();
-    if !name
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
-        || !name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-        || values.trim().is_empty()
-    {
-        return false;
-    }
-    let mut has_do = values.contains("; do");
-    let mut last = first;
-    for line in lines {
-        has_do |= line == "do" || line.starts_with("do ");
-        last = line;
-    }
-    has_do && (last == "done" || last.ends_with("; done"))
 }
 
 /// Accept JSON Lines only with at least two valid object/array records in the
