@@ -12,25 +12,6 @@ fn output_has_request_paste(output: &egui::FullOutput) -> bool {
 }
 
 #[test]
-fn sidebar_arrow_target_is_empty_list_safe() {
-    let mut harness = make_app();
-    harness.app.selected_id = Some("alpha".to_string());
-    harness.app.pastes.clear();
-
-    assert_eq!(harness.app.sidebar_arrow_target_id(1), None);
-    assert_eq!(harness.app.sidebar_arrow_target_id(-1), None);
-
-    harness.app.pastes = vec![
-        test_summary("alpha", "Alpha", None, 1),
-        test_summary("beta", "Beta", None, 1),
-    ];
-    assert_eq!(
-        harness.app.sidebar_arrow_target_id(1),
-        Some("beta".to_string())
-    );
-}
-
-#[test]
 fn focused_virtual_editor_requests_repaint_after_text_input() {
     let mut harness = make_app();
     harness.app.reset_virtual_editor("alpha");
@@ -171,10 +152,7 @@ fn focused_plain_paste_with_payload_does_not_request_second_paste() {
     let output = ctx.run(
         egui::RawInput {
             modifiers,
-            events: vec![
-                key_event(egui::Key::V, modifiers),
-                egui::Event::Paste(" beta".to_string()),
-            ],
+            events: vec![egui::Event::Paste(" beta".to_string())],
             ..Default::default()
         },
         |ctx| {
@@ -544,54 +522,6 @@ fn paste_as_new_viewport_request_only_when_clipboard_payload_missing() {
 }
 
 #[test]
-fn command_shift_v_arms_paste_as_new_before_virtual_routing() {
-    let mut harness = make_app();
-    let ctx = egui::Context::default();
-    let modifiers = egui::Modifiers {
-        command: true,
-        shift: true,
-        ..Default::default()
-    };
-
-    let _ = ctx.run(
-        egui::RawInput {
-            events: vec![
-                egui::Event::Key {
-                    key: egui::Key::V,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers,
-                },
-                egui::Event::Paste("from clipboard".to_string()),
-            ],
-            ..Default::default()
-        },
-        |ctx| {
-            assert!(harness.app.maybe_arm_paste_as_new_shortcut_intent(ctx));
-            let commands = ctx.input(|input| commands_from_events(&input.events, true));
-            assert!(
-                commands
-                    .iter()
-                    .any(|command| matches!(command, VirtualInputCommand::Paste(_))),
-                "expected virtual paste command from same-frame paste event"
-            );
-            for command in &commands {
-                if matches!(command, VirtualInputCommand::Paste(_)) {
-                    assert!(harness
-                        .app
-                        .should_skip_virtual_command_for_paste_as_new(command));
-                }
-            }
-        },
-    );
-    assert_eq!(
-        harness.app.paste_as_new_pending_frames,
-        PASTE_AS_NEW_PENDING_TTL_FRAMES
-    );
-}
-
-#[test]
 fn plain_paste_shortcut_routes_by_editor_focus_contract() {
     struct Case {
         name: &'static str,
@@ -683,49 +613,6 @@ fn plain_paste_shortcut_resolution_uses_post_layout_focus_state() {
 }
 
 #[test]
-fn delete_shortcut_guard_preserves_editor_delete_ownership_and_global_unfocused_behavior() {
-    struct Case {
-        name: &'static str,
-        wants_keyboard_input: bool,
-        virtual_editor_focus_active: bool,
-        expected: bool,
-    }
-
-    let cases = [
-        Case {
-            name: "text input owns keyboard",
-            wants_keyboard_input: true,
-            virtual_editor_focus_active: false,
-            expected: false,
-        },
-        Case {
-            name: "virtual editor focused",
-            wants_keyboard_input: false,
-            virtual_editor_focus_active: true,
-            expected: false,
-        },
-        Case {
-            name: "non editor context",
-            wants_keyboard_input: false,
-            virtual_editor_focus_active: false,
-            expected: true,
-        },
-    ];
-
-    for case in cases {
-        let harness = make_app();
-        let focus_state = LocalPasteApp::keyboard_focus_state(
-            case.virtual_editor_focus_active,
-            case.wants_keyboard_input,
-        );
-        let actual = harness
-            .app
-            .should_route_delete_selected_shortcut(focus_state);
-        assert_eq!(actual, case.expected, "case '{}'", case.name);
-    }
-}
-
-#[test]
 fn keyboard_overlay_open_excludes_properties_drawer_but_includes_modal_overlays() {
     let mut harness = make_app();
     assert!(!harness.app.keyboard_overlay_open());
@@ -779,7 +666,9 @@ fn version_overlay_blocks_background_destructive_dispatches() {
         .app
         .create_new_paste_with_content("hello".to_string());
     harness.app.delete_selected();
-    harness.app.send_palette_delete("alpha".to_string());
+    harness
+        .app
+        .send_palette_delete(&egui::Context::default(), "alpha".to_string());
 
     assert_eq!(
         harness
@@ -932,60 +821,33 @@ fn version_overlay_allows_content_and_metadata_persistence_dispatches() {
 }
 
 #[test]
-fn explicit_paste_as_new_shortcut_is_rejected_while_version_overlay_is_open() {
-    let mut harness = make_app();
-    harness.app.version_ui.history_modal_open = true;
-    let ctx = egui::Context::default();
-    let modifiers = egui::Modifiers {
-        command: true,
-        shift: true,
-        ..Default::default()
-    };
+fn keyboard_overlays_cancel_pending_paste_as_new_and_block_implicit_clipboard_create() {
+    for overlay in ["diff", "history", "picker", "palette", "help"] {
+        let mut harness = make_app();
+        harness.app.arm_paste_as_new_intent();
+        match overlay {
+            "diff" => harness.app.version_ui.diff_modal_open = true,
+            "history" => harness.app.version_ui.history_modal_open = true,
+            "picker" => harness.app.open_paste_picker(),
+            "palette" => harness.app.command_palette_open = true,
+            _ => harness.app.shortcut_help_open = true,
+        }
 
-    let mut armed = false;
-    let _ = ctx.run(
-        egui::RawInput {
-            events: vec![key_event(egui::Key::V, modifiers)],
-            ..Default::default()
-        },
-        |ctx| {
-            armed = harness.app.maybe_arm_paste_as_new_shortcut_intent(ctx);
-        },
-    );
-
-    assert!(!armed);
-    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
-    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
-    assert_eq!(
-        harness
+        let mut explicit_clipboard = Some("from clipboard".to_string());
+        assert!(!harness
             .app
-            .status
-            .as_ref()
-            .map(|status| status.text.as_str()),
-        Some("Close the open version window before mutating the selected paste.")
-    );
-}
+            .maybe_consume_explicit_paste_as_new(&mut explicit_clipboard));
+        assert_eq!(explicit_clipboard.as_deref(), Some("from clipboard"));
+        assert_eq!(harness.app.paste_as_new_pending_frames, 0);
+        assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
+        assert!(harness.cmd_rx.try_recv().is_err());
 
-#[test]
-fn version_overlay_cancels_pending_paste_as_new_and_blocks_implicit_clipboard_create() {
-    let mut harness = make_app();
-    harness.app.arm_paste_as_new_intent();
-    harness.app.version_ui.diff_modal_open = true;
-
-    let mut explicit_clipboard = Some("from clipboard".to_string());
-    assert!(!harness
-        .app
-        .maybe_consume_explicit_paste_as_new(&mut explicit_clipboard));
-    assert_eq!(explicit_clipboard.as_deref(), Some("from clipboard"));
-    assert_eq!(harness.app.paste_as_new_pending_frames, 0);
-    assert!(harness.app.paste_as_new_clipboard_requested_at.is_none());
-    assert!(harness.cmd_rx.try_recv().is_err());
-
-    assert!(!harness.app.maybe_route_implicit_global_clipboard_create(
-        Some("from clipboard".to_string()),
-        false,
-        false,
-        false,
-    ));
-    assert!(harness.cmd_rx.try_recv().is_err());
+        assert!(!harness.app.maybe_route_implicit_global_clipboard_create(
+            Some("from clipboard".to_string()),
+            false,
+            false,
+            false,
+        ));
+        assert!(harness.cmd_rx.try_recv().is_err());
+    }
 }

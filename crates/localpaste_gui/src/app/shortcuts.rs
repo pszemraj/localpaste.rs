@@ -12,9 +12,10 @@ pub(crate) enum RuntimeShortcutAction {
     FocusSearch,
     ToggleCommandPalette,
     ToggleCommandPaletteLegacy,
+    TogglePastePicker,
     ToggleProperties,
     PlainPaste,
-    PasteAsNew,
+    PasteIntoEditor,
     ToggleShortcutHelp,
 }
 
@@ -49,15 +50,24 @@ impl RuntimeShortcut {
         self.help
     }
 
-    fn pressed(self, input: &egui::InputState) -> bool {
+    fn matches_event(self, event: &egui::Event) -> bool {
+        let egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        else {
+            return false;
+        };
         match self.chord {
-            ShortcutChord::PlainCommand(key) => {
-                is_plain_command_shortcut(input.modifiers) && input.key_pressed(key)
+            ShortcutChord::PlainCommand(expected) => {
+                *key == expected && is_plain_command_shortcut(*modifiers)
             }
-            ShortcutChord::CommandShift(key) => {
-                is_command_shift_shortcut(input.modifiers) && input.key_pressed(key)
+            ShortcutChord::CommandShift(expected) => {
+                *key == expected && is_command_shift_shortcut(*modifiers)
             }
-            ShortcutChord::AnyModifier(key) => input.key_pressed(key),
+            ShortcutChord::AnyModifier(expected) => *key == expected,
         }
     }
 }
@@ -109,7 +119,15 @@ pub(crate) const RUNTIME_SHORTCUTS: &[RuntimeShortcut] = &[
         chord: ShortcutChord::PlainCommand(egui::Key::K),
         help: ShortcutHelpEntry {
             keys: "Ctrl/Cmd+K",
-            description: "Toggle command palette (legacy)",
+            description: "Toggle command palette",
+        },
+    },
+    RuntimeShortcut {
+        action: RuntimeShortcutAction::TogglePastePicker,
+        chord: ShortcutChord::CommandShift(egui::Key::K),
+        help: ShortcutHelpEntry {
+            keys: "Ctrl/Cmd+Shift+K",
+            description: "Toggle paste picker",
         },
     },
     RuntimeShortcut {
@@ -125,15 +143,15 @@ pub(crate) const RUNTIME_SHORTCUTS: &[RuntimeShortcut] = &[
         chord: ShortcutChord::PlainCommand(egui::Key::V),
         help: ShortcutHelpEntry {
             keys: "Ctrl/Cmd+V",
-            description: "Paste in editor; otherwise create new paste",
+            description: "Paste into focused text; otherwise create new paste",
         },
     },
     RuntimeShortcut {
-        action: RuntimeShortcutAction::PasteAsNew,
+        action: RuntimeShortcutAction::PasteIntoEditor,
         chord: ShortcutChord::CommandShift(egui::Key::V),
         help: ShortcutHelpEntry {
             keys: "Ctrl/Cmd+Shift+V",
-            description: "Force paste as new paste",
+            description: "Paste into the open paste",
         },
     },
     RuntimeShortcut {
@@ -153,9 +171,57 @@ pub(crate) const RUNTIME_SHORTCUTS: &[RuntimeShortcut] = &[
 pub(crate) fn pressed_runtime_shortcuts(
     input: &egui::InputState,
 ) -> impl Iterator<Item = RuntimeShortcutAction> + '_ {
+    // egui-winit emits Paste instead of Key(V). Other integrations may supply
+    // the key too; retain its position without dispatching the same paste twice.
+    let has_paste_key = input.events.iter().any(|event| {
+        matches!(
+            runtime_shortcut_action(event),
+            Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteIntoEditor)
+        )
+    });
+    input.events.iter().filter_map(move |event| {
+        runtime_shortcut_action(event).or_else(|| {
+            if has_paste_key {
+                None
+            } else {
+                native_paste_shortcut_action(event, input.modifiers)
+            }
+        })
+    })
+}
+
+/// Matches egui-winit's paste-only shortcut representation.
+///
+/// # Arguments
+/// - `event`: Native event, which has no embedded modifiers for paste.
+/// - `modifiers`: Modifier snapshot accompanying this input frame.
+///
+/// # Returns
+/// Paste action inferred from Command and Shift, or `None` for other input.
+pub(crate) fn native_paste_shortcut_action(
+    event: &egui::Event,
+    modifiers: egui::Modifiers,
+) -> Option<RuntimeShortcutAction> {
+    if !matches!(event, egui::Event::Paste(_)) {
+        return None;
+    }
+    if is_command_shift_shortcut(modifiers) {
+        Some(RuntimeShortcutAction::PasteIntoEditor)
+    } else if is_plain_command_shortcut(modifiers) {
+        Some(RuntimeShortcutAction::PlainPaste)
+    } else {
+        None
+    }
+}
+
+/// Matches one key event without changing the order or multiplicity of chords.
+///
+/// # Returns
+/// The registered action for a pressed shortcut event, or `None` for other input.
+pub(crate) fn runtime_shortcut_action(event: &egui::Event) -> Option<RuntimeShortcutAction> {
     RUNTIME_SHORTCUTS
         .iter()
-        .filter(|shortcut| shortcut.pressed(input))
+        .find(|shortcut| shortcut.matches_event(event))
         .map(|shortcut| shortcut.action)
 }
 
@@ -166,13 +232,80 @@ pub(crate) fn pressed_runtime_shortcuts(
 ///
 /// # Panics
 /// Panics if a [`RuntimeShortcutAction`] variant is not present in [`RUNTIME_SHORTCUTS`].
-pub(crate) fn runtime_shortcut_label(action: RuntimeShortcutAction) -> &'static str {
+pub(crate) fn runtime_shortcut_label(action: RuntimeShortcutAction) -> String {
     RUNTIME_SHORTCUTS
         .iter()
         .find(|shortcut| shortcut.action == action)
-        .map(|shortcut| shortcut.help.keys)
+        .map(|shortcut| {
+            shortcut.help.keys.replace(
+                "Ctrl/Cmd",
+                if cfg!(target_os = "macos") {
+                    "Cmd"
+                } else {
+                    "Ctrl"
+                },
+            )
+        })
         .expect("runtime shortcut action must be registered")
 }
+
+/// A group of shared navigation/editing shortcut descriptions.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ShortcutSection {
+    pub(crate) title: &'static str,
+    pub(crate) entries: &'static [ShortcutHelpEntry],
+}
+
+const NAVIGATION_SHORTCUTS: &[ShortcutHelpEntry] = &[
+    ShortcutHelpEntry {
+        keys: "Home/End (Win/Linux) or Cmd+Left/Right (macOS)",
+        description: "Move caret to line start/end",
+    },
+    ShortcutHelpEntry {
+        keys: "Ctrl+Home/End (Win/Linux) or Cmd+Up/Down/Home/End (macOS)",
+        description: "Move caret to document start/end",
+    },
+];
+
+const EDITING_SHORTCUTS: &[ShortcutHelpEntry] = &[
+    ShortcutHelpEntry {
+        keys: "Tab / Shift+Tab",
+        description: "Indent / unindent selected lines",
+    },
+    ShortcutHelpEntry {
+        keys: "Ctrl+Left/Right (Win/Linux) or Option+Left/Right (macOS)",
+        description: "Move caret by word",
+    },
+    ShortcutHelpEntry {
+        keys: "Ctrl+Backspace/Delete (Win/Linux) or Option+Backspace/Delete (macOS)",
+        description: "Delete one word backward/forward",
+    },
+    ShortcutHelpEntry {
+        keys: "Cmd+Backspace / Ctrl+K (macOS)",
+        description: "Delete to line start / end",
+    },
+];
+
+const FIND_SHORTCUTS: &[ShortcutHelpEntry] = &[ShortcutHelpEntry {
+    keys: "Enter / Shift+Enter",
+    description: "Next / previous match in Find",
+}];
+
+/// Non-global editor and navigation chords shared by shortcut discovery.
+pub(crate) const STATIC_SHORTCUT_SECTIONS: &[ShortcutSection] = &[
+    ShortcutSection {
+        title: "Navigation",
+        entries: NAVIGATION_SHORTCUTS,
+    },
+    ShortcutSection {
+        title: "Editing",
+        entries: EDITING_SHORTCUTS,
+    },
+    ShortcutSection {
+        title: "Find",
+        entries: FIND_SHORTCUTS,
+    },
+];
 
 #[cfg(test)]
 mod tests {
@@ -217,11 +350,105 @@ mod tests {
     }
 
     #[test]
+    fn native_paste_events_match_frame_modifiers_without_duplicate_key_dispatch() {
+        for (modifiers, expected) in [
+            (command_modifiers(), Some(RuntimeShortcutAction::PlainPaste)),
+            (
+                command_shift_modifiers(),
+                Some(RuntimeShortcutAction::PasteIntoEditor),
+            ),
+            (egui::Modifiers::NONE, None),
+            (
+                egui::Modifiers {
+                    alt: true,
+                    ..command_shift_modifiers()
+                },
+                None,
+            ),
+        ] {
+            for include_key in [false, true] {
+                let ctx = egui::Context::default();
+                let mut events = vec![];
+                if include_key {
+                    events.push(egui::Event::Key {
+                        key: egui::Key::V,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    });
+                }
+                events.push(egui::Event::Paste("clip".into()));
+                let _ = ctx.run(
+                    egui::RawInput {
+                        modifiers,
+                        events,
+                        ..Default::default()
+                    },
+                    |ctx| {
+                        let actual =
+                            ctx.input(|input| pressed_runtime_shortcuts(input).collect::<Vec<_>>());
+                        assert_eq!(actual, expected.into_iter().collect::<Vec<_>>());
+                    },
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn runtime_shortcuts_preserve_native_order_and_repeated_actions() {
+        let ctx = egui::Context::default();
+        let mut actions = Vec::new();
+        let modifiers = command_modifiers();
+        let events = [egui::Key::S, egui::Key::N, egui::Key::S]
+            .into_iter()
+            .map(|key| egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers,
+            })
+            .collect();
+        let _ = ctx.run(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                actions = ctx.input(|input| pressed_runtime_shortcuts(input).collect());
+            },
+        );
+        assert_eq!(
+            actions,
+            vec![
+                RuntimeShortcutAction::Save,
+                RuntimeShortcutAction::NewPaste,
+                RuntimeShortcutAction::Save
+            ]
+        );
+    }
+
+    #[test]
     fn runtime_shortcut_registry_has_unique_actions_and_labels() {
+        assert_eq!(
+            runtime_shortcut_label(RuntimeShortcutAction::NewPaste),
+            if cfg!(target_os = "macos") {
+                "Cmd+N"
+            } else {
+                "Ctrl+N"
+            }
+        );
+        assert_eq!(
+            runtime_shortcut_label(RuntimeShortcutAction::ToggleShortcutHelp),
+            "F1"
+        );
         let mut actions = HashSet::new();
         let mut labels = HashSet::new();
 
         for shortcut in RUNTIME_SHORTCUTS {
+            let label = runtime_shortcut_label(shortcut.action);
+            assert!(!label.contains("Ctrl/Cmd"));
             assert!(
                 actions.insert(shortcut.action),
                 "duplicate runtime shortcut action: {:?}",
@@ -281,7 +508,7 @@ mod tests {
             (
                 egui::Key::V,
                 command_shift_modifiers(),
-                RuntimeShortcutAction::PasteAsNew,
+                RuntimeShortcutAction::PasteIntoEditor,
             ),
         ] {
             assert_eq!(pressed_actions(key, modifiers), vec![expected]);

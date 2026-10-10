@@ -58,7 +58,7 @@ fn pending_restored_selection_applies_after_visible_list_refresh() {
 
     assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
         other => panic!("expected GetPaste command, got {other:?}"),
     }
 }
@@ -81,7 +81,7 @@ fn pending_restored_selection_loads_even_when_current_filters_hide_it() {
     assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
     assert!(harness.app.pending_selection_id.is_none());
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
         other => panic!("expected GetPaste command, got {other:?}"),
     }
 }

@@ -236,7 +236,7 @@ pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteReques
 ///
 /// # Returns
 /// `true` when no filter is set or when canonicalized labels match.
-pub(super) fn language_matches_filter(language: Option<&str>, filter: Option<&str>) -> bool {
+fn language_matches_filter(language: Option<&str>, filter: Option<&str>) -> bool {
     let Some(filter) = filter else {
         return true;
     };
@@ -475,7 +475,7 @@ fn language_matches_query(
 }
 
 fn kind_matches_query(kind: PasteKind, query: &str, case_sensitive: bool) -> bool {
-    if kind == PasteKind::Other {
+    if matches!(kind, PasteKind::Other | PasteKind::Document) {
         return false;
     }
     let query = query.trim();
@@ -601,26 +601,21 @@ fn contains_case_insensitive(haystack: &str, query_lower: &str) -> bool {
         return true;
     }
     if query_lower.is_ascii() {
-        let needle = query_lower.as_bytes();
-        let hay = haystack.as_bytes();
-        if needle.len() > hay.len() {
-            return false;
-        }
-        for idx in 0..=hay.len() - needle.len() {
-            if hay[idx..idx + needle.len()]
-                .iter()
-                .map(u8::to_ascii_lowercase)
-                .eq(needle.iter().copied())
-            {
-                return true;
-            }
-        }
-        return false;
+        return crate::text::find_ascii_case_insensitive_range(haystack, query_lower).is_some();
     }
     haystack.to_lowercase().contains(query_lower)
 }
 
-fn contains_search(haystack: &str, query: &str, case_sensitive: bool) -> bool {
+/// Match a literal substring; callers lowercase the query for insensitive matching.
+///
+/// # Arguments
+/// - `haystack`: Candidate text.
+/// - `query`: Query, lowercased when insensitive.
+/// - `case_sensitive`: Whether casing must match exactly.
+///
+/// # Returns
+/// True when the substring occurs under the requested case policy.
+pub(super) fn contains_search(haystack: &str, query: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         haystack.contains(query)
     } else {
@@ -766,6 +761,17 @@ mod tests {
     use crate::models::paste::PasteMeta;
     use crate::semantic::{DerivedMeta, PasteKind};
     use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn literal_search_preserves_empty_ascii_and_unicode_policies() {
+        assert!(super::contains_search("", "", false));
+        assert!(super::contains_search("", "", true));
+        assert!(super::contains_search("É NeEdLe", "needle", false));
+        assert!(!super::contains_search("İstanbul", "i", false));
+        assert!(super::contains_search("ÉCOLE", "école", false));
+        assert!(!super::contains_search("short", "longer needle", false));
+        assert!(!super::contains_search("Needle", "needle", true));
+    }
 
     #[test]
     fn reverse_timestamp_key_clamps_pre_epoch_values() {

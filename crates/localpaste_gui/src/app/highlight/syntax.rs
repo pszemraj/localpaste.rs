@@ -8,7 +8,10 @@ use syntect::parsing::{SyntaxReference, SyntaxSet};
 /// Canonical language hint or `"text"` when input is empty/unknown.
 pub(crate) fn syntect_language_hint(language: &str) -> String {
     let canonical = localpaste_core::detection::canonical::canonicalize(language);
-    if canonical.is_empty() {
+    if canonical == "jsonl" {
+        // Keep the stored/export format distinct while reusing JSON tokens.
+        "json".to_string()
+    } else if canonical.is_empty() {
         "text".to_string()
     } else {
         canonical
@@ -98,6 +101,11 @@ pub(crate) fn resolve_syntax<'a>(ps: &'a SyntaxSet, hint: &str) -> &'a SyntaxRef
     }
 
     let hint_lower = hint_trimmed.to_ascii_lowercase();
+    if hint_lower == "markdown" {
+        if let Some(syntax) = ps.find_syntax_by_name("LocalPaste Markdown") {
+            return syntax;
+        }
+    }
     if matches!(hint_lower.as_str(), "text" | "txt" | "plain" | "plaintext") {
         return ps.find_syntax_plain_text();
     }

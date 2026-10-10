@@ -2,6 +2,7 @@
 
 use super::highlight::{
     HighlightPatch, HighlightRender, HighlightRequest, HighlightRequestMeta, HighlightRequestText,
+    HighlightWorkerReply, HighlightWorkerResult,
 };
 use super::{
     LocalPasteApp, StagedHighlightInvalidation, HIGHLIGHT_APPLY_IDLE, HIGHLIGHT_DEBOUNCE_LARGE,
@@ -206,6 +207,16 @@ impl LocalPasteApp {
         render: HighlightRender,
         staged_invalidation: Option<StagedHighlightInvalidation>,
     ) {
+        if self
+            .highlight_pending
+            .as_ref()
+            .is_some_and(|pending| pending.matches_render(&render))
+        {
+            // Receiving the reply completes this request even if validation
+            // rejects its result. A later request must remain pending.
+            self.highlight_pending = None;
+            self.trace_highlight("pending_clear", "worker render completed request");
+        }
         let Some(selected_id) = self.selected_id.as_deref() else {
             self.trace_highlight("drop", "render ignored: no selected paste");
             return;
@@ -249,12 +260,6 @@ impl LocalPasteApp {
                 return;
             }
         }
-        if let Some(pending) = &self.highlight_pending {
-            if pending.matches_render(&render) {
-                self.highlight_pending = None;
-                self.trace_highlight("pending_clear", "pending request matched worker render");
-            }
-        }
         self.trace_highlight_lazy("queue", || {
             format!(
                 "queued staged render revision={} text_len={}",
@@ -263,6 +268,22 @@ impl LocalPasteApp {
         });
         self.highlight_staged = Some(render);
         self.highlight_staged_invalidation = staged_invalidation;
+    }
+
+    /// Rejects obsolete buffer replies before they can clear pending work or stage colors.
+    ///
+    /// # Arguments
+    /// - `reply`: Worker output carrying the requesting editor's buffer epoch.
+    pub(super) fn queue_highlight_reply(&mut self, reply: HighlightWorkerReply) {
+        // Revisions restart on reload, including when the same paste is revisited.
+        if reply.buffer_epoch != self.active_buffer_epoch {
+            self.trace_highlight("drop", "worker reply belongs to a replaced buffer");
+            return;
+        }
+        match reply.result {
+            HighlightWorkerResult::Render(render) => self.queue_highlight_render(render),
+            HighlightWorkerResult::Patch(patch) => self.queue_highlight_patch(patch),
+        }
     }
 
     /// Queues a full render result from the highlight worker.
@@ -275,6 +296,21 @@ impl LocalPasteApp {
     /// # Panics
     /// Panics if staged-patch merge invariants fail after prior guard checks.
     pub(super) fn queue_highlight_patch(&mut self, patch: HighlightPatch) {
+        if self.highlight_pending.as_ref().is_some_and(|pending| {
+            pending.matches(
+                patch.revision,
+                patch.text_len,
+                &patch.language_hint,
+                &patch.theme_key,
+                &patch.paste_id,
+            )
+        }) {
+            // A rejected patch cannot keep the identical request suppressed.
+            // Retrying against the worker's advanced cache yields a full render
+            // when the displayed base no longer matches it.
+            self.highlight_pending = None;
+            self.trace_highlight("pending_clear", "worker patch completed request");
+        }
         let Some(selected_id) = self.selected_id.as_deref() else {
             self.trace_highlight("drop", "patch ignored: no selected paste");
             return;
@@ -353,21 +389,6 @@ impl LocalPasteApp {
                     ));
             }
             if let Some(staged) = self.highlight_staged.as_ref() {
-                if let Some(pending) = &self.highlight_pending {
-                    if pending.matches(
-                        staged.revision,
-                        staged.text_len,
-                        staged.language_hint.as_str(),
-                        staged.theme_key.as_str(),
-                        staged.paste_id.as_str(),
-                    ) {
-                        self.highlight_pending = None;
-                        self.trace_highlight(
-                            "pending_clear",
-                            "pending request matched staged patch",
-                        );
-                    }
-                }
                 self.trace_highlight_lazy("queue", || {
                     format!(
                         "merged patch into staged render revision={} text_len={}",
@@ -377,30 +398,16 @@ impl LocalPasteApp {
             }
             return;
         }
-        enum PatchBaseSource {
-            Staged,
-            Current,
-        }
-        let staged_base = self.highlight_staged.as_ref().filter(|render| {
+        // A matching staged base was handled in place above. The fallback
+        // preserves the displayed render and clones its lines only after validation.
+        let Some(base) = self.highlight_render.as_ref().filter(|render| {
             render.matches_context(
                 patch.paste_id.as_str(),
                 patch.language_hint.as_str(),
                 patch.theme_key.as_str(),
             ) && render.revision == patch.base_revision
                 && render.text_len == patch.base_text_len
-        });
-        let current_base = self.highlight_render.as_ref().filter(|render| {
-            render.matches_context(
-                patch.paste_id.as_str(),
-                patch.language_hint.as_str(),
-                patch.theme_key.as_str(),
-            ) && render.revision == patch.base_revision
-                && render.text_len == patch.base_text_len
-        });
-        let Some((base, base_source)) = staged_base
-            .map(|render| (render.clone(), PatchBaseSource::Staged))
-            .or_else(|| current_base.map(|render| (render.clone(), PatchBaseSource::Current)))
-        else {
+        }) else {
             self.trace_highlight("drop", "patch ignored: no matching active render to merge");
             return;
         };
@@ -430,22 +437,14 @@ impl LocalPasteApp {
             return;
         }
 
-        let mut merged_lines = base.lines;
+        let mut merged_lines = base.lines.clone();
         let hint_range = range.clone();
         merged_lines.splice(range, patch.lines);
-        let staged_invalidation = match base_source {
-            PatchBaseSource::Staged => Some(Self::merge_staged_invalidation_with_patch(
-                self.highlight_staged_invalidation.clone(),
-                patch.base_revision,
-                patch.base_text_len,
-                hint_range.clone(),
-            )),
-            PatchBaseSource::Current => Some(StagedHighlightInvalidation {
-                base_revision: patch.base_revision,
-                base_text_len: patch.base_text_len,
-                line_ranges: vec![hint_range.clone()],
-            }),
-        };
+        let staged_invalidation = Some(StagedHighlightInvalidation {
+            base_revision: patch.base_revision,
+            base_text_len: patch.base_text_len,
+            line_ranges: vec![hint_range.clone()],
+        });
         self.queue_highlight_render_with_invalidation(
             HighlightRender {
                 paste_id: patch.paste_id,
@@ -669,6 +668,7 @@ impl LocalPasteApp {
             )
         });
         let request = HighlightRequest {
+            buffer_epoch: self.active_buffer_epoch,
             paste_id: paste_id.to_string(),
             revision,
             text,

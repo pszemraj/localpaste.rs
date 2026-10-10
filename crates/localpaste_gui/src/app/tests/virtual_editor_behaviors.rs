@@ -2,26 +2,6 @@
 
 use super::*;
 
-fn run_virtual_editor_frame(
-    app: &mut LocalPasteApp,
-    ctx: &egui::Context,
-    events: Vec<egui::Event>,
-) -> bool {
-    let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-    let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
-    let focus_active_pre = egui_focus_pre;
-
-    let raw_input = egui::RawInput {
-        events,
-        ..Default::default()
-    };
-    let _ = ctx.run(raw_input, |ctx| {
-        app.render_editor_panel(ctx);
-    });
-
-    focus_active_pre
-}
-
 #[test]
 fn virtual_copy_and_cut_report_expected_mutation_state() {
     struct ClipboardCase {
@@ -254,13 +234,10 @@ fn focused_large_paste_queues_post_edit_scroll_follow() {
         },
     );
 
-    assert!(
-        harness.app.virtual_pending_scroll_offset_y.is_some(),
-        "large focused paste must queue cursor-follow scroll from the post-paste cursor"
-    );
-    assert!(
-        !harness.app.virtual_follow_cursor_next_frame,
-        "same-frame post-edit scroll queuing should not leave a redundant delayed follow pass"
+    assert_eq!(
+        harness.app.virtual_cursor_reveal,
+        Some(CursorReveal::Minimal),
+        "large paste requests a reveal after the new layout has been rendered"
     );
     assert!(
         output
@@ -568,6 +545,64 @@ fn long_line_navigation_commands_cross_legacy_render_cap_without_truncation() {
 }
 
 #[test]
+fn home_and_end_exclude_every_rope_line_terminator() {
+    for separator in [
+        "\r", "\n", "\r\n", "\u{b}", "\u{c}", "\u{85}", "\u{2028}", "\u{2029}",
+    ] {
+        let mut harness = make_app();
+        let text = format!("alpha{separator}beta");
+        configure_virtual_editor_with_wrap(&mut harness.app, &text, 400.0);
+        let len = harness.app.virtual_editor_buffer.len_chars();
+        harness.app.virtual_editor_state.set_cursor(1, len);
+        let ctx = egui::Context::default();
+        harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineEnd { select: false }]);
+        assert_eq!(
+            harness.app.virtual_editor_state.cursor(),
+            5,
+            "line separator {separator:?}"
+        );
+        harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
+        assert_eq!(harness.app.virtual_editor_state.cursor(), 0);
+        harness.app.virtual_editor_state.set_cursor(len, len);
+        harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveLineHome { select: false }]);
+        assert_eq!(
+            harness.app.virtual_editor_state.cursor(),
+            5 + separator.chars().count()
+        );
+        assert_eq!(harness.app.virtual_editor_buffer.to_string(), text);
+    }
+}
+
+#[test]
+fn multiline_edit_hints_count_rope_lines_after_unchanged_interior_rows() {
+    for separator in [
+        "\r", "\n", "\r\n", "\u{b}", "\u{c}", "\u{85}", "\u{2028}", "\u{2029}",
+    ] {
+        let mut harness = make_app();
+        let before = format!("a{separator}b{separator}c{separator}tail");
+        harness.app.reset_virtual_editor(&before);
+        let replacement = format!("AA{separator}b{separator}// comment");
+        let end = before[..before.find('c').unwrap() + 1].chars().count();
+        assert!(harness.app.replace_virtual_range(
+            0..end,
+            &replacement,
+            virtual_editor::EditIntent::Paste,
+            true,
+            Instant::now(),
+        ));
+        let hint = harness.app.highlight_edit_hint.expect("mutation hint");
+        assert_eq!(hint.start_byte, 0);
+        assert_eq!(hint.touched_lines, 3, "separator {separator:?}");
+    }
+}
+
+#[test]
 fn word_navigation_crosses_line_boundaries() {
     let mut harness = make_app();
     configure_virtual_editor_with_wrap(&mut harness.app, "alpha\nbeta gamma", 200.0);
@@ -612,37 +647,40 @@ fn word_navigation_crosses_line_boundaries() {
 #[test]
 fn word_delete_crosses_line_boundaries() {
     let ctx = egui::Context::default();
+    for separator in ["\n", "\r\n", "\r", "\u{2028}"] {
+        let content = format!("alpha{separator}beta gamma");
 
-    let mut forward = make_app();
-    configure_virtual_editor_with_wrap(&mut forward.app, "alpha\nbeta gamma", 200.0);
-    let forward_len = forward.app.virtual_editor_buffer.len_chars();
-    let first_line_end = forward.app.virtual_editor_buffer.line_col_to_char(0, 5);
-    forward
-        .app
-        .virtual_editor_state
-        .set_cursor(first_line_end, forward_len);
-    let forward_result = forward
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
-    assert!(forward_result.changed);
-    assert_eq!(
-        forward.app.virtual_editor_buffer.to_string(),
-        "alphabeta gamma"
-    );
+        let mut forward = make_app();
+        configure_virtual_editor_with_wrap(&mut forward.app, &content, 200.0);
+        let forward_len = forward.app.virtual_editor_buffer.len_chars();
+        let first_line_end = forward.app.virtual_editor_buffer.line_col_to_char(0, 5);
+        forward
+            .app
+            .virtual_editor_state
+            .set_cursor(first_line_end, forward_len);
+        let forward_result = forward
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
+        assert!(forward_result.changed);
+        assert_eq!(
+            forward.app.virtual_editor_buffer.to_string(),
+            "alphabeta gamma"
+        );
 
-    let mut backward = make_app();
-    configure_virtual_editor_with_wrap(&mut backward.app, "alpha\nbeta gamma", 200.0);
-    let backward_len = backward.app.virtual_editor_buffer.len_chars();
-    let second_line_start = backward.app.virtual_editor_buffer.line_col_to_char(1, 0);
-    backward
-        .app
-        .virtual_editor_state
-        .set_cursor(second_line_start, backward_len);
-    let backward_result = backward
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::Backspace { word: true }]);
-    assert!(backward_result.changed);
-    assert_eq!(backward.app.virtual_editor_buffer.to_string(), "beta gamma");
+        let mut backward = make_app();
+        configure_virtual_editor_with_wrap(&mut backward.app, &content, 200.0);
+        let backward_len = backward.app.virtual_editor_buffer.len_chars();
+        let second_line_start = backward.app.virtual_editor_buffer.line_col_to_char(1, 0);
+        backward
+            .app
+            .virtual_editor_state
+            .set_cursor(second_line_start, backward_len);
+        let backward_result = backward
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::Backspace { word: true }]);
+        assert!(backward_result.changed);
+        assert_eq!(backward.app.virtual_editor_buffer.to_string(), "beta gamma");
+    }
 }
 
 #[test]
@@ -671,6 +709,115 @@ fn word_delete_forward_matches_word_navigation_boundaries() {
         .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: true }]);
     assert!(separator.changed);
     assert_eq!(harness.app.virtual_editor_buffer.to_string(), "foobar");
+}
+
+#[test]
+fn highlight_edit_offsets_and_caret_remain_valid_across_non_lf_edits_and_undo() {
+    for (prefix, separator) in ["a", "é"]
+        .into_iter()
+        .flat_map(|prefix| ["\n", "\r", "\u{2028}", "\r\n"].map(|separator| (prefix, separator)))
+    {
+        let mut harness = make_app();
+        let before = format!("{prefix}{separator}b\n# c\n");
+        harness.app.reset_virtual_editor(&before);
+        let start = before[..before.find('b').unwrap()].chars().count();
+        let len = harness.app.virtual_editor_buffer.len_chars();
+        harness.app.virtual_editor_state.set_cursor(start, len);
+        let ctx = egui::Context::default();
+        let render_and_assert_caret = |app: &mut LocalPasteApp| {
+            render_editor_frames(app, &ctx, 1000.0);
+            assert_caret_visible(app);
+            let cursor = app.virtual_editor_state.cursor();
+            let (line, column) = app.virtual_editor_buffer.char_to_line_col(cursor);
+            assert_eq!(
+                cursor,
+                app.virtual_editor_buffer.line_col_to_char(line, column),
+                "cursor must not remain inside CRLF"
+            );
+        };
+        render_and_assert_caret(&mut harness.app);
+        assert!(
+            harness
+                .app
+                .apply_virtual_commands(&ctx, &[VirtualInputCommand::DeleteForward { word: false }])
+                .changed
+        );
+        let hint = harness.app.highlight_edit_hint.expect("mutation hint");
+        assert_eq!(hint.start_byte, before.find('b').unwrap());
+        assert_eq!(hint.touched_lines, 1);
+        let after = before.replace('b', "");
+        let after_cursor = if separator == "\r" { 1 } else { start };
+        render_and_assert_caret(&mut harness.app);
+        assert_eq!(harness.app.virtual_editor_state.cursor(), after_cursor);
+        for (command, expected, cursor) in [
+            (VirtualInputCommand::Undo, before.clone(), start),
+            (VirtualInputCommand::Redo, after.clone(), after_cursor),
+        ] {
+            assert!(harness.app.apply_virtual_commands(&ctx, &[command]).changed);
+            assert!(
+                harness.app.highlight_edit_hint.is_none(),
+                "history invalidates single-edit hints"
+            );
+            assert_eq!(harness.app.virtual_editor_buffer.to_string(), expected);
+            render_and_assert_caret(&mut harness.app);
+            assert_eq!(harness.app.virtual_editor_state.cursor(), cursor);
+        }
+        assert!(
+            harness
+                .app
+                .apply_virtual_commands(&ctx, &[VirtualInputCommand::InsertText("x".into())])
+                .changed
+        );
+        let expected = if separator == "\r" {
+            format!("{prefix}x\r\n# c\n")
+        } else {
+            before.replace('b', "x")
+        };
+        assert_eq!(
+            harness.app.virtual_editor_buffer.to_string(),
+            expected,
+            "typing must insert at the visible caret and preserve line endings"
+        );
+        render_and_assert_caret(&mut harness.app);
+        if separator == "\r" {
+            for select in [false, true] {
+                assert!(
+                    !harness
+                        .app
+                        .apply_virtual_commands(
+                            &ctx,
+                            &[VirtualInputCommand::MoveRight {
+                                select,
+                                word: false
+                            }]
+                        )
+                        .changed
+                );
+                assert_eq!(
+                    harness.app.virtual_editor_state.cursor(),
+                    4,
+                    "Right must cross CRLF instead of returning to the prior line end"
+                );
+                render_and_assert_caret(&mut harness.app);
+                assert!(
+                    !harness
+                        .app
+                        .apply_virtual_commands(
+                            &ctx,
+                            &[VirtualInputCommand::MoveLeft {
+                                select,
+                                word: false
+                            }]
+                        )
+                        .changed
+                );
+                assert_eq!(harness.app.virtual_editor_state.cursor(), 2);
+                render_and_assert_caret(&mut harness.app);
+                assert_eq!(harness.app.virtual_editor_buffer.to_string(), expected);
+                assert!(harness.app.virtual_editor_state.selection_range().is_none());
+            }
+        }
+    }
 }
 
 #[test]

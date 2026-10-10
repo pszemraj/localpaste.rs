@@ -4,21 +4,171 @@ use super::virtual_editor_focus_support::*;
 use super::*;
 use crate::app::virtual_editor::PlatformFlavor;
 
-fn run_virtual_editor_frame(
-    app: &mut LocalPasteApp,
-    ctx: &egui::Context,
-    events: Vec<egui::Event>,
-) -> bool {
-    let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
-    let focus_active_pre = ctx.memory(|m| m.has_focus(focus_id));
-    let raw_input = egui::RawInput {
-        events,
-        ..Default::default()
-    };
-    let _ = ctx.run(raw_input, |ctx| {
-        app.render_editor_panel(ctx);
-    });
-    focus_active_pre
+#[test]
+fn native_paste_only_chords_route_without_a_v_key_event() {
+    for (explicit, include_key) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut harness = make_app();
+        harness.app.reset_virtual_editor("original");
+        let ctx = egui::Context::default();
+        configure_virtual_editor_test_ctx(&ctx);
+        harness.app.focus_editor_next = true;
+        run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(screen_rect()),
+                ..Default::default()
+            },
+        );
+        assert_editor_focus(&ctx);
+        let modifiers = egui::Modifiers {
+            shift: explicit,
+            ..primary_command_modifiers()
+        };
+        let mut events = vec![];
+        if include_key {
+            events.push(key_event(egui::Key::V, modifiers));
+        }
+        events.push(egui::Event::Paste("clip".into()));
+        let output = run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(screen_rect()),
+                modifiers,
+                events,
+                ..Default::default()
+            },
+        );
+        // Both chords insert once into the focused editor.
+        assert!(
+            !harness
+                .cmd_rx
+                .try_iter()
+                .any(|command| matches!(command, CoreCmd::CreatePaste { .. })),
+            "shift={explicit} key={include_key}"
+        );
+        assert_eq!(harness.app.active_snapshot(), "cliporiginal");
+        assert!(!output.viewport_output.values().any(|viewport| viewport
+            .commands
+            .iter()
+            .any(|command| matches!(command, egui::ViewportCommand::RequestPaste))));
+    }
+}
+
+#[test]
+fn native_plain_paste_supersedes_a_canceled_clipboard_request() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("original");
+    let ctx = egui::Context::default();
+    configure_virtual_editor_test_ctx(&ctx);
+    harness.app.focus_editor_next = true;
+    run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(screen_rect()),
+            ..Default::default()
+        },
+    );
+    harness.app.request_paste_as_new(&ctx);
+    harness.app.cancel_paste_as_new_intent();
+    run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(screen_rect()),
+            modifiers: primary_command_modifiers(),
+            events: vec![egui::Event::Paste("fresh".into())],
+            ..Default::default()
+        },
+    );
+    assert_eq!(harness.app.active_snapshot(), "freshoriginal");
+    assert!(!harness
+        .cmd_rx
+        .try_iter()
+        .any(|command| matches!(command, CoreCmd::CreatePaste { .. })));
+}
+
+#[test]
+fn native_shift_paste_respects_version_and_reset_fences() {
+    for fence in ["history", "diff", "reset"] {
+        let mut harness = make_app();
+        harness.app.reset_virtual_editor("original");
+        let ctx = egui::Context::default();
+        harness.app.focus_editor_next = true;
+        run_discovery_frame_once(&mut harness.app, &ctx, vec![]);
+        match fence {
+            "history" => harness.app.version_ui.history_modal_open = true,
+            "diff" => harness.app.version_ui.diff_modal_open = true,
+            _ => {
+                harness.app.version_ui.history_reset_in_flight_paste_id =
+                    harness.app.selected_id.clone();
+            }
+        }
+        run_discovery_frame_with_modifiers(
+            &mut harness.app,
+            &ctx,
+            vec![egui::Event::Paste("blocked".into())],
+            primary_command_modifiers() | egui::Modifiers::SHIFT,
+        );
+        assert_eq!(harness.app.active_snapshot(), "original", "{fence}");
+        assert_eq!(harness.app.paste_as_new_pending_frames, 0, "{fence}");
+        assert!(!harness.cmd_rx.try_iter().any(|command| matches!(
+            command,
+            CoreCmd::CreatePaste { .. } | CoreCmd::UpdatePasteVirtual { .. }
+        )));
+    }
+}
+
+#[test]
+fn native_paste_preserves_focused_metadata_and_shift_paste_targets_editor() {
+    for (input_id, explicit) in [
+        (TITLE_INPUT_ID, false),
+        (TITLE_INPUT_ID, true),
+        (PROPERTIES_NAME_INPUT_ID, false),
+        (PROPERTIES_NAME_INPUT_ID, true),
+        (PROPERTIES_TAGS_INPUT_ID, false),
+        (PROPERTIES_TAGS_INPUT_ID, true),
+    ] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        harness.app.edit_name = "original title".into();
+        harness.app.edit_tags = "original tag".into();
+        harness.app.properties_drawer_open = true;
+        run_discovery_frame_once(&mut harness.app, &ctx, vec![]);
+        let id = egui::Id::new(input_id);
+        ctx.memory_mut(|memory| memory.request_focus(id));
+        run_discovery_frame_once(&mut harness.app, &ctx, vec![]);
+        assert!(ctx.memory(|memory| memory.has_focus(id)), "{input_id}");
+        let before = (harness.app.edit_name.clone(), harness.app.edit_tags.clone());
+        run_discovery_frame_with_modifiers(
+            &mut harness.app,
+            &ctx,
+            vec![egui::Event::Paste("clip".into())],
+            egui::Modifiers {
+                shift: explicit,
+                ..primary_command_modifiers()
+            },
+        );
+        assert!(!harness
+            .cmd_rx
+            .try_iter()
+            .any(|command| matches!(command, CoreCmd::CreatePaste { .. })));
+        if explicit {
+            // Shift+V targets the open paste rather than the focused field.
+            assert_eq!(harness.app.edit_name, before.0, "{input_id}");
+            assert_eq!(harness.app.edit_tags, before.1, "{input_id}");
+            assert_eq!(harness.app.active_snapshot(), "clipcontent", "{input_id}");
+        } else {
+            if input_id == PROPERTIES_TAGS_INPUT_ID {
+                assert!(harness.app.edit_tags.contains("clip"));
+            } else {
+                assert!(harness.app.edit_name.contains("clip"));
+            }
+            assert_eq!(harness.app.active_snapshot(), "content");
+        }
+    }
 }
 
 #[test]
@@ -363,6 +513,16 @@ fn ctrl_home_after_command_palette_close_and_editor_click_stays_in_editor() {
 
     harness.app.command_palette_open = true;
     let _ = run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            screen_rect: Some(screen_rect()),
+            ..Default::default()
+        },
+    );
+    // Query focus waits until the cold window publishes a visible widget.
+    assert!(!ctx.memory(|m| m.has_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID))));
+    run_full_update_with_input(
         &mut harness.app,
         &ctx,
         egui::RawInput {

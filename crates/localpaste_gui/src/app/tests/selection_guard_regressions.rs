@@ -1,0 +1,763 @@
+//! Selection guards preserve drafts and reject stale asynchronous transitions.
+
+use super::*;
+
+#[test]
+fn reloading_same_paste_rejects_highlight_from_previous_buffer() {
+    use super::super::highlight::HighlightRequestText;
+
+    for patch_reply in [false, true] {
+        let mut harness = make_app();
+        let app = &mut harness.app;
+        let request = |app: &mut LocalPasteApp| {
+            app.dispatch_highlight_request(
+                app.active_revision(),
+                HighlightRequestText::Rope(app.virtual_editor_buffer.rope().clone()),
+                "rust",
+                "base16-mocha.dark",
+                "alpha",
+            );
+        };
+        let mut paste = Paste::new_with_language(
+            "let n = 1;\nlet x = 1;\n".into(),
+            "Alpha".into(),
+            Some("rust".into()),
+            true,
+        );
+        paste.id = "alpha".into();
+        app.select_loaded_paste(paste.clone());
+        if patch_reply {
+            request(app);
+            let base = app
+                .highlight_worker
+                .rx
+                .recv_timeout(Duration::from_secs(30))
+                .unwrap();
+            app.queue_highlight_reply(base);
+            app.maybe_apply_staged_highlight(Instant::now());
+            app.virtual_editor_buffer
+                .replace_char_range(8..9, "2")
+                .unwrap();
+        }
+        request(app);
+        let old_reply = app
+            .highlight_worker
+            .rx
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap();
+        assert_eq!(
+            matches!(old_reply.result, HighlightWorkerResult::Patch(_)),
+            patch_reply
+        );
+        let old_line = match &old_reply.result {
+            HighlightWorkerResult::Render(render) => render.lines[0].clone(),
+            HighlightWorkerResult::Patch(patch) => patch.lines[0].clone(),
+        };
+
+        // A reload resets revisions, so id/revision/length can all match old work.
+        paste.content = "// note 1;\nlet x = 1;\n".into();
+        app.select_loaded_paste(paste);
+        if patch_reply {
+            app.virtual_editor_buffer
+                .replace_char_range(8..9, "2")
+                .unwrap();
+        }
+        request(app);
+        app.queue_highlight_reply(old_reply);
+        assert!(
+            app.highlight_staged.is_none(),
+            "old colors must not be staged"
+        );
+        assert!(
+            app.highlight_pending.is_some(),
+            "new request must stay pending"
+        );
+        let new_reply = app
+            .highlight_worker
+            .rx
+            .recv_timeout(Duration::from_secs(30))
+            .unwrap();
+        app.queue_highlight_reply(new_reply);
+        app.maybe_apply_staged_highlight(Instant::now());
+        assert!(app.highlight_pending.is_none());
+        let render = app
+            .highlight_render
+            .as_ref()
+            .expect("current colors must recover");
+        assert!(
+            render.lines[0] != old_line,
+            "reloaded comment must use its own colors"
+        );
+    }
+}
+
+#[test]
+fn revisiting_paste_ignores_snapshot_from_previous_selection_lock() {
+    let mut harness = make_app();
+    let dir = TempDir::new().expect("temporary database");
+    let path = dir.path().join("db");
+    let db = Database::new(path.to_str().unwrap()).expect("database");
+    for (id, content) in [("alpha", "alpha body"), ("beta", "old beta body")] {
+        let mut paste =
+            Paste::new_with_language(content.into(), id.into(), Some("text".into()), true);
+        paste.id = id.into();
+        db.pastes.create(&paste).unwrap();
+    }
+    let config = Config {
+        db_path: path.to_string_lossy().into_owned(),
+        port: 0,
+        max_paste_size: 10 * 1024 * 1024,
+        auto_save_interval: 2000,
+        auto_backup: false,
+        search_case_sensitive: false,
+    };
+    let state = AppState::with_locks(config, db.share().unwrap(), harness.app.locks.clone());
+    let server = EmbeddedServer::start(state, false).unwrap();
+    let mut backend = crate::backend::spawn_backend_with_locks_and_owner(
+        db.share().unwrap(),
+        10 * 1024 * 1024,
+        harness.app.locks.clone(),
+        harness.app.lock_owner_id.clone(),
+    );
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", Some("text"), 13));
+    harness.app.pastes = harness.app.all_pastes.clone();
+    assert!(harness.app.acquire_paste_lock("alpha"));
+    let receive = || backend.evt_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    assert!(harness.app.select_paste("beta".into()));
+    backend.cmd_tx.send(recv_cmd(&harness.cmd_rx)).unwrap();
+    // The real worker read completes, but the UI has not drained its reply yet.
+    let old_beta = receive();
+    assert!(
+        matches!(&old_beta, CoreEvent::PasteLoaded { paste, .. } if paste.content == "old beta body")
+    );
+    assert!(harness.app.select_paste("alpha".into()));
+    backend.cmd_tx.send(recv_cmd(&harness.cmd_rx)).unwrap();
+    let alpha = receive();
+    assert!(!harness.app.locks.is_locked("beta").unwrap());
+    // The embedded API legitimately updates beta while its GUI edit lock is released.
+    let url = format!("http://{}/api/paste/beta", server.addr());
+    let response = reqwest::blocking::Client::new()
+        .put(url)
+        .json(&serde_json::json!({ "content": "latest beta body" }))
+        .send()
+        .unwrap();
+    assert!(response.status().is_success());
+    assert!(harness.app.select_paste("beta".into()));
+    backend.cmd_tx.send(recv_cmd(&harness.cmd_rx)).unwrap();
+    let latest_beta = receive();
+    assert!(
+        matches!(&latest_beta, CoreEvent::PasteLoaded { paste, .. } if paste.content == "latest beta body")
+    );
+
+    // Preserve actual FIFO response order; no local edit occurs between replies.
+    for reply in [old_beta, alpha, latest_beta] {
+        harness.app.apply_event(reply);
+    }
+    insert_active_text(&mut harness.app, "local edit ", 0);
+    harness.app.mark_dirty();
+    harness.app.save_now();
+    backend.cmd_tx.send(recv_cmd(&harness.cmd_rx)).unwrap();
+    assert!(matches!(receive(), CoreEvent::PasteSaved { .. }));
+    backend
+        .shutdown_and_join(true, Duration::from_secs(5))
+        .unwrap();
+    drop(backend);
+    drop(server);
+    drop(db);
+    let reopened = Database::new(path.to_str().unwrap()).unwrap();
+    let persisted = reopened.pastes.get("beta").unwrap().unwrap().content;
+    assert_eq!(
+        persisted, "local edit latest beta body",
+        "stale selection reply overwrote the API update"
+    );
+}
+
+#[test]
+fn empty_search_preserves_dirty_content() {
+    let mut harness = make_app();
+    assert!(harness.app.acquire_paste_lock("alpha"));
+    let mut paste = Paste::new_with_language(
+        "saved text".into(),
+        "Alpha".into(),
+        Some("text".into()),
+        true,
+    );
+    paste.id = "alpha".into();
+    harness.app.select_loaded_paste(paste);
+    insert_active_text(&mut harness.app, "unsaved note ", 0);
+    harness.app.mark_dirty();
+    harness.app.search_query = "no matching paste".into();
+    harness.app.search_last_sent = "no matching paste".into();
+    harness.app.apply_event(CoreEvent::SearchResults {
+        collection: SidebarCollection::All,
+        scope: SearchScope::All,
+        query: "no matching paste".into(),
+        folder_id: None,
+        language: None,
+        items: vec![],
+    });
+    assert_eq!(
+        harness.app.active_snapshot(),
+        "unsaved note saved text",
+        "empty search destroyed unsaved content"
+    );
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+    assert!(harness.app.locks.is_locked("alpha").unwrap());
+    assert!(harness.app.locks.begin_mutation("alpha").is_err());
+}
+
+#[test]
+fn empty_collection_preserves_metadata_draft() {
+    let mut harness = make_app();
+    assert!(harness.app.acquire_paste_lock("alpha"));
+    harness.app.edit_name = "unsaved title".into();
+    harness.app.edit_tags = "unsaved tag".into();
+    harness.app.metadata_dirty = true;
+    harness
+        .app
+        .set_active_collection(SidebarCollection::Documents);
+    assert_eq!(
+        harness.app.edit_name, "unsaved title",
+        "empty collection destroyed unsaved metadata"
+    );
+    assert!(harness.app.metadata_dirty);
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(harness.app.locks.is_locked("alpha").unwrap());
+}
+
+#[test]
+fn empty_list_preserves_inflight_content_and_newer_edit() {
+    let mut harness = make_app();
+    assert!(harness.app.acquire_paste_lock("alpha"));
+    let mut paste = Paste::new_with_language(
+        "saved text".into(),
+        "Alpha".into(),
+        Some("text".into()),
+        true,
+    );
+    paste.id = "alpha".into();
+    harness.app.select_loaded_paste(paste);
+    insert_active_text(&mut harness.app, "first edit ", 0);
+    harness.app.mark_dirty();
+    harness.app.save_now();
+    assert!(matches!(
+        recv_cmd(&harness.cmd_rx),
+        CoreCmd::UpdatePasteVirtual { .. }
+    ));
+    insert_active_text(&mut harness.app, "second edit ", 0);
+    harness.app.mark_dirty();
+    harness.app.active_collection = SidebarCollection::Documents;
+    harness.app.apply_event(CoreEvent::PasteList {
+        items: vec![test_summary("alpha", "Alpha", Some("text"), 10)],
+    });
+    assert_eq!(
+        harness.app.active_snapshot(),
+        "second edit first edit saved text",
+        "empty filtered list destroyed edits made during save"
+    );
+    assert!(harness.app.save_in_flight);
+    assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+    assert!(harness.app.locks.is_locked("alpha").unwrap());
+}
+
+#[test]
+fn empty_collection_preserves_inflight_metadata_request() {
+    let mut harness = make_app();
+    assert!(harness.app.acquire_paste_lock("alpha"));
+    harness.app.edit_name = "title being saved".into();
+    harness.app.metadata_dirty = true;
+    harness.app.save_metadata_now();
+    assert!(matches!(
+        recv_cmd(&harness.cmd_rx),
+        CoreCmd::UpdatePasteMeta { .. }
+    ));
+    harness.app.edit_name = "newer unsaved title".into();
+    harness
+        .app
+        .set_active_collection(SidebarCollection::Documents);
+    assert_eq!(harness.app.edit_name, "newer unsaved title");
+    assert!(harness.app.metadata_save_in_flight);
+    assert!(harness.app.metadata_save_request.is_some());
+    assert!(harness.app.locks.is_locked("alpha").unwrap());
+}
+
+#[test]
+fn selecting_active_paste_cancels_pending_switch() {
+    let mut harness = make_app();
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", Some("text"), 10));
+    harness.app.pastes = harness.app.all_pastes.clone();
+    let mut alpha = Paste::new_with_language(
+        "saved text".into(),
+        "Alpha".into(),
+        Some("text".into()),
+        true,
+    );
+    alpha.id = "alpha".into();
+    harness.app.select_loaded_paste(alpha.clone());
+    insert_active_text(&mut harness.app, "edit ", 0);
+    harness.app.mark_dirty();
+    assert!(harness.app.select_paste("beta".into()));
+    assert!(matches!(
+        recv_cmd(&harness.cmd_rx),
+        CoreCmd::UpdatePasteVirtual { .. }
+    ));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
+    // The user's second selection is the currently displayed paste.
+    assert!(harness.app.select_paste("alpha".into()));
+    alpha.content = "edit saved text".into();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: alpha });
+    assert_eq!(
+        harness.app.selected_id.as_deref(),
+        Some("alpha"),
+        "older deferred switch overrides the user's latest selection"
+    );
+    assert!(harness.app.pending_selection_id.is_none());
+}
+
+#[test]
+fn repeated_target_load_does_not_replace_new_draft() {
+    let mut harness = make_app();
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", Some("text"), 10));
+    harness.app.pastes = harness.app.all_pastes.clone();
+    let mut alpha = Paste::new_with_language(
+        "alpha body".into(),
+        "Alpha".into(),
+        Some("text".into()),
+        true,
+    );
+    alpha.id = "alpha".into();
+    harness.app.select_loaded_paste(alpha.clone());
+    let mut beta =
+        Paste::new_with_language("beta body".into(), "Beta".into(), Some("text".into()), true);
+    beta.id = "beta".into();
+    assert!(harness.app.select_paste("beta".into()));
+    let old_beta_epoch = harness.app.active_buffer_epoch;
+    assert!(harness.app.select_paste("alpha".into()));
+    let alpha_epoch = harness.app.active_buffer_epoch;
+    assert!(harness.app.select_paste("beta".into()));
+    let beta_epoch = harness.app.active_buffer_epoch;
+    for id in ["beta", "alpha", "beta"] {
+        assert!(
+            matches!(recv_cmd(&harness.cmd_rx), CoreCmd::GetPaste { id: received, .. } if received == id)
+        );
+    }
+    // Older requests cannot initialize the revisited selection.
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: beta.clone(),
+        selection_epoch: old_beta_epoch,
+    });
+    assert!(harness.app.selected_paste.is_none());
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: alpha,
+        selection_epoch: alpha_epoch,
+    });
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: beta.clone(),
+        selection_epoch: beta_epoch,
+    });
+    insert_active_text(&mut harness.app, "new draft ", 0);
+    harness.app.mark_dirty();
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: beta,
+        selection_epoch: beta_epoch,
+    });
+    assert_eq!(
+        harness.app.active_snapshot(),
+        "new draft beta body",
+        "a duplicate same-id load destroyed the new draft"
+    );
+    assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+}
+
+#[test]
+fn stale_selection_failures_preserve_revisited_paste_and_its_draft() {
+    for missing in [false, true] {
+        let mut harness = make_app();
+        harness
+            .app
+            .all_pastes
+            .push(test_summary("beta", "Beta", Some("text"), 9));
+        harness.app.pastes = harness.app.all_pastes.clone();
+        assert!(harness.app.select_paste("beta".into()));
+        let old_epoch = harness.app.active_buffer_epoch;
+        assert!(harness.app.select_paste("alpha".into()));
+        assert!(harness.app.select_paste("beta".into()));
+        let current_epoch = harness.app.active_buffer_epoch;
+        let mut beta = Paste::new("beta body".into(), "Beta".into());
+        beta.id = "beta".into();
+        harness.app.apply_event(CoreEvent::PasteLoaded {
+            paste: beta,
+            selection_epoch: current_epoch,
+        });
+        insert_active_text(&mut harness.app, "draft ", 0);
+        harness.app.mark_dirty();
+        // Cover both an older request and a duplicate outcome after initialization.
+        for selection_epoch in [old_epoch, current_epoch] {
+            let event = if missing {
+                CoreEvent::PasteSelectionMissing {
+                    id: "beta".into(),
+                    selection_epoch,
+                }
+            } else {
+                CoreEvent::PasteLoadFailed {
+                    id: "beta".into(),
+                    selection_epoch,
+                    message: "late failure".into(),
+                }
+            };
+            harness.app.apply_event(event);
+            assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+            assert_eq!(harness.app.active_snapshot(), "draft beta body");
+            assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+            assert!(harness.app.locks.is_locked("beta").unwrap());
+            assert!(harness
+                .app
+                .all_pastes
+                .iter()
+                .any(|paste| paste.id == "beta"));
+        }
+    }
+}
+
+#[test]
+fn empty_collection_clears_saved_selection_and_releases_edit_lock() {
+    let mut harness = make_app();
+    assert!(harness.app.acquire_paste_lock("alpha"));
+    harness
+        .app
+        .set_active_collection(SidebarCollection::Documents);
+    assert!(harness.app.selected_id.is_none());
+    assert!(harness.app.active_snapshot().is_empty());
+    assert!(!harness.app.locks.is_locked("alpha").unwrap());
+}
+
+#[test]
+fn hidden_content_draft_remains_locked_until_the_latest_save_ack() {
+    let mut harness = make_app();
+    assert!(harness.app.acquire_paste_lock("alpha"));
+    let mut alpha =
+        Paste::new_with_language("original".into(), "Alpha".into(), Some("text".into()), true);
+    alpha.id = "alpha".into();
+    harness.app.select_loaded_paste(alpha.clone());
+    insert_active_text(&mut harness.app, "first ", 0);
+    harness.app.mark_dirty();
+    harness.app.save_now();
+    assert!(matches!(
+        recv_cmd(&harness.cmd_rx),
+        CoreCmd::UpdatePasteVirtual { .. }
+    ));
+    insert_active_text(&mut harness.app, "second ", 0);
+    harness.app.mark_dirty();
+    harness.app.set_active_language_filter(Some("rust".into()));
+    alpha.content = "first original".into();
+    harness.app.apply_event(CoreEvent::PasteSaved {
+        paste: alpha.clone(),
+    });
+    assert_eq!(harness.app.active_snapshot(), "second first original");
+    assert_eq!(harness.app.save_status, SaveStatus::Dirty);
+    assert!(harness.app.locks.is_locked("alpha").unwrap());
+    harness.app.save_now();
+    match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::UpdatePasteVirtual { id, content, .. } => {
+            assert_eq!(id, "alpha");
+            assert_eq!(content.to_string(), "second first original");
+        }
+        other => panic!("expected retained draft save, got {other:?}"),
+    }
+    alpha.content = "second first original".into();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: alpha });
+    assert!(harness.app.selected_id.is_none());
+    assert_eq!(harness.app.save_status, SaveStatus::Saved);
+    assert!(!harness.app.locks.is_locked("alpha").unwrap());
+}
+
+#[test]
+fn hidden_metadata_draft_remains_locked_until_the_latest_save_ack() {
+    let mut harness = make_app();
+    assert!(harness.app.acquire_paste_lock("alpha"));
+    let mut alpha =
+        Paste::new_with_language("original".into(), "Alpha".into(), Some("text".into()), true);
+    alpha.id = "alpha".into();
+    harness.app.select_loaded_paste(alpha.clone());
+    harness.app.edit_name = "first title".into();
+    harness.app.metadata_dirty = true;
+    harness.app.save_metadata_now();
+    assert!(matches!(
+        recv_cmd(&harness.cmd_rx),
+        CoreCmd::UpdatePasteMeta { .. }
+    ));
+    harness.app.edit_name = "latest title".into();
+    harness.app.set_active_language_filter(Some("rust".into()));
+    alpha.name = "first title".into();
+    harness.app.apply_event(CoreEvent::PasteMetaSaved {
+        paste: alpha.clone(),
+    });
+    assert_eq!(harness.app.edit_name, "latest title");
+    assert!(harness.app.metadata_dirty);
+    assert!(harness.app.locks.is_locked("alpha").unwrap());
+    harness.app.save_metadata_now();
+    assert!(
+        matches!(recv_cmd(&harness.cmd_rx), CoreCmd::UpdatePasteMeta { name: Some(name), .. } if name == "latest title")
+    );
+    alpha.name = "latest title".into();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteMetaSaved { paste: alpha });
+    assert!(harness.app.selected_id.is_none());
+    assert!(!harness.app.metadata_dirty);
+    assert!(!harness.app.locks.is_locked("alpha").unwrap());
+}
+
+#[test]
+fn refused_mutating_target_preserves_hidden_document_and_pending_picker_input() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    harness.app.picker_selection_pin = Some("alpha".into());
+    harness.app.pastes = vec![test_summary("gamma", "Gamma", None, 4)];
+    harness.app.all_pastes = harness.app.pastes.clone();
+    harness.app.pending_selection_id = Some("queued".into());
+    harness.app.pending_picker_selection_pin = Some("queued".into());
+    harness.app.pending_delete_id = Some("alpha".into());
+    harness.app.pending_picker_open = Some(PendingPickerOpen {
+        id: "alpha".into(),
+        query: "needle".into(),
+        scope: SearchScope::Body,
+        case_sensitive: true,
+        input_events: vec![egui::Event::Text("retained".into())],
+        input_ready: false,
+    });
+    let locks = harness.app.locks.clone();
+    let _mutation = locks.begin_mutation("beta").unwrap();
+    let epoch = harness.app.active_buffer_epoch;
+    assert!(!harness.app.select_paste("beta".into()));
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("queued"));
+    assert_eq!(
+        harness.app.pending_picker_selection_pin.as_deref(),
+        Some("queued")
+    );
+    assert_eq!(harness.app.pending_delete_id.as_deref(), Some("alpha"));
+    let pending = harness.app.pending_picker_open.as_ref().unwrap();
+    assert_eq!(pending.id, "alpha");
+    assert_eq!(pending.query, "needle");
+    assert_eq!(pending.scope, SearchScope::Body);
+    assert!(pending.case_sensitive);
+    assert_eq!(
+        pending.input_events,
+        vec![egui::Event::Text("retained".into())]
+    );
+    assert!(!pending.input_ready);
+    // Reconcile the hidden document after unrelated previously accepted work ends.
+    harness.app.pending_selection_id = None;
+    harness.app.pending_picker_selection_pin = None;
+    harness.app.pending_delete_id = None;
+    harness.app.ensure_selection_after_list_update();
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.active_buffer_epoch, epoch);
+    assert_eq!(harness.app.active_snapshot(), "content");
+    assert!(harness.cmd_rx.try_recv().is_err());
+}
+
+#[test]
+fn deferred_target_lock_refusal_preserves_hidden_document_after_content_or_metadata_flush() {
+    for metadata in [false, true] {
+        for picker in [false, true] {
+            for refused in [false, true] {
+                let (mut harness, _event_tx) = make_app_with_event_tx();
+                let mut alpha = Paste::new("saved".into(), "Alpha".into());
+                alpha.id = "alpha".into();
+                harness.app.select_loaded_paste(alpha.clone());
+                assert!(harness.app.acquire_paste_lock("alpha"));
+                harness.app.picker_selection_pin = Some("alpha".into());
+                harness.app.search_query = "gamma".into();
+                harness.app.search_last_sent = "gamma".into();
+                harness.app.pastes = vec![test_summary("gamma", "Gamma", None, 4)];
+                if !refused {
+                    harness
+                        .app
+                        .pastes
+                        .insert(0, test_summary("beta", "Beta gamma", None, 4));
+                }
+                harness.app.all_pastes = harness.app.pastes.clone();
+                if metadata {
+                    harness.app.edit_name = "Renamed".into();
+                    harness.app.metadata_dirty = true;
+                    alpha.name = "Renamed".into();
+                } else {
+                    insert_active_text(&mut harness.app, "edited ", 0);
+                    harness.app.mark_dirty();
+                    alpha.content = "edited saved".into();
+                }
+                if picker {
+                    harness.app.open_paste_picker();
+                    harness.app.open_palette_selection("beta".into());
+                } else {
+                    assert!(harness.app.select_paste("beta".into()));
+                }
+                assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
+                let save = recv_cmd(&harness.cmd_rx);
+                assert!(matches!(save, CoreCmd::UpdatePasteMeta { .. }) == metadata);
+                assert!(matches!(save, CoreCmd::UpdatePasteVirtual { .. }) != metadata);
+                let locks = harness.app.locks.clone();
+                let _mutation = refused.then(|| locks.begin_mutation("beta").unwrap());
+                let expected_content = alpha.content.clone();
+                let epoch = harness.app.active_buffer_epoch;
+                harness.app.apply_event(if metadata {
+                    CoreEvent::PasteMetaSaved { paste: alpha }
+                } else {
+                    CoreEvent::PasteSaved { paste: alpha }
+                });
+                harness.app.ensure_selection_after_list_update();
+                if !refused {
+                    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+                    assert_eq!(
+                        harness.app.picker_selection_pin.as_deref(),
+                        picker.then_some("beta")
+                    );
+                    assert!(harness.app.pending_selection_id.is_none());
+                    assert!(harness.app.pending_picker_selection_pin.is_none());
+                    assert_eq!(harness.app.pending_picker_open.is_some(), picker);
+                    assert!(!harness.app.locks.is_locked("alpha").unwrap());
+                    assert!(harness.app.locks.is_locked("beta").unwrap());
+                    assert!(
+                        matches!(recv_cmd(&harness.cmd_rx), CoreCmd::GetPaste { id, .. } if id == "beta")
+                    );
+                    continue;
+                }
+                assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+                assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
+                assert_eq!(harness.app.active_buffer_epoch, epoch);
+                assert_eq!(harness.app.active_snapshot(), expected_content);
+                assert!(harness.app.locks.is_locked("alpha").unwrap());
+                assert!(harness.app.pending_selection_id.is_none());
+                assert!(harness.app.pending_picker_open.is_none());
+                assert!(harness.app.pending_picker_selection_pin.is_none());
+                assert!(harness.cmd_rx.try_recv().is_err());
+            }
+        }
+    }
+}
+
+#[test]
+fn deferred_picker_target_survives_input_transfer_before_save_ack() {
+    for metadata in [false, true] {
+        for transfer in [None, Some(false), Some(true)] {
+            let (mut harness, _event_tx) = make_app_with_event_tx();
+            let ctx = egui::Context::default();
+            harness.app.search_query = "sidebar".into();
+            harness.app.search_last_sent = "sidebar".into();
+            let mut alpha = Paste::new("saved alpha".into(), "Alpha".into());
+            alpha.id = "alpha".into();
+            harness.app.select_loaded_paste(alpha.clone());
+            if metadata {
+                harness.app.edit_name = "renamed alpha".into();
+                harness.app.metadata_dirty = true;
+                alpha.name = "renamed alpha".into();
+            } else {
+                harness.app.save_status = SaveStatus::Dirty;
+            }
+            harness.app.open_paste_picker();
+            harness.app.open_palette_selection("picked".into());
+            let _ = recv_cmd(&harness.cmd_rx);
+            let mut input = egui::RawInput::default();
+            if let Some(escape) = transfer {
+                input.events = if escape {
+                    vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)]
+                } else {
+                    primary_pointer_events(egui::pos2(1.0, 1.0), true)
+                };
+            }
+            harness.app.stage_discovery_input(&ctx, &mut input);
+            assert_eq!(
+                harness.app.pending_picker_open.is_some(),
+                transfer.is_none()
+            );
+            harness.app.apply_event(if metadata {
+                CoreEvent::PasteMetaSaved { paste: alpha }
+            } else {
+                CoreEvent::PasteSaved { paste: alpha }
+            });
+            assert_eq!(harness.app.selected_id.as_deref(), Some("picked"));
+            let _ = recv_cmd(&harness.cmd_rx);
+            harness.app.maybe_dispatch_search();
+            assert!(matches!(
+                recv_cmd(&harness.cmd_rx),
+                CoreCmd::SearchPastes { .. }
+            ));
+            let mut picked = Paste::new("picked body".into(), "Picked".into());
+            picked.id = "picked".into();
+            harness.app.apply_event(CoreEvent::PasteLoaded {
+                paste: picked,
+                selection_epoch: harness.app.active_buffer_epoch,
+            });
+            harness.app.apply_event(CoreEvent::SearchResults {
+                collection: SidebarCollection::All,
+                scope: SearchScope::All,
+                query: "sidebar".into(),
+                folder_id: None,
+                language: None,
+                items: vec![test_summary("alpha", "Alpha sidebar", None, 10)],
+            });
+            assert_eq!(
+                harness.app.selected_id.as_deref(),
+                Some("picked"),
+                "metadata={metadata}, transfer={transfer:?}"
+            );
+            assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("picked"));
+            assert_eq!(harness.app.active_snapshot(), "picked body");
+        }
+    }
+}
+
+#[test]
+fn native_paste_during_deferred_picker_open_retains_editor_paste_input() {
+    // Both chords paste into the editor, so both wait for the opening paste.
+    for shift in [false, true] {
+        let (mut harness, _event_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness.app.save_status = SaveStatus::Dirty;
+        harness.app.open_paste_picker();
+        harness.app.open_palette_selection("picked".into());
+        let _ = recv_cmd(&harness.cmd_rx);
+        let before = harness.app.active_snapshot();
+        let mut modifiers = primary_command_modifiers();
+        modifiers.shift = shift;
+        let mut input = egui::RawInput {
+            events: vec![egui::Event::Paste("native payload".into())],
+            modifiers,
+            ..Default::default()
+        };
+        harness.app.stage_discovery_input(&ctx, &mut input);
+        assert!(input.events.is_empty(), "shift={shift}");
+        assert_eq!(
+            harness.app.pending_picker_selection_pin.as_deref(),
+            Some("picked")
+        );
+        assert_eq!(
+            harness
+                .app
+                .pending_picker_open
+                .as_ref()
+                .unwrap()
+                .input_events,
+            vec![egui::Event::Paste("native payload".into())]
+        );
+        assert!(harness.cmd_rx.try_recv().is_err());
+        assert_eq!(harness.app.active_snapshot(), before);
+    }
+}

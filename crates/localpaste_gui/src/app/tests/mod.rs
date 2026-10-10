@@ -22,10 +22,10 @@ struct FakeHighlightLine {
     name: &'static str,
 }
 
-fn aligned_names(aligned: &[Option<FakeHighlightLine>]) -> Vec<Option<&'static str>> {
+fn aligned_names(aligned: &[Option<(usize, FakeHighlightLine)>]) -> Vec<Option<&'static str>> {
     aligned
         .iter()
-        .map(|line| line.as_ref().map(|line| line.name))
+        .map(|line| line.as_ref().map(|(_, line)| line.name))
         .collect()
 }
 
@@ -49,6 +49,7 @@ fn test_summary_at(
         folder_id: None,
         tags: Vec::new(),
         derived: Default::default(),
+        match_excerpt: None,
     }
 }
 
@@ -95,6 +96,29 @@ pub(super) fn configure_virtual_editor_test_ctx(ctx: &egui::Context) {
         egui::FontId::new(14.0, egui::FontFamily::Monospace),
     );
     ctx.set_style(style);
+}
+
+/// Renders an editor frame and reports whether the editor owned focus before input.
+///
+/// # Arguments
+/// - `app`: App under test.
+/// - `ctx`: Persistent test context carrying keyboard focus between frames.
+/// - `events`: Input events delivered to this frame.
+///
+/// # Returns
+/// Whether the virtual editor had keyboard focus before rendering.
+fn run_virtual_editor_frame(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> bool {
+    let focus_active_pre = ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
+    let raw_input = egui::RawInput {
+        events,
+        ..Default::default()
+    };
+    let _ = ctx.run(raw_input, |ctx| app.render_editor_panel(ctx));
+    focus_active_pre
 }
 
 /// Reset the virtual editor and rebuild wrapping metrics for a test buffer.
@@ -252,6 +276,61 @@ fn run_editor_panel_once(app: &mut LocalPasteApp, ctx: &egui::Context, input: eg
     let _ = run_editor_panel_once_output(app, ctx, input);
 }
 
+/// Settles direct editor geometry across four frames without acquiring app styling.
+fn render_editor_frames(app: &mut LocalPasteApp, ctx: &egui::Context, width: f32) {
+    for _ in 0..4 {
+        run_editor_panel_once(
+            app,
+            ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 600.0),
+                )),
+                ..Default::default()
+            },
+        );
+    }
+}
+
+/// Asserts that the app's rendered caret fits inside its observed viewport.
+fn assert_caret_visible(app: &LocalPasteApp) {
+    assert!(
+        app.virtual_viewport.caret_visible(),
+        "caret {:?}, viewport {:?}, offset {}",
+        app.virtual_viewport.caret,
+        app.virtual_viewport.rect,
+        app.virtual_viewport.offset_y
+    );
+}
+
+/// Finds the center of an exact rendered text label for pointer-driven tests.
+fn rendered_label_center(output: &egui::FullOutput, label: &str) -> egui::Pos2 {
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.job.text == label => {
+                Some(text.pos + text.galley.size() / 2.0)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing rendered label {label}"))
+}
+
+/// Builds one unmodified pointer-button step; callers retain their frame policy.
+fn primary_pointer_events(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+    vec![
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        },
+    ]
+}
+
 /// Runs a full app update pass with the supplied raw egui events.
 ///
 /// # Arguments
@@ -285,13 +364,42 @@ pub(super) fn run_full_update(
 pub(super) fn run_full_update_with_input(
     app: &mut LocalPasteApp,
     ctx: &egui::Context,
-    input: egui::RawInput,
+    mut input: egui::RawInput,
 ) -> egui::FullOutput {
     app.ensure_style(ctx);
     let mut frame = eframe::Frame::_new_kittest();
+    app.raw_input_hook(ctx, &mut input);
     ctx.run(input, |ctx| {
         app.update(ctx, &mut frame);
     })
+}
+
+/// Runs exactly one discovery frame in the standard viewport, retaining its output.
+fn run_discovery_frame_once(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> egui::FullOutput {
+    run_discovery_frame_with_modifiers(app, ctx, events, egui::Modifiers::NONE)
+}
+
+/// Runs a discovery frame with the modifier snapshot used by native Paste events.
+fn run_discovery_frame_with_modifiers(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    modifiers: egui::Modifiers,
+) -> egui::FullOutput {
+    run_full_update_with_input(
+        app,
+        ctx,
+        egui::RawInput {
+            screen_rect: Some(virtual_editor_focus_support::screen_rect()),
+            events,
+            modifiers,
+            ..Default::default()
+        },
+    )
 }
 
 fn make_app() -> TestHarness {
@@ -311,104 +419,24 @@ fn make_app() -> TestHarness {
         auto_backup: false,
         search_case_sensitive: false,
     };
-    let state = AppState::with_locks(config, server_db, locks.clone());
+    let state = AppState::with_locks(config.clone(), server_db, locks.clone());
     let server = EmbeddedServer::start(state, false).expect("server");
-    let server_addr = server.addr();
-    let server_used_fallback = server.used_fallback();
 
-    let app = LocalPasteApp {
-        backend: BackendHandle::from_test_channels(cmd_tx, evt_rx),
-        all_pastes: vec![test_summary("alpha", "Alpha", None, 7)],
-        pastes: vec![test_summary("alpha", "Alpha", None, 7)],
-        selected_id: Some("alpha".to_string()),
-        selected_paste: Some(Paste::new("content".to_string(), "Alpha".to_string())),
-        edit_name: "Alpha".to_string(),
-        edit_language: None,
-        edit_language_is_manual: false,
-        edit_tags: String::new(),
-        metadata_dirty: false,
-        metadata_save_in_flight: false,
-        metadata_save_request: None,
-        editor_find: EditorFindState::default(),
-        search_query: String::new(),
-        search_last_input_at: None,
-        search_last_sent: String::new(),
-        search_focus_requested: false,
-        active_collection: SidebarCollection::All,
-        active_language_filter: None,
-        properties_drawer_open: false,
-        command_palette_open: false,
-        command_palette_query: String::new(),
-        command_palette_selected: 0,
-        palette_search_results: Vec::new(),
-        palette_search_last_sent: String::new(),
-        palette_search_last_input_at: None,
-        pending_copy_action: None,
-        pending_selection_id: None,
-        pending_delete_id: None,
-        clipboard_outgoing: None,
-        active_buffer_epoch: 0,
-        virtual_editor_buffer: RopeBuffer::new("content"),
-        virtual_editor_state: VirtualEditorState::default(),
-        virtual_editor_history: VirtualEditorHistory::default(),
-        virtual_layout: WrapLayoutCache::default(),
-        virtual_galley_cache: VirtualGalleyCache::default(),
-        virtual_line_scratch: String::new(),
-        virtual_caret_phase_start: Instant::now(),
-        virtual_drag_active: false,
-        virtual_viewport_height: 0.0,
-        virtual_line_height: 1.0,
-        virtual_wrap_width: 0.0,
-        virtual_pending_scroll_offset_y: None,
-        virtual_follow_cursor_next_frame: false,
-        virtual_paste_applied_this_frame: false,
-        version_history_limit: db.paste_version_retention_limit(),
-        version_ui: super::version_ui::VersionUiState::default(),
-        highlight_worker: spawn_highlight_worker(),
-        highlight_pending: None,
-        highlight_render: None,
-        highlight_staged: None,
-        highlight_staged_invalidation: None,
-        highlight_version: 0,
-        highlight_edit_hint: None,
-        db_path: db_path_str,
+    let mut app = LocalPasteApp::from_resources(
+        &config,
+        db.paste_version_retention_limit(),
+        BackendHandle::from_test_channels(cmd_tx, evt_rx),
+        spawn_highlight_worker(),
         locks,
-        lock_owner_id: LockOwnerId::new("test-owner".to_string()),
-        _server: server,
-        server_addr,
-        server_used_fallback,
-        status: None,
-        toasts: VecDeque::with_capacity(TOAST_LIMIT),
-        pending_undo_restore_tokens: HashSet::new(),
-        export_result_rx: None,
-        save_status: SaveStatus::Saved,
-        last_edit_at: None,
-        save_in_flight: false,
-        save_request_revision: None,
-        autosave_delay: Duration::from_millis(2000),
-        shortcut_help_open: false,
-        focus_editor_next: false,
-        style_applied: false,
-        window_shown_once: false,
-        window_checked: false,
-        last_refresh_at: Instant::now(),
-        backend_event_poll_until: None,
-        query_perf: QueryPerfCounters::default(),
-        perf_log_enabled: false,
-        frame_samples: VecDeque::with_capacity(PERF_SAMPLE_CAP),
-        last_frame_at: None,
-        last_perf_log_at: Instant::now(),
-        last_interaction_at: None,
-        last_virtual_click_at: None,
-        last_virtual_click_pos: None,
-        last_virtual_click_count: 0,
-        paste_as_new_pending_frames: 0,
-        paste_as_new_clipboard_requested_at: None,
-        editor_input_trace_enabled: false,
-        highlight_trace_enabled: false,
-        nav_probe: None,
-        nav_probe_applied_commands: Vec::new(),
-    };
+        LockOwnerId::new("test-owner".to_string()),
+        server,
+    );
+    app.all_pastes = vec![test_summary("alpha", "Alpha", None, 7)];
+    app.pastes = vec![test_summary("alpha", "Alpha", None, 7)];
+    app.selected_id = Some("alpha".to_string());
+    app.selected_paste = Some(Paste::new("content".to_string(), "Alpha".to_string()));
+    app.edit_name = "Alpha".to_string();
+    app.virtual_editor_buffer = RopeBuffer::new("content");
 
     TestHarness {
         _dir: dir,
@@ -441,15 +469,26 @@ fn recv_cmd(rx: &Receiver<CoreCmd>) -> CoreCmd {
 mod backend_dispatch;
 mod collections_and_search;
 mod creation_and_projection;
+mod discovery_input_order;
+mod discovery_keyboard;
+mod discovery_scopes;
 mod editor_find;
+mod editor_ux_regressions;
 mod focus_and_paste_routing;
 mod highlight_behaviors;
 mod history_reset;
 mod keyboard_navigation_audit;
+mod paste_into_editor;
 mod persistence;
+mod picker_copy;
+mod picker_find;
+mod picker_scroll;
 mod save_and_metadata;
 mod selected_delete;
+mod selection_guard_regressions;
+mod shortcut_help;
 mod shutdown_behavior;
+mod startup_styles;
 mod state_basics;
 mod state_toasts;
 mod time_filters;

@@ -4,8 +4,10 @@ mod deferred_saves;
 mod delete_flow;
 mod editor;
 mod editor_find;
+mod editor_reveal;
 mod highlight;
 mod highlight_flow;
+mod initialization;
 mod interaction_helpers;
 mod nav_probe;
 mod paste_intent;
@@ -23,27 +25,31 @@ mod ui;
 mod util;
 mod version_ui;
 mod virtual_editor;
+mod virtual_indent;
 mod virtual_ops;
 mod virtual_ops_apply;
 mod window_bounds;
 
 use crate::backend::{
-    spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary, DELETE_UNDO_LIMIT,
+    spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary, SidebarCollection,
+    DELETE_UNDO_LIMIT,
 };
+use editor_reveal::{CursorReveal, EditorViewport};
 use eframe::egui::{self, text::CCursor, RichText, Stroke, TextStyle};
 use egui_extras::syntax_highlighting::CodeTheme;
+#[cfg(test)]
+use highlight::HighlightWorkerResult;
 use highlight::{
     build_virtual_line_segment_job_owned, spawn_highlight_worker, syntect_language_hint,
     syntect_theme_key, HighlightRender, HighlightRequestMeta, HighlightRequestText,
-    HighlightWorker, HighlightWorkerResult, VirtualEditHint,
+    HighlightWorker, VirtualEditHint,
 };
 pub(super) use interaction_helpers::{
-    drag_autoscroll_delta, is_command_shift_shortcut, is_editor_word_char,
-    next_virtual_click_count, non_focusable_click_sense, paint_virtual_selection_overlay,
-    should_route_sidebar_arrows,
+    drag_autoscroll_delta, is_editor_word_char, next_virtual_click_count,
+    non_focusable_click_sense, paint_virtual_selection_overlay, should_route_sidebar_arrows,
 };
 use localpaste_core::config::env_flag_enabled;
-use localpaste_core::models::paste::Paste;
+use localpaste_core::models::paste::{Paste, SearchScope};
 use localpaste_core::{Config, Database};
 use localpaste_server::{AppState, EmbeddedServer, LockOwnerId, PasteLockManager};
 use perf_trace::VirtualInputPerfStats;
@@ -82,8 +88,11 @@ pub(crate) struct LocalPasteApp {
     metadata_save_request: Option<MetadataDraftSnapshot>,
     editor_find: EditorFindState,
     search_query: String,
+    search_scope: SearchScope,
+    search_sent_scope: SearchScope,
     search_last_input_at: Option<Instant>,
     search_last_sent: String,
+    search_error: Option<String>,
     search_focus_requested: bool,
     active_collection: SidebarCollection,
     active_language_filter: Option<String>,
@@ -91,12 +100,29 @@ pub(crate) struct LocalPasteApp {
     command_palette_open: bool,
     command_palette_query: String,
     command_palette_selected: usize,
+    paste_picker_open: bool,
+    paste_picker_query: String,
+    paste_picker_selected: usize,
+    /// Reset the picker viewport when rows are available after a selection reset.
+    paste_picker_scroll_reset_pending: bool,
+    /// Select the retained query once when a new picker session renders.
+    paste_picker_select_query: bool,
+    paste_picker_scope: SearchScope,
+    paste_picker_sent_scope: SearchScope,
     palette_search_results: Vec<PasteSummary>,
     palette_search_last_sent: String,
     palette_search_last_input_at: Option<Instant>,
+    palette_search_pending: bool,
+    palette_search_error: Option<String>,
     pending_copy_action: Option<PaletteCopyAction>,
+    /// Latest detached picker-copy request identity, advanced before each dispatch.
+    palette_copy_request_id: u64,
     pending_selection_id: Option<String>,
+    pending_picker_open: Option<PendingPickerOpen>,
+    pending_picker_selection_pin: Option<String>,
+    picker_selection_pin: Option<String>,
     pending_delete_id: Option<String>,
+    picker_delete_transition: Option<PickerDeleteTransition>,
     clipboard_outgoing: Option<String>,
     active_buffer_epoch: u64,
     virtual_editor_buffer: RopeBuffer,
@@ -107,11 +133,14 @@ pub(crate) struct LocalPasteApp {
     virtual_line_scratch: String,
     virtual_caret_phase_start: Instant,
     virtual_drag_active: bool,
+    /// Modifiers of the primary press accepted by the editor for the current gesture.
+    virtual_pointer_press_modifiers: Option<egui::Modifiers>,
     virtual_viewport_height: f32,
     virtual_line_height: f32,
     virtual_wrap_width: f32,
     virtual_pending_scroll_offset_y: Option<f32>,
-    virtual_follow_cursor_next_frame: bool,
+    virtual_cursor_reveal: Option<CursorReveal>,
+    virtual_viewport: EditorViewport,
     virtual_paste_applied_this_frame: bool,
     version_history_limit: usize,
     version_ui: VersionUiState,
@@ -128,6 +157,8 @@ pub(crate) struct LocalPasteApp {
     last_virtual_click_count: u8,
     paste_as_new_pending_frames: u8,
     paste_as_new_clipboard_requested_at: Option<Instant>,
+    canceled_paste_request_at: Option<Instant>,
+    pending_editor_paste: Option<PendingEditorPaste>,
     db_path: String,
     locks: Arc<PasteLockManager>,
     lock_owner_id: LockOwnerId,
@@ -144,6 +175,11 @@ pub(crate) struct LocalPasteApp {
     save_request_revision: Option<u64>,
     autosave_delay: Duration,
     shortcut_help_open: bool,
+    shortcut_help_query: String,
+    shortcut_help_focus_requested: bool,
+    discovery_return_focus: Option<egui::Id>,
+    /// Native events waiting for the discovery focus boundary's next rendered frame.
+    deferred_discovery_events: Vec<egui::Event>,
     focus_editor_next: bool,
     style_applied: bool,
     window_shown_once: bool,
@@ -173,54 +209,37 @@ struct StagedHighlightInvalidation {
     base_text_len: usize,
     line_ranges: Vec<Range<usize>>,
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum SidebarCollection {
-    All,
-    Today,
-    Week,
-    Recent,
-    Unfiled,
-    Code,
-    Config,
-    Logs,
-    Links,
-}
-
-impl SidebarCollection {
-    fn storage_value(&self) -> &'static str {
-        match self {
-            Self::All => "all",
-            Self::Today => "today",
-            Self::Week => "week",
-            Self::Recent => "recent",
-            Self::Unfiled => "unfiled",
-            Self::Code => "code",
-            Self::Config => "config",
-            Self::Logs => "logs",
-            Self::Links => "links",
-        }
-    }
-
-    fn from_storage_value(value: &str) -> Option<Self> {
-        match value {
-            "all" => Some(Self::All),
-            "today" => Some(Self::Today),
-            "week" => Some(Self::Week),
-            "recent" => Some(Self::Recent),
-            "unfiled" => Some(Self::Unfiled),
-            "code" => Some(Self::Code),
-            "config" => Some(Self::Config),
-            "logs" => Some(Self::Logs),
-            "links" => Some(Self::Links),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 enum PaletteCopyAction {
     Raw(String),
     Fenced(String),
+}
+
+/// `Ctrl/Cmd+Shift+V` text waiting for its target paste to load.
+#[derive(Debug, Clone)]
+struct PendingEditorPaste {
+    id: String,
+    text: String,
+}
+
+/// Picker search context retained until its accepted paste selection finishes loading.
+#[derive(Debug, Clone)]
+struct PendingPickerOpen {
+    id: String,
+    query: String,
+    scope: SearchScope,
+    case_sensitive: bool,
+    /// Editor input retained until this accepted selection finishes loading.
+    input_events: Vec<egui::Event>,
+    /// Matching load has completed and the retained input may enter its editor.
+    input_ready: bool,
+}
+
+/// Selected-picker delete ownership retained through its replacement load.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PickerDeleteTransition {
+    deleted_id: String,
+    replacement_id: Option<String>,
 }
 
 // GUI-owned writes refresh immediately through backend events. This fallback is
@@ -261,6 +280,7 @@ const VIRTUAL_EDITOR_ID: &str = "virtual_editor_input";
 const SEARCH_INPUT_ID: &str = "sidebar_search_input";
 const EDITOR_FIND_INPUT_ID: &str = "editor_find_input";
 const TITLE_INPUT_ID: &str = "editor_title_input";
+const PASTE_PICKER_INPUT_ID: &str = "paste_picker_query_input";
 const COMMAND_PALETTE_INPUT_ID: &str = "command_palette_query_input";
 const PROPERTIES_NAME_INPUT_ID: &str = "properties_name_input";
 const PROPERTIES_TAGS_INPUT_ID: &str = "properties_tags_input";
@@ -352,144 +372,6 @@ struct InputTraceFrame<'a> {
 }
 
 impl LocalPasteApp {
-    /// Construct a new app instance from the current environment config.
-    ///
-    /// Opens the embedded database, spawns the backend worker thread, and kicks
-    /// off the initial list request so the UI has data to render on first paint.
-    ///
-    /// # Returns
-    /// The initialized [`LocalPasteApp`] ready to be handed to `eframe`.
-    ///
-    /// # Errors
-    /// Returns an error if the database path is invalid or the underlying store
-    /// cannot be opened.
-    pub(crate) fn new() -> Result<Self, localpaste_core::AppError> {
-        let config = Config::from_env();
-        let db_path = config.db_path.clone();
-        let autosave_delay = Duration::from_millis(config.auto_save_interval);
-        let db = Database::new(&config.db_path)?;
-        let version_history_limit = db.paste_version_retention_limit();
-        info!("native GUI opened database at {}", config.db_path);
-
-        let locks = Arc::new(PasteLockManager::default());
-        let server_db = db.share()?;
-        let state = AppState::with_locks(config.clone(), server_db, locks.clone());
-        let allow_public = localpaste_core::config::env_flag_enabled("ALLOW_PUBLIC_ACCESS");
-        if allow_public {
-            warn!("Public access enabled - server will accept requests from any origin");
-        }
-        let server = EmbeddedServer::start(state, allow_public)?;
-        let server_addr = server.addr();
-        let server_used_fallback = server.used_fallback();
-
-        let lock_owner_id = crate::lock_owner::next_lock_owner_id("gui");
-        let backend = spawn_backend_with_locks_and_owner(
-            db,
-            config.max_paste_size,
-            locks.clone(),
-            lock_owner_id.clone(),
-        );
-        let highlight_worker = spawn_highlight_worker();
-
-        let mut app = Self {
-            backend,
-            all_pastes: Vec::new(),
-            pastes: Vec::new(),
-            selected_id: None,
-            selected_paste: None,
-            edit_name: String::new(),
-            edit_language: None,
-            edit_language_is_manual: false,
-            edit_tags: String::new(),
-            metadata_dirty: false,
-            metadata_save_in_flight: false,
-            metadata_save_request: None,
-            editor_find: EditorFindState::default(),
-            search_query: String::new(),
-            search_last_input_at: None,
-            search_last_sent: String::new(),
-            search_focus_requested: false,
-            active_collection: SidebarCollection::All,
-            active_language_filter: None,
-            properties_drawer_open: false,
-            command_palette_open: false,
-            command_palette_query: String::new(),
-            command_palette_selected: 0,
-            palette_search_results: Vec::new(),
-            palette_search_last_sent: String::new(),
-            palette_search_last_input_at: None,
-            pending_copy_action: None,
-            pending_selection_id: None,
-            pending_delete_id: None,
-            clipboard_outgoing: None,
-            active_buffer_epoch: 0,
-            virtual_editor_buffer: RopeBuffer::new(""),
-            virtual_editor_state: VirtualEditorState::default(),
-            virtual_editor_history: VirtualEditorHistory::default(),
-            virtual_layout: WrapLayoutCache::default(),
-            virtual_galley_cache: VirtualGalleyCache::default(),
-            virtual_line_scratch: String::new(),
-            virtual_caret_phase_start: Instant::now(),
-            virtual_drag_active: false,
-            virtual_viewport_height: 0.0,
-            virtual_line_height: 1.0,
-            virtual_wrap_width: 0.0,
-            virtual_pending_scroll_offset_y: None,
-            virtual_follow_cursor_next_frame: false,
-            virtual_paste_applied_this_frame: false,
-            version_history_limit,
-            version_ui: VersionUiState::default(),
-            highlight_worker,
-            highlight_pending: None,
-            highlight_render: None,
-            highlight_staged: None,
-            highlight_staged_invalidation: None,
-            highlight_version: 0,
-            highlight_edit_hint: None,
-            db_path,
-            locks,
-            lock_owner_id,
-            _server: server,
-            server_addr,
-            server_used_fallback,
-            status: None,
-            toasts: VecDeque::with_capacity(TOAST_LIMIT),
-            pending_undo_restore_tokens: HashSet::new(),
-            export_result_rx: None,
-            save_status: SaveStatus::Saved,
-            last_edit_at: None,
-            save_in_flight: false,
-            save_request_revision: None,
-            autosave_delay,
-            shortcut_help_open: false,
-            focus_editor_next: false,
-            style_applied: false,
-            window_shown_once: false,
-            window_checked: false,
-            last_refresh_at: Instant::now(),
-            backend_event_poll_until: None,
-            query_perf: QueryPerfCounters::default(),
-            perf_log_enabled: env_flag_enabled("LOCALPASTE_EDITOR_PERF_LOG"),
-            frame_samples: VecDeque::with_capacity(PERF_SAMPLE_CAP),
-            last_frame_at: None,
-            last_perf_log_at: Instant::now(),
-            last_interaction_at: None,
-            last_virtual_click_at: None,
-            last_virtual_click_pos: None,
-            last_virtual_click_count: 0,
-            paste_as_new_pending_frames: 0,
-            paste_as_new_clipboard_requested_at: None,
-            editor_input_trace_enabled: env_flag_enabled("LOCALPASTE_EDITOR_INPUT_TRACE"),
-            highlight_trace_enabled: env_flag_enabled("LOCALPASTE_HIGHLIGHT_TRACE"),
-            nav_probe: nav_probe::NavProbe::from_env(),
-            nav_probe_applied_commands: Vec::new(),
-        };
-        if !app.apply_nav_probe_seed_from_env() {
-            app.request_refresh();
-        }
-        Ok(app)
-    }
-
     fn acquire_paste_lock(&mut self, id: &str) -> bool {
         match self.locks.acquire(id, &self.lock_owner_id) {
             Ok(()) => true,
@@ -591,11 +473,21 @@ impl LocalPasteApp {
 }
 
 impl eframe::App for LocalPasteApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        Self::stage_native_paste_shortcuts(input);
+        self.stage_discovery_input(ctx, input);
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.save_gui_storage(storage);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.current_pass_index() > 0 {
+            // Repeated sizing/discard passes redraw the same native slice;
+            // its keyboard actions and edits have already been applied.
+            ctx.input_mut(|input| input.events.clear());
+        }
         self.track_frame_metrics();
         self.virtual_paste_applied_this_frame = false;
         self.nav_probe_begin_frame(ctx);
@@ -611,6 +503,7 @@ impl eframe::App for LocalPasteApp {
         }
         self.prune_expired_toasts(now);
 
+        self.reconcile_native_clipboard(ctx);
         loop {
             match self.backend.evt_rx.try_recv() {
                 Ok(event) => self.apply_event(event),
@@ -622,16 +515,16 @@ impl eframe::App for LocalPasteApp {
             }
         }
         self.poll_export_result();
+        self.replay_pending_picker_input(ctx);
+        self.maybe_apply_pending_editor_paste(ctx);
 
-        if let Some(text) = self.clipboard_outgoing.take() {
-            ctx.send_cmd(egui::OutputCommand::CopyText(text));
-        }
+        self.flush_clipboard_output(ctx);
+        // Exclude older queued writes; native TextEdit and selectable labels copy
+        // during/after rendering. A later request in this pass remains the newest intent.
+        self.observe_native_clipboard(ctx);
 
-        while let Ok(result) = self.highlight_worker.rx.try_recv() {
-            match result {
-                HighlightWorkerResult::Render(render) => self.queue_highlight_render(render),
-                HighlightWorkerResult::Patch(patch) => self.queue_highlight_patch(patch),
-            }
+        while let Ok(reply) = self.highlight_worker.rx.try_recv() {
+            self.queue_highlight_reply(reply);
         }
 
         let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
@@ -643,77 +536,168 @@ impl eframe::App for LocalPasteApp {
         let editor_shortcuts_blocked_pre = self.editor_shortcuts_blocked();
         let mutation_shortcut_blocked = self.mutation_shortcut_block_reason();
         let wants_keyboard_input_before = ctx.wants_keyboard_input();
-        let explicit_paste_as_new_shortcut_pressed =
-            self.maybe_arm_paste_as_new_shortcut_intent(ctx);
+        // Respect clipboard event order before a newer explicit shortcut can
+        // re-arm intent and replace the canceled request's identity.
+        self.discard_canceled_clipboard_reply(ctx);
         let mut copy_virtual_unfocused = false;
         let mut request_virtual_paste = false;
-        let mut request_paste_as_new = explicit_paste_as_new_shortcut_pressed;
         let mut plain_paste_shortcut_pressed = false;
         let mut delete_selected_shortcut_pressed = false;
         let mut pasted_text: Option<String> = None;
         let mut sidebar_direction: i32 = 0;
+        // Actions may change egui focus, so dispatch after releasing the input lock.
+        let runtime_actions =
+            ctx.input(|input| pressed_runtime_shortcuts(input).collect::<Vec<_>>());
+        // Staging isolates a dismissal from input on either side, so its
+        // original owner finishes before focus returns for the next slice.
+        let runtime_events = ctx.input(|input| input.events.clone());
+        for event in &runtime_events {
+            if self.dismiss_discovery_on_escape(ctx, event) {
+                break;
+            }
+        }
+        let mut request_paste_as_new = false;
+        let mut paste_into_editor_pressed = false;
+        // TextEdit treats Ctrl+K (including Shift) as delete-to-paragraph-end.
+        // Consume the shifted chord first: egui's plain pattern accepts extra Shift.
+        ctx.input_mut(|input| {
+            input.consume_key(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::K,
+            );
+            input.consume_key(egui::Modifiers::COMMAND, egui::Key::K);
+        });
+        for action in runtime_actions {
+            if self.picker_delete_transition_active()
+                && matches!(
+                    action,
+                    RuntimeShortcutAction::ToggleCommandPalette
+                        | RuntimeShortcutAction::ToggleCommandPaletteLegacy
+                        | RuntimeShortcutAction::TogglePastePicker
+                        | RuntimeShortcutAction::ToggleShortcutHelp
+                )
+            {
+                self.set_picker_delete_transition_blocked_status();
+                continue;
+            }
+            if self.keyboard_overlay_open()
+                && !self.version_overlay_open()
+                && matches!(
+                    action,
+                    RuntimeShortcutAction::NewPaste
+                        | RuntimeShortcutAction::PasteIntoEditor
+                        | RuntimeShortcutAction::Save
+                        | RuntimeShortcutAction::DeleteSelected
+                        | RuntimeShortcutAction::ToggleProperties
+                        | RuntimeShortcutAction::FocusSearch
+                )
+            {
+                continue;
+            }
+            if self.version_overlay_open()
+                && matches!(
+                    action,
+                    RuntimeShortcutAction::ToggleProperties | RuntimeShortcutAction::FocusSearch
+                )
+            {
+                continue;
+            }
+            match action {
+                RuntimeShortcutAction::NewPaste => {
+                    if mutation_shortcut_blocked.is_some() {
+                        self.set_mutation_shortcut_blocked_status();
+                    } else {
+                        self.create_new_paste();
+                    }
+                }
+                RuntimeShortcutAction::Save => {
+                    self.save_now();
+                    self.save_metadata_now();
+                }
+                RuntimeShortcutAction::DeleteSelected => {
+                    delete_selected_shortcut_pressed = true;
+                }
+                RuntimeShortcutAction::FocusSearch => {
+                    self.search_focus_requested = true;
+                }
+                RuntimeShortcutAction::ToggleCommandPalette
+                | RuntimeShortcutAction::ToggleCommandPaletteLegacy => {
+                    if self.command_palette_open {
+                        self.command_palette_open = false;
+                        self.restore_discovery_focus(ctx);
+                    } else if !self.version_overlay_open() {
+                        self.remember_discovery_focus(ctx);
+                        self.command_palette_open = true;
+                        self.command_palette_query.clear();
+                        self.command_palette_selected = 0;
+                        self.close_paste_picker();
+                        self.shortcut_help_open = false;
+                        self.focus_discovery_input(ctx);
+                    }
+                }
+                RuntimeShortcutAction::TogglePastePicker => {
+                    if self.paste_picker_open {
+                        self.close_paste_picker();
+                        self.restore_discovery_focus(ctx);
+                    } else if !self.version_overlay_open() {
+                        self.remember_discovery_focus(ctx);
+                        self.open_paste_picker();
+                        self.focus_discovery_input(ctx);
+                    }
+                }
+                RuntimeShortcutAction::ToggleProperties => {
+                    self.properties_drawer_open = !self.properties_drawer_open;
+                }
+                RuntimeShortcutAction::PlainPaste => {
+                    let other_input_owns_paste =
+                        wants_keyboard_input_before && !virtual_editor_focus_active_pre;
+                    if mutation_shortcut_blocked.is_some() && !other_input_owns_paste {
+                        self.set_mutation_shortcut_blocked_status();
+                    } else {
+                        // A newer plain paste intent should take precedence over any older
+                        // explicit paste-as-new intent still waiting on clipboard payload.
+                        self.cancel_paste_as_new_intent();
+                        plain_paste_shortcut_pressed = true;
+                    }
+                }
+                RuntimeShortcutAction::PasteIntoEditor => {
+                    // A focused editor receives the native paste itself. Elsewhere
+                    // the payload is redirected into the open paste below. Read
+                    // ownership live: a same-frame dismissal may return focus.
+                    let editor_focused = self.focus_editor_next
+                        || self.virtual_editor_state.has_focus
+                        || ctx.memory(|memory| memory.has_focus(focus_id));
+                    if self.editor_shortcuts_blocked() {
+                        if mutation_shortcut_blocked.is_some() {
+                            self.set_mutation_shortcut_blocked_status();
+                        }
+                    } else if !editor_focused {
+                        self.cancel_paste_as_new_intent();
+                        paste_into_editor_pressed = true;
+                    }
+                }
+                RuntimeShortcutAction::ToggleShortcutHelp => {
+                    if self.shortcut_help_open {
+                        self.close_shortcut_help(ctx);
+                    } else {
+                        self.open_shortcut_help(ctx);
+                    }
+                }
+            }
+        }
+        self.discard_canceled_clipboard_reply(ctx);
         ctx.input(|input| {
             if !input.events.is_empty() || input.pointer.any_down() {
                 self.last_interaction_at = Some(Instant::now());
             }
-            for action in pressed_runtime_shortcuts(input) {
-                match action {
-                    RuntimeShortcutAction::NewPaste => {
-                        if mutation_shortcut_blocked.is_some() {
-                            self.set_mutation_shortcut_blocked_status();
-                        } else {
-                            self.create_new_paste();
-                        }
-                    }
-                    RuntimeShortcutAction::Save => {
-                        self.save_now();
-                        self.save_metadata_now();
-                    }
-                    RuntimeShortcutAction::DeleteSelected => {
-                        delete_selected_shortcut_pressed = true;
-                    }
-                    RuntimeShortcutAction::FocusSearch => {
-                        self.search_focus_requested = true;
-                    }
-                    RuntimeShortcutAction::ToggleCommandPalette
-                    | RuntimeShortcutAction::ToggleCommandPaletteLegacy => {
-                        self.command_palette_open = !self.command_palette_open;
-                        self.command_palette_query.clear();
-                        self.command_palette_selected = 0;
-                        self.palette_search_results.clear();
-                        self.palette_search_last_sent.clear();
-                        self.palette_search_last_input_at = None;
-                    }
-                    RuntimeShortcutAction::ToggleProperties => {
-                        self.properties_drawer_open = !self.properties_drawer_open;
-                    }
-                    RuntimeShortcutAction::PlainPaste => {
-                        if mutation_shortcut_blocked.is_some() {
-                            self.set_mutation_shortcut_blocked_status();
-                        } else {
-                            // A newer plain paste intent should take precedence over any older
-                            // explicit paste-as-new intent still waiting on clipboard payload.
-                            self.cancel_paste_as_new_intent();
-                            plain_paste_shortcut_pressed = true;
-                        }
-                    }
-                    RuntimeShortcutAction::PasteAsNew => {
-                        if mutation_shortcut_blocked.is_some() {
-                            self.set_mutation_shortcut_blocked_status();
-                        } else {
-                            request_paste_as_new = true;
-                        }
-                    }
-                    RuntimeShortcutAction::ToggleShortcutHelp => {
-                        self.shortcut_help_open = !self.shortcut_help_open;
-                    }
-                }
-            }
             // These fallback shortcuts bypass the primary event-to-command path, so they
             // must honor the same modal/reset fence as the main virtual-editor extractor.
-            if input.modifiers.command
-                && input.key_pressed(egui::Key::C)
-                && !editor_shortcuts_blocked_pre
+            if input.events.iter().any(|event| {
+                matches!(event, egui::Event::Copy)
+                    || matches!(event, egui::Event::Key {
+                key: egui::Key::C, pressed: true, modifiers, ..
+            } if modifiers.command)
+            }) && !editor_shortcuts_blocked_pre
                 && !virtual_editor_focus_active_pre
                 && has_virtual_selection_pre
                 && !wants_keyboard_input_before
@@ -725,25 +709,56 @@ impl eframe::App for LocalPasteApp {
                     Self::merge_pasted_text(&mut pasted_text, text.as_str());
                 }
             }
-            if should_route_sidebar_arrows(
-                wants_keyboard_input_before,
-                input.modifiers,
-                !self.pastes.is_empty(),
-                virtual_editor_focus_active_pre,
-                self.command_palette_open,
-                version_overlay_open,
-                self.shortcut_help_open,
-            ) {
-                if input.key_pressed(egui::Key::ArrowDown) {
-                    sidebar_direction = 1;
-                } else if input.key_pressed(egui::Key::ArrowUp) {
-                    sidebar_direction = -1;
+            for event in &input.events {
+                if let egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } = event
+                {
+                    if should_route_sidebar_arrows(
+                        wants_keyboard_input_before,
+                        *modifiers,
+                        !self.pastes.is_empty(),
+                        virtual_editor_focus_active_pre,
+                        self.command_palette_open || self.paste_picker_open,
+                        version_overlay_open,
+                        self.shortcut_help_open,
+                    ) {
+                        match key {
+                            egui::Key::ArrowDown => sidebar_direction = 1,
+                            egui::Key::ArrowUp => sidebar_direction = -1,
+                            _ => {}
+                        }
+                    }
                 }
             }
         });
+        if paste_into_editor_pressed {
+            if let Some(text) = pasted_text.take() {
+                // The payload belongs to the open paste, not a focused field.
+                ctx.input_mut(|input| {
+                    input
+                        .events
+                        .retain(|event| !matches!(event, egui::Event::Paste(_)));
+                });
+                self.paste_into_editor(ctx, text);
+            }
+        }
+        if self.paste_as_new_pending_frames > 0 {
+            // The explicit payload was captured above. It belongs to the new
+            // paste, so metadata/search TextEdits must not also insert it.
+            ctx.input_mut(|input| {
+                input
+                    .events
+                    .retain(|event| !matches!(event, egui::Event::Paste(_)));
+            });
+        }
         if copy_virtual_unfocused && !ctx.wants_keyboard_input() {
             if let Some(selection) = self.virtual_selected_text() {
-                ctx.send_cmd(egui::OutputCommand::CopyText(selection));
+                self.queue_clipboard_text(selection);
+                self.flush_clipboard_output(ctx);
             }
         }
 
@@ -756,6 +771,7 @@ impl eframe::App for LocalPasteApp {
         self.render_properties_drawer(ctx);
         self.render_editor_panel(ctx);
         self.render_command_palette(ctx);
+        self.render_paste_picker(ctx);
         self.render_shortcut_help(ctx);
 
         let virtual_editor_focus_post =
@@ -807,6 +823,9 @@ impl eframe::App for LocalPasteApp {
         );
         let _ = paste_as_new_consumed;
 
+        // Finish edits received before native deactivation in their current owner.
+        self.blur_deactivated_editor(ctx);
+
         self.render_status_bar(ctx);
         self.render_toasts(ctx);
         if !self.window_shown_once {
@@ -827,6 +846,9 @@ impl eframe::App for LocalPasteApp {
         } else {
             EXTERNAL_REFRESH_INTERVAL
         };
+        if let Some(until) = self.search_repaint_after(Instant::now()) {
+            repaint_after = repaint_after.min(until);
+        }
         if let Some(status) = &self.status {
             let until = status.expires_at.saturating_duration_since(Instant::now());
             repaint_after = repaint_after.min(until);
@@ -846,6 +868,9 @@ impl eframe::App for LocalPasteApp {
             repaint_after = repaint_after.min(until);
         }
         ctx.request_repaint_after(repaint_after);
+        if !self.deferred_discovery_events.is_empty() {
+            ctx.request_repaint();
+        }
         self.nav_probe_write_frame(ctx);
     }
 

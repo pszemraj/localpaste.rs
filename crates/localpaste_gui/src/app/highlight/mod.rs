@@ -1,5 +1,6 @@
 //! Syntax highlighting caches and worker support for the native GUI editor.
 
+mod markdown;
 mod reuse;
 mod syntax;
 #[cfg(test)]
@@ -277,13 +278,13 @@ impl EditorLayoutCache {
             ..Default::default()
         };
         let mut line_start = 0usize;
-        let mut prev_line_reused = false;
+        let mut prev_reused_index = None;
 
         for (idx, line) in lines.iter().enumerate() {
             let line_hash = new_hashes[idx];
             if line_start_state_matches(
                 idx,
-                prev_line_reused,
+                prev_reused_index,
                 &old_lines,
                 &parse_state,
                 &highlight_state,
@@ -292,13 +293,13 @@ impl EditorLayoutCache {
             ) && line_hash_matches(&old_lines, idx, line_hash, |line: &HighlightLineCache| {
                 line.hash
             }) {
-                let old_line = old_lines[idx].take().expect("checked Some");
+                let (old_idx, old_line) = old_lines[idx].take().expect("checked Some");
                 append_sections(&mut job, &old_line.sections, line_start);
                 parse_state = old_line.end_state.parse.clone();
                 highlight_state = old_line.end_state.highlight.clone();
                 new_lines.push(old_line);
                 line_start += line.len();
-                prev_line_reused = true;
+                prev_reused_index = Some(old_idx);
                 continue;
             }
 
@@ -353,7 +354,7 @@ impl EditorLayoutCache {
             }
 
             line_start += line.len();
-            prev_line_reused = false;
+            prev_reused_index = None;
         }
 
         self.highlight_cache.lines = new_lines;
@@ -520,10 +521,7 @@ pub(super) struct SyntectSettings {
 
 impl Default for SyntectSettings {
     fn default() -> Self {
-        Self {
-            ps: SyntaxSet::load_defaults_newlines(),
-            ts: ThemeSet::load_defaults(),
-        }
+        markdown::settings()
     }
 }
 
@@ -818,6 +816,12 @@ pub(super) enum HighlightWorkerResult {
     Patch(HighlightPatch),
 }
 
+/// Worker output owned by one lifetime of the active editor buffer.
+pub(super) struct HighlightWorkerReply {
+    pub(super) buffer_epoch: u64,
+    pub(super) result: HighlightWorkerResult,
+}
+
 impl HighlightRender {
     /// Checks whether render context matches paste/language/theme identifiers.
     ///
@@ -867,6 +871,7 @@ impl HighlightRender {
 /// Highlight request payload sent to the worker thread.
 #[derive(Clone)]
 pub(super) struct HighlightRequest {
+    pub(super) buffer_epoch: u64,
     pub(super) paste_id: String,
     pub(super) revision: u64,
     pub(super) text: HighlightRequestText,
@@ -893,22 +898,13 @@ impl HighlightRequestText {
             Self::Rope(rope) => rope.len_bytes(),
         }
     }
-
-    /// Converts request text payload into an owned [`String`].
-    ///
-    /// # Returns
-    /// Owned string representation of this request payload.
-    pub(super) fn into_string(self) -> String {
-        match self {
-            Self::Rope(rope) => rope.to_string(),
-        }
-    }
 }
 
 /// Lightweight edit metadata captured from virtual-editor operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct VirtualEditHint {
-    pub(super) start_line: usize,
+    /// Byte offset before the edit, mapped onto the editor's Rope line coordinates.
+    pub(super) start_byte: usize,
     pub(super) touched_lines: usize,
     pub(super) inserted_chars: usize,
     pub(super) deleted_chars: usize,

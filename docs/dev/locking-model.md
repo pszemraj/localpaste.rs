@@ -47,6 +47,9 @@ Operations:
    - Reserves one or more paste IDs for a mutation critical section.
    - Fails if any target paste is currently held by owners.
    - While the guard is alive, new acquisitions on those IDs are rejected.
+4. `begin_mutation_ignoring_owner(paste_id, owner_id)`
+   - Allows the GUI's own edit hold during a local mutation.
+   - Still rejects other owners and in-flight mutations.
 
 Poison handling:
 
@@ -58,6 +61,8 @@ Single-paste mutation paths:
 
 - API update/delete acquire `begin_mutation` before storage mutation.
   - [`../../crates/localpaste_server/src/handlers/paste.rs`](../../crates/localpaste_server/src/handlers/paste.rs)
+- GUI worker mutations use the owner-aware guard while retaining the active edit hold.
+- Folder-scoped mutations acquire the folder transaction lock before reserving paste IDs. Shared guard helpers in [`locks.rs`](../../crates/localpaste_server/src/locks.rs) preserve this order across API and GUI paths.
 
 Folder delete path:
 
@@ -73,14 +78,14 @@ Each GUI app instance uses a stable lock owner ID for its session lifetime:
 
 - Acquire on selection/open.
 - Release on deselection/drop.
+- Selection reads carry the current editor epoch. Loaded, missing, and failed replies from an earlier selection are ignored, including when the same paste is revisited after its lock was released.
 - Primary paths:
   - [`../../crates/localpaste_gui/src/app/mod.rs`](../../crates/localpaste_gui/src/app/mod.rs)
   - [`../../crates/localpaste_gui/src/app/state_ops.rs`](../../crates/localpaste_gui/src/app/state_ops.rs)
 
 ## Error Surface Contract
 
-Lock conflicts map to `423 Locked` on API paths.
-Unexpected lock-manager failures map to storage/internal errors.
+Lock conflicts map to `423 Locked` on API paths, while unexpected lock-manager failures map to storage/internal errors.
 
 Shared mapping helpers:
 

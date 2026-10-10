@@ -1,6 +1,6 @@
 //! Shared text and host normalization helpers.
 
-use std::net::IpAddr;
+use std::{net::IpAddr, ops::Range};
 
 /// Maximum byte sample used by local text classification/detection paths.
 pub(crate) const TEXT_SAMPLE_MAX_BYTES: usize = 64 * 1024;
@@ -42,6 +42,31 @@ pub fn is_loopback_host(host: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Find the first ASCII case-insensitive match as a source-text byte range.
+///
+/// # Arguments
+/// - `content`: Original text to search.
+/// - `query_lower`: Nonempty, lowercase ASCII query.
+///
+/// # Returns
+/// The first matching byte range, or `None` when no match exists.
+///
+/// # Panics
+/// Panics when `query_lower` is empty; callers handle empty-query policy.
+pub fn find_ascii_case_insensitive_range(content: &str, query_lower: &str) -> Option<Range<usize>> {
+    let needle = query_lower.as_bytes();
+    content
+        .as_bytes()
+        .windows(needle.len())
+        .position(|window| {
+            window
+                .iter()
+                .map(u8::to_ascii_lowercase)
+                .eq(needle.iter().copied())
+        })
+        .map(|start| start..start + needle.len())
+}
+
 /// Return a byte-limited prefix without splitting a UTF-8 codepoint.
 ///
 /// # Arguments
@@ -64,9 +89,58 @@ pub(crate) fn utf8_prefix_by_bytes(content: &str, max_bytes: usize) -> &str {
     &content[..end]
 }
 
+/// Sample complete LF/CRLF rows without splitting a final row at the byte cap.
+///
+/// # Arguments
+/// - `content`: Text to sample.
+/// - `max_bytes`: Byte cap for the UTF-8-safe prefix.
+///
+/// # Returns
+/// Complete sampled rows, or the bounded prefix when no complete row fits.
+///
+/// # Panics
+/// Slicing requires an in-bounds UTF-8 boundary; [`utf8_prefix_by_bytes`]
+/// guarantees that invariant for the sampled prefix length.
+pub(crate) fn complete_line_prefix_by_bytes(content: &str, max_bytes: usize) -> &str {
+    let prefix = utf8_prefix_by_bytes(content, max_bytes);
+    if prefix.len() == content.len()
+        || prefix.ends_with('\n')
+        || content[prefix.len()..].starts_with('\n')
+        || content[prefix.len()..].starts_with("\r\n")
+    {
+        return prefix;
+    }
+    prefix.rfind('\n').map_or(prefix, |end| &prefix[..=end])
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{is_loopback_host, normalize_optional_nonempty, utf8_prefix_by_bytes};
+    use super::{
+        complete_line_prefix_by_bytes, is_loopback_host, normalize_optional_nonempty,
+        utf8_prefix_by_bytes,
+    };
+
+    #[test]
+    fn complete_line_samples_preserve_boundaries_and_single_line_prefixes() {
+        assert_eq!(complete_line_prefix_by_bytes("one\ntwo\nthree", 6), "one\n");
+        assert_eq!(
+            complete_line_prefix_by_bytes("one\ntwo\nthree", 7),
+            "one\ntwo"
+        );
+        assert_eq!(
+            complete_line_prefix_by_bytes("one\r\ntwo\r\nthree", 8),
+            "one\r\ntwo"
+        );
+        assert_eq!(
+            complete_line_prefix_by_bytes("one\r\ntwo\r\nthree", 9),
+            "one\r\ntwo\r"
+        );
+        assert_eq!(
+            complete_line_prefix_by_bytes("ordinary single line prose", 15),
+            "ordinary single"
+        );
+        assert_eq!(complete_line_prefix_by_bytes("ééé", 3), "é");
+    }
 
     #[test]
     fn normalize_optional_nonempty_trims_and_drops_blank() {

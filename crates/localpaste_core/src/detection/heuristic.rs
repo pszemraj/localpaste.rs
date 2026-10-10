@@ -2,7 +2,7 @@
 
 use super::{looks_like_flat_config_yaml, looks_like_yaml};
 use crate::models::paste::is_markdown_content;
-use crate::text::{utf8_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
+use crate::text::{complete_line_prefix_by_bytes, utf8_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 
 /// Best-effort language detection based on simple heuristics.
 ///
@@ -15,6 +15,12 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     let trimmed = content.trim();
     if trimmed.is_empty() {
         return None;
+    }
+    if super::looks_like_python_traceback(trimmed) {
+        return Some("log".to_string());
+    }
+    if looks_like_shell_command_sequence(trimmed) {
+        return Some("shell".to_string());
     }
     let sample = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
     let lower = sample.to_ascii_lowercase();
@@ -30,9 +36,16 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     if matches!(shebang.as_deref(), Some("node" | "nodejs" | "deno" | "bun")) {
         return Some("javascript".to_string());
     }
+    if super::python::compound_body(trimmed) && looks_like_python_source(trimmed) {
+        return Some("python".to_string());
+    }
 
-    // JSON: structural check without full parsing (avoids expensive serde_json).
+    // JSON Lines needs independently valid records; ordinary JSON keeps the
+    // cheap structural fallback for large or sampled payloads.
     if sample.starts_with('{') || sample.starts_with('[') {
+        if looks_like_json_lines(trimmed) {
+            return Some("jsonl".to_string());
+        }
         // When sampling truncates very large JSON payloads, the prefix may not end
         // with the final closing delimiter. Keep large-document detection stable.
         let sample_truncated = sample.len() < trimmed.len();
@@ -130,7 +143,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("toml".to_string());
     }
 
-    if looks_like_python_from_import(sample) {
+    if looks_like_python_from_import(sample) && looks_like_python_source(sample) {
         return Some("python".to_string());
     }
 
@@ -143,6 +156,9 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     let yaml_like = looks_like_yaml(sample) || looks_like_flat_config_yaml(sample);
 
     if is_markdown_content(sample) && !yaml_like {
+        if let Some(language) = crate::semantic::markdown_technical_language(trimmed) {
+            return Some(language.to_string());
+        }
         return Some("markdown".to_string());
     }
 
@@ -167,14 +183,14 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     if lower.contains('{') && lower.contains('}') && lower.contains(':') && lower.contains(';') {
         let css_tokens = [
             "color:",
-            "background",
-            "margin",
-            "padding",
+            "background:",
+            "margin:",
+            "padding:",
             "font-",
-            "display",
-            "position",
-            "flex",
-            "grid",
+            "display:",
+            "position:",
+            "flex:",
+            "grid:",
         ];
         if css_tokens.iter().any(|token| lower.contains(token)) {
             return Some("css".to_string());
@@ -228,7 +244,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
             "rust",
             &[
                 "fn ", "impl", "crate::", "let ", "mut ", "pub ", "struct ", "enum", "match ",
-                "trait", "println!",
+                "trait", "println!", "panic!",
             ],
             2,
         ),
@@ -396,6 +412,10 @@ pub(crate) fn detect(content: &str) -> Option<String> {
 
     let mut best_match: Option<(&str, usize)> = None;
     for (lang, keywords, threshold) in scored_languages {
+        // `let` and `function` also co-occur in ordinary English sentences.
+        if *lang == "javascript" && crate::semantic::javascript_keyword_prose(sample) {
+            continue;
+        }
         let hits = keyword_hits(keywords);
         if hits >= *threshold {
             match best_match {
@@ -409,7 +429,171 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some(lang.to_string());
     }
 
+    if looks_like_python_source(sample) {
+        return Some("python".to_string());
+    }
+
     None
+}
+
+/// Recognize a compact sequence of shell setup and executable command lines.
+///
+/// # Returns
+/// `true` when every non-comment line is a recognized command and at least two
+/// command lines are present.
+pub(super) fn looks_like_shell_command_sequence(content: &str) -> bool {
+    use crate::semantic::commands::{regular_command_is_valid, COMMANDS};
+    const SETUP_COMMANDS: &[&str] = &["cd", "export", "set", "source"];
+
+    let sample = complete_line_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
+    if looks_like_shell_for_loop(sample) {
+        return true;
+    }
+    let has_leading_comment = sample.trim_start().starts_with('#');
+    let has_leading_prompt = sample.trim_start().starts_with(['$', '%', '>']);
+    let mut commands = 0usize;
+    let mut next_command = false;
+    let mut explicit_single_command = false;
+    for line in sample
+        .lines()
+        .rev()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if line.starts_with('#') {
+            continue;
+        }
+        let line = line.trim_matches('`');
+        let explicit_prompt = line.starts_with("$ ") || line.starts_with("% ");
+        let quoted = line.starts_with("> ");
+        let line = super::strip_shell_prompt(line);
+        let mut parts = line.split_whitespace();
+        let Some(command) = parts.next() else {
+            return false;
+        };
+        if command != command.to_ascii_lowercase() {
+            return false;
+        }
+        let arguments: Vec<&str> = parts.collect();
+        let has_shell_syntax = super::command_has_shell_syntax(line, &arguments);
+        let explicit_arguments = super::command_has_explicit_arguments(command, line, &arguments);
+        let comment_evidence = super::command_has_comment_evidence(command, line, &arguments);
+        if quoted && !explicit_arguments {
+            return false;
+        }
+        let command_line = if COMMANDS.contains(&command) {
+            regular_command_is_valid(command, &arguments, has_shell_syntax)
+        } else if SETUP_COMMANDS.contains(&command) {
+            super::setup_command_is_valid(command, &arguments, next_command)
+        } else {
+            false
+        };
+        if !command_line {
+            return false;
+        }
+        commands = commands.saturating_add(1);
+        explicit_single_command = explicit_prompt || explicit_arguments || comment_evidence;
+        next_command = command_line;
+    }
+    commands >= 2
+        || (commands == 1 && (has_leading_comment || has_leading_prompt) && explicit_single_command)
+}
+
+fn looks_like_shell_for_loop(sample: &str) -> bool {
+    let mut lines = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'));
+    let Some(first) = lines.next().and_then(|line| line.strip_prefix("for ")) else {
+        return false;
+    };
+    let Some((name, values)) = first.split_once(" in ") else {
+        return false;
+    };
+    let name = name.trim();
+    if !name
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        || values.trim().is_empty()
+    {
+        return false;
+    }
+    let mut has_do = values.contains("; do");
+    let mut last = first;
+    for line in lines {
+        has_do |= line == "do" || line.starts_with("do ");
+        last = line;
+    }
+    has_do && (last == "done" || last.ends_with("; done"))
+}
+
+/// Accept JSON Lines only with at least two valid object/array records in the
+/// bounded sample; a single JSON value cannot establish a line-record format.
+///
+/// # Returns
+/// Whether the sample consists of multiple independently valid JSON records.
+pub(super) fn looks_like_json_lines(content: &str) -> bool {
+    let trimmed = content.trim();
+    let prefix = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
+    // Validate every record that begins inside the bounded prefix. When the
+    // boundary cuts that final record, finish it only if the record itself also
+    // fits the byte cap. This keeps work bounded per record while allowing two
+    // independently valid records that are each larger than half the sample.
+    let sample = complete_crossing_jsonl_record(trimmed, prefix);
+    let mut record_count = 0usize;
+    for line in sample.lines().filter(|line| !line.trim().is_empty()) {
+        if !serde_json::from_str::<serde_json::Value>(line)
+            .is_ok_and(|value| value.is_object() || value.is_array())
+        {
+            return false;
+        }
+        record_count += 1;
+    }
+    record_count >= 2
+}
+
+fn complete_crossing_jsonl_record<'a>(content: &'a str, prefix: &'a str) -> &'a str {
+    if prefix.len() == content.len()
+        || prefix.ends_with(['\n', '\r'])
+        || content
+            .get(prefix.len()..)
+            .unwrap_or_default()
+            .starts_with(['\n', '\r'])
+    {
+        return prefix;
+    }
+
+    let record_start = prefix.rfind('\n').map_or(0, |idx| idx.saturating_add(1));
+    let remainder = content.get(prefix.len()..).unwrap_or_default();
+    let prefix_record_bytes = prefix.len().saturating_sub(record_start);
+    let remaining_budget = TEXT_SAMPLE_MAX_BYTES.saturating_sub(prefix_record_bytes);
+    let bounded_remainder = utf8_prefix_by_bytes(remainder, remaining_budget.saturating_add(1));
+    if let Some(newline) = bounded_remainder.find('\n') {
+        return &content[..prefix.len().saturating_add(newline)];
+    }
+    if remainder.len() <= remaining_budget {
+        content
+    } else {
+        &prefix[..record_start]
+    }
+}
+
+/// Resolve a recognized source interpreter before ambiguous body structure.
+///
+/// # Returns
+/// A canonical language for a leading supported shebang, otherwise `None`.
+pub(super) fn shebang_language(sample: &str) -> Option<&'static str> {
+    match shebang_interpreter(sample.trim())?.as_str() {
+        "python" | "python2" | "python3" | "pypy" | "pypy3" => Some("python"),
+        "node" | "nodejs" | "deno" | "bun" => Some("javascript"),
+        "perl" => Some("perl"),
+        "sh" | "bash" | "zsh" | "ksh" | "dash" | "fish" | "ash" => Some("shell"),
+        _ => None,
+    }
 }
 
 fn shebang_interpreter(sample: &str) -> Option<String> {
@@ -443,13 +627,187 @@ fn path_basename(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-fn looks_like_python_from_import(sample: &str) -> bool {
+/// Keep Python source anchors unless surrounding Markdown or prose supplies stronger evidence.
+///
+/// # Returns
+/// Whether a shebang, imports, definitions, or compound statements anchor source.
+pub(crate) fn looks_like_python_source(sample: &str) -> bool {
+    matches!(
+        python_body_evidence(sample),
+        PythonBodyEvidence::AnchoredSource
+    )
+}
+
+/// Recognize surrounding documents without requiring an import or definition.
+///
+/// # Returns
+/// Whether positive prose or Markdown evidence wraps the apparent Python body.
+#[cfg(any(feature = "magika", test))]
+pub(super) fn has_python_document_wrapper(sample: &str) -> bool {
+    matches!(python_body_evidence(sample), PythonBodyEvidence::Document)
+}
+
+enum PythonBodyEvidence {
+    AnchoredSource,
+    Unanchored,
+    Document,
+}
+
+fn python_body_evidence(sample: &str) -> PythonBodyEvidence {
+    let sample = utf8_prefix_by_bytes(sample, TEXT_SAMPLE_MAX_BYTES);
+    let mut anchored =
+        shebang_language(sample) == Some("python") || super::python::compound_body(sample);
+    let mut string_block: Option<&str> = None;
+    for raw_line in sample.lines().take(512) {
+        let mut line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(quote) = string_block {
+            if line.matches(quote).count() % 2 == 1 {
+                string_block = None;
+            }
+            continue;
+        }
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some(quote) = ["\"\"\"", "'''"]
+            .into_iter()
+            .find(|quote| line.contains(*quote))
+        {
+            if line.matches(quote).count() % 2 == 1 {
+                string_block = Some(quote);
+            }
+            continue;
+        }
+        while let Some((statement, tail)) = line.split_once(';') {
+            if !looks_like_python_import(statement) && !looks_like_python_from_import(statement) {
+                break;
+            }
+            anchored = true;
+            line = tail.trim_start();
+        }
+        if looks_like_python_import(line)
+            || looks_like_python_from_import(line)
+            || (["def ", "async def ", "class "]
+                .iter()
+                .any(|prefix| line.starts_with(*prefix))
+                && line.contains(['(', ':']))
+        {
+            anchored = true;
+            continue;
+        }
+        if ["```", "~~~", "> "]
+            .iter()
+            .any(|prefix| line.starts_with(*prefix))
+            || (!raw_line.starts_with(char::is_whitespace)
+                && (["- ", "* ", "+ "]
+                    .iter()
+                    .any(|prefix| line.starts_with(*prefix))
+                    || crate::models::paste::is_markdown_ordered_list_line(line)))
+            || (line.starts_with('[') && (line.contains("](") || line.contains("]:")))
+        {
+            return PythonBodyEvidence::Document;
+        }
+        let words: Vec<_> = line.split_whitespace().collect();
+        let plain_words = words.iter().all(|word| {
+            let word = word.trim_matches(['.', ',', '!', '?', ';']);
+            word.chars().any(char::is_alphabetic)
+                && word
+                    .chars()
+                    .all(|ch| ch.is_alphabetic() || matches!(ch, '-' | '’'))
+        });
+        let prose_lead = words.len() >= 3
+            && words
+                .iter()
+                .take(2)
+                .all(|word| word.chars().all(char::is_alphabetic));
+        let statement_keyword = words.first().is_some_and(|word| {
+            matches!(
+                *word,
+                "return"
+                    | "raise"
+                    | "yield"
+                    | "await"
+                    | "assert"
+                    | "del"
+                    | "global"
+                    | "nonlocal"
+                    | "if"
+                    | "elif"
+                    | "for"
+                    | "while"
+                    | "with"
+                    | "except"
+                    | "match"
+                    | "case"
+                    | "async"
+                    | "pass"
+                    | "break"
+                    | "continue"
+            )
+        });
+        let expression_operator = words
+            .iter()
+            .any(|word| matches!(*word, "is" | "in" | "not" | "and" | "or" | "if" | "else"));
+        let sentence_start = words.first().is_some_and(|word| {
+            [
+                "this", "that", "the", "these", "those", "here", "we", "you", "our", "please",
+            ]
+            .iter()
+            .any(|start| word.eq_ignore_ascii_case(start))
+        });
+        if (plain_words || prose_lead)
+            && !raw_line.starts_with(char::is_whitespace)
+            && !statement_keyword
+            && words.len() >= 2
+            && (!expression_operator || sentence_start)
+        {
+            return PythonBodyEvidence::Document;
+        }
+    }
+    if anchored {
+        PythonBodyEvidence::AnchoredSource
+    } else {
+        PythonBodyEvidence::Unanchored
+    }
+}
+
+fn looks_like_python_import(sample: &str) -> bool {
     sample.lines().take(512).any(|line| {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             return false;
         }
-        let Some(rest) = trimmed.strip_prefix("from ") else {
+        if let Some(rest) = trimmed.strip_prefix("import ") {
+            let rest = rest.split(['#', ';']).next().unwrap_or_default().trim_end();
+            let rest = rest.strip_suffix('\\').unwrap_or(rest).trim_end();
+            let rest = rest.strip_suffix(',').unwrap_or(rest);
+            return rest.split(',').all(|module| {
+                let mut parts = module.split_whitespace();
+                let module = parts.next().unwrap_or_default();
+                let module_valid = !module.is_empty()
+                    && module
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'));
+                module_valid
+                    && match parts.next() {
+                        None => true,
+                        Some("as") => {
+                            parts.next().is_some_and(is_sql_identifier) && parts.next().is_none()
+                        }
+                        _ => false,
+                    }
+            });
+        }
+        false
+    })
+}
+
+fn looks_like_python_from_import(sample: &str) -> bool {
+    sample.lines().take(512).any(|line| {
+        let Some(rest) = line.trim().strip_prefix("from ") else {
             return false;
         };
         let Some((module, imported)) = rest.split_once(" import ") else {

@@ -1,0 +1,873 @@
+//! Owned Markdown grammar and readable mappings onto existing syntax colors.
+
+use super::SyntectSettings;
+use std::collections::BTreeMap;
+use syntect::highlighting::{Highlighter, StyleModifier, ThemeItem, ThemeSet};
+use syntect::parsing::syntax_definition::Pattern;
+use syntect::parsing::{Scope, SyntaxDefinition, SyntaxSet};
+
+/// Matches whitespace occupying exactly `columns` from a starting tab column.
+///
+/// # Arguments
+/// - `columns`: Number of whitespace columns to consume.
+/// - `start_column`: Column before the whitespace, used to resolve tab stops.
+///
+/// # Returns
+/// A non-capturing regex accepting equivalent spaces and four-column tabs.
+fn indentation_pattern(columns: usize, start_column: usize) -> String {
+    let first_stop = 4 - start_column % 4;
+    if columns < first_stop {
+        return " ".repeat(columns);
+    }
+    let mut pattern = format!(r"(?: {{{first_stop}}}| {{0,{}}}\t)", first_stop - 1);
+    let remaining = columns - first_stop;
+    for _ in 0..remaining / 4 {
+        pattern.push_str(r"(?: {4}| {0,3}\t)");
+    }
+    pattern.push_str(&" ".repeat(remaining % 4));
+    pattern
+}
+
+/// Build the shared syntax/theme sets with the project Markdown grammar.
+///
+/// # Returns
+/// The default grammars plus LocalPaste Markdown and its readable scope mappings.
+///
+/// # Panics
+/// Panics if the checked-in grammar or constant scope selectors are invalid.
+pub(super) fn settings() -> SyntectSettings {
+    // A backreference can retain indentation, but cannot turn a variable-width
+    // ordered marker into spaces. Generate the ten CommonMark marker widths
+    // (one bullet, or 1..9 digits plus punctuation) with the same list context.
+    let mut grammar = include_str!("../../../assets/LocalPaste-Markdown.sublime-syntax").to_owned();
+    grammar.push_str("\n  list-items:\n");
+    let mut list_contexts = String::new();
+    let mut variants = Vec::new();
+    let mut ordinary_items = Vec::new();
+    let mut direct_openings: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    let mut quoted_openings: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    for width in 1..=10 {
+        let marker = if width == 1 {
+            "[-+*]".to_owned()
+        } else {
+            format!("[0-9]{{{}}}[.)]", width - 1)
+        };
+        ordinary_items.push((
+            format!("list-item-{width}"),
+            format!(r"^([ ]*){marker}([ ]{{1,4}})"),
+            format!(r"\1{}\2", " ".repeat(width)),
+            String::new(),
+            true,
+            false,
+        ));
+        for residue in 0..4 {
+            for padding in 1..=4 {
+                direct_openings
+                    .entry(residue + width + padding)
+                    .or_default()
+                    .push(format!(
+                        "{}{marker}{}",
+                        " ".repeat(residue),
+                        " ".repeat(padding)
+                    ));
+            }
+            // A gap of at most four columns has at most one tab. Spaces before
+            // it share the same next stop; trailing spaces determine the indent.
+            let stop = 4 - (residue + width) % 4;
+            for trailing in 0..=4 - stop {
+                direct_openings
+                    .entry(residue + width + stop + trailing)
+                    .or_default()
+                    .push(format!(
+                        r"{}{marker} {{0,{}}}\t{}",
+                        " ".repeat(residue),
+                        stop - 1,
+                        " ".repeat(trailing)
+                    ));
+            }
+            for leading in 0..4 {
+                for separator in 0..=1 {
+                    let quote = format!(
+                        "{}>{}",
+                        " ".repeat(leading),
+                        if separator == 1 { " " } else { "(?! )" }
+                    );
+                    for padding in 1..=4 {
+                        quoted_openings
+                            .entry(residue + width + padding)
+                            .or_default()
+                            .push(format!(
+                                "{quote}{}{marker}{}",
+                                " ".repeat(residue),
+                                " ".repeat(padding)
+                            ));
+                    }
+                    let stop = 4 - (leading + 1 + separator + residue + width) % 4;
+                    for trailing in 0..=4 - stop {
+                        quoted_openings
+                            .entry(residue + width + stop + trailing)
+                            .or_default()
+                            .push(format!(
+                                r"{quote}{}{marker} {{0,{}}}\t{}",
+                                " ".repeat(residue),
+                                stop - 1,
+                                " ".repeat(trailing)
+                            ));
+                    }
+                }
+            }
+        }
+    }
+    // Direct fences share frames by item indentation, rather than duplicating
+    // contexts for every marker, gap, and quote-column combination.
+    for (quoted, openings_by_indent) in [(false, direct_openings), (true, quoted_openings)] {
+        for (indent, openings) in openings_by_indent {
+            let mut prefixes = Vec::new();
+            for extra in 0..4 {
+                if quoted {
+                    for leading in 0..4 {
+                        for separator in 0..=1 {
+                            prefixes.push(format!(
+                                "{}>{}{}",
+                                " ".repeat(leading),
+                                if separator == 1 { " " } else { "(?! )" },
+                                indentation_pattern(indent + extra, leading + 1 + separator)
+                            ));
+                        }
+                    }
+                } else {
+                    prefixes.push(indentation_pattern(indent + extra, 0));
+                }
+            }
+            let prefix = format!("(?:{})", prefixes.join("|"));
+            let item_name = format!(
+                "direct-list-item-{}-{indent}",
+                if quoted { "quote" } else { "root" }
+            );
+            variants.push((
+                item_name.clone(),
+                format!(r"^()()(?:{})", openings.join("|")),
+                prefix.clone(),
+                prefix.clone(),
+                false,
+                quoted,
+            ));
+            if !quoted {
+                variants.push((
+                    format!("{item_name}-nested"),
+                    format!(r"^((?: {{4}})+)(?:{})()", openings.join("|")),
+                    format!(r"\1{prefix}"),
+                    prefix,
+                    false,
+                    false,
+                ));
+            }
+        }
+    }
+    variants.extend(ordinary_items);
+    for (item_name, opening, prefix, continuation_prefix, ordinary_item, quoted) in variants {
+        let blank = if quoted {
+            r"[ ]{0,3}>[ \t]*\r?$"
+        } else {
+            r"[ \t]*\r?$"
+        };
+        if !ordinary_item {
+            for (name, fence, info) in [("backtick", '`', r"[^`\n]*"), ("tilde", '~', r"[^\n]*")] {
+                grammar.push_str(&format!(
+                    r"    - match: '{opening}({fence}{{3,}}){info}$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      push: [{item_name}, {item_name}-{name}]
+"
+                ));
+                list_contexts.push_str(&format!(
+                    r"  {item_name}-{name}:
+    - meta_scope: markup.raw.block.markdown.localpaste
+    - match: '\A(?!{prefix}|{blank})'
+      pop: true
+    - match: '\A{prefix}(?={fence}{{3,}}[ \t]*\r?$)'
+    - match: '\G\3{fence}*[ \t]*\r?$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      pop: true
+"
+                ));
+            }
+        } else {
+            grammar.push_str(&format!(
+                r"    - match: '{opening}(?=\S)'
+      scope: punctuation.definition.list.markdown
+      push: {item_name}
+"
+            ));
+        }
+        // Absolute anchors reject later token offsets without rescanning the
+        // tail when external backreferences bypass syntect's search cache.
+        list_contexts.push_str(&format!(
+            r"  {item_name}:
+    - match: '\A(?!{prefix}|{blank})'
+      pop: true
+"
+        ));
+        for (name, fence, info) in [("backtick", '`', r"[^`\n]*"), ("tilde", '~', r"[^\n]*")] {
+            if ordinary_item {
+                list_contexts.push_str(&format!(
+                    r"    - match: '\A({prefix}) {{0,3}}({fence}{{3,}}){info}$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      push:
+        - meta_scope: markup.raw.block.markdown.localpaste
+        - match: '\A(?!\1|{blank})'
+          pop: true
+        - match: '\A\1 {{0,3}}\2{fence}*[ \t]*\r?$'
+          scope: punctuation.definition.raw.markdown.localpaste
+          pop: true
+"
+                ));
+            } else {
+                let captures = if prefix.starts_with(r"\1") {
+                    r"(\1)()"
+                } else {
+                    r"()()"
+                };
+                list_contexts.push_str(&format!(
+                    r"    - match: '\A{captures}{continuation_prefix}({fence}{{3,}}){info}$'
+      scope: punctuation.definition.raw.markdown.localpaste
+      push: {item_name}-{name}
+"
+                ));
+            }
+        }
+        list_contexts.push_str("    - include: markup\n");
+    }
+    grammar.push_str(&list_contexts);
+    let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
+    let mut syntax =
+        SyntaxDefinition::load_from_str(&grammar, true, None).expect("checked-in Markdown grammar");
+    // Syntect's YAML loader only marks pop patterns for external backreferences.
+    // List fence openers also need the enclosing item's captured indentation.
+    for context in syntax.contexts.values_mut() {
+        for pattern in &mut context.patterns {
+            let Pattern::Match(pattern) = pattern else {
+                continue;
+            };
+            if pattern.regex.regex_str().contains(r"\1") {
+                pattern.has_captures = true;
+                context.uses_backrefs = true;
+            }
+        }
+    }
+    builder.add(syntax);
+    let mut themes = ThemeSet::load_defaults();
+    for theme in themes.themes.values_mut() {
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").expect("string scope")])
+            .foreground;
+        let marker = highlighter
+            .style_for_stack(&[Scope::new("keyword").expect("keyword scope")])
+            .foreground;
+        let structure = highlighter
+            .style_for_stack(&[Scope::new("constant.numeric").expect("numeric scope")])
+            .foreground;
+        for (scope, color) in [
+            ("text.html.markdown.localpaste", prose),
+            ("markup.raw.block.markdown.localpaste, markup.raw.inline.markdown.localpaste", code),
+            ("constant.other.reference.link.markdown.localpaste, punctuation.definition.raw.markdown.localpaste", marker),
+            ("markup.heading.markdown", marker),
+            ("markup.underline.link.markdown", code),
+            ("punctuation.definition.blockquote.markdown, punctuation.definition.list.markdown", structure),
+        ] {
+            theme.scopes.push(ThemeItem { scope: scope.parse().expect("Markdown selector"), style: StyleModifier { foreground: Some(color), ..Default::default() } });
+        }
+    }
+    SyntectSettings {
+        ps: builder.build(),
+        ts: themes,
+    }
+}
+
+#[cfg(test)]
+/// Shared Markdown style probes and grammar regression tests.
+pub(super) mod tests {
+    use super::*;
+    use syntect::easy::HighlightLines;
+    use syntect::highlighting::{FontStyle, Style};
+
+    /// Returns owned styled segments for one parser line.
+    ///
+    /// # Arguments
+    /// - `settings`: Syntax definitions used by the parser.
+    /// - `lines`: Stateful highlighter advanced by this line.
+    /// - `text`: Complete parser line to highlight.
+    ///
+    /// # Returns
+    /// Styles paired with their owned text segments.
+    ///
+    /// # Panics
+    /// Panics if the checked-in grammar cannot highlight the line.
+    pub(crate) fn styled_segments(
+        settings: &SyntectSettings,
+        lines: &mut HighlightLines<'_>,
+        text: &str,
+    ) -> Vec<(Style, String)> {
+        lines
+            .highlight_line(text, &settings.ps)
+            .expect("checked-in Markdown grammar highlights")
+            .into_iter()
+            .map(|(style, text)| (style, text.to_string()))
+            .collect()
+    }
+
+    /// Returns foreground colors and text for non-whitespace segments.
+    ///
+    /// # Arguments
+    /// - `settings`: Syntax definitions used by the parser.
+    /// - `lines`: Stateful highlighter advanced by this line.
+    /// - `text`: Complete parser line to highlight.
+    ///
+    /// # Returns
+    /// Foreground colors paired with non-whitespace text segments.
+    pub(crate) fn non_empty_colors(
+        settings: &SyntectSettings,
+        lines: &mut HighlightLines<'_>,
+        text: &str,
+    ) -> Vec<(syntect::highlighting::Color, String)> {
+        styled_segments(settings, lines, text)
+            .into_iter()
+            .filter(|(_, text)| !text.trim().is_empty())
+            .map(|(style, text)| (style.foreground, text))
+            .collect()
+    }
+
+    #[test]
+    fn escaped_punctuation_stays_prose_without_disabling_real_markup() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let prose = Highlighter::new(theme).get_default().foreground;
+        let mut lines = HighlightLines::new(syntax, theme);
+        for text in [
+            "Use \\` to write a literal backtick.\n",
+            "Escaped \\*stars\\* and \\_underscores\\_ and \\[link](url).\n",
+        ] {
+            assert!(styled_segments(&settings, &mut lines, text)
+                .iter()
+                .all(|(style, _)| style.foreground == prose && style.font_style.is_empty()));
+        }
+        let segments = styled_segments(
+            &settings,
+            &mut lines,
+            "Next prose line with **bold** emphasis.\n",
+        );
+        assert_eq!(segments.first().unwrap().0.foreground, prose);
+        assert!(segments.iter().any(|(style, text)| {
+            text.contains("bold") && style.font_style.contains(FontStyle::BOLD)
+        }));
+
+        // An escaped backslash leaves the following delimiter active. Escapes
+        // inside code are literal and must not prevent its closing delimiter.
+        let code = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        let segments = styled_segments(&settings, &mut lines, "Use \\\\`code\\` after.\n");
+        assert!(segments
+            .iter()
+            .any(|(style, text)| text.contains("code") && style.foreground == code));
+        assert_eq!(segments.last().unwrap().0.foreground, prose);
+    }
+
+    #[test]
+    fn footnotes_are_readable_and_fences_end_at_matching_delimiters() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        assert_eq!(syntax.name, "LocalPaste Markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let prose = Highlighter::new(theme).get_default().foreground;
+        let code = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        assert_ne!(prose, code);
+        let mut lines = HighlightLines::new(syntax, theme);
+        let colors = |lines: &mut HighlightLines<'_>, text: &str| {
+            lines
+                .highlight_line(text, &settings.ps)
+                .unwrap()
+                .into_iter()
+                .filter(|(_, text)| !text.trim().is_empty())
+                .map(|(style, text)| (style.foreground, text.to_string()))
+                .collect::<Vec<_>>()
+        };
+        let footnote = colors(&mut lines, "[^note]: A readable footnote body.\n");
+        assert_eq!(footnote.last().unwrap().0, prose);
+        for (open, short, close) in [
+            ("````rust\n", "```\n", "`````\n"),
+            ("~~~~\n", "~~~\n", "~~~~\n"),
+            ("```\n", "~~~\n", "```\n"),
+        ] {
+            colors(&mut lines, open);
+            for text in ["fn main() { /* **not markup** */ }\n", short, "more code\n"] {
+                assert!(
+                    colors(&mut lines, text)
+                        .iter()
+                        .all(|(color, _)| *color == code),
+                    "{text}"
+                );
+            }
+            // Fence-looking literals inside a top-level block are body text,
+            // not closers, when indented four columns or prefixed as containers.
+            let delimiter = if open.starts_with('`') {
+                "`````"
+            } else {
+                "~~~~~"
+            };
+            for prefix in ["    ", "\t", "> ", "- ", "1. "] {
+                colors(&mut lines, &format!("{prefix}{delimiter}\n"));
+                assert!(
+                    colors(&mut lines, "**still code**\n")
+                        .iter()
+                        .all(|(color, _)| *color == code),
+                    "{prefix:?}{delimiter}"
+                );
+            }
+            colors(&mut lines, close);
+            assert!(colors(&mut lines, "ordinary prose after fence\n")
+                .iter()
+                .all(|(color, _)| *color == prose));
+        }
+    }
+
+    #[test]
+    fn inline_code_recovers_at_block_boundaries_without_breaking_multiline_spans() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let prose = Highlighter::new(theme).get_default().foreground;
+        let code = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        let colors = |lines: &mut HighlightLines<'_>, text: &str| {
+            lines
+                .highlight_line(text, &settings.ps)
+                .unwrap()
+                .into_iter()
+                .filter(|(_, text)| !text.trim().is_empty())
+                .map(|(style, text)| (style.foreground, text.to_string()))
+                .collect::<Vec<_>>()
+        };
+
+        let mut unmatched = HighlightLines::new(syntax, theme);
+        colors(&mut unmatched, "unmatched `code\n");
+        assert!(colors(&mut unmatched, "still inline code\n")
+            .iter()
+            .all(|(color, _)| *color == code));
+        colors(&mut unmatched, "\n");
+        assert!(colors(&mut unmatched, "ordinary prose\n")
+            .iter()
+            .all(|(color, _)| *color == prose));
+
+        for marker in ["-", "+", "*", "1.", "2)"] {
+            let mut list = HighlightLines::new(syntax, theme);
+            colors(&mut list, "- unmatched `code\n");
+            assert!(colors(&mut list, "  continued within the same item\n")
+                .iter()
+                .all(|(color, _)| *color == code));
+            let next_item = colors(&mut list, &format!("{marker} ordinary prose\n"));
+            assert_eq!(next_item.last().unwrap().0, prose, "{marker:?}");
+        }
+
+        let mut list = HighlightLines::new(syntax, theme);
+        colors(&mut list, "- ``first line\n");
+        let continuation = colors(&mut list, "  second line`` after\n");
+        assert!(continuation
+            .iter()
+            .any(|(color, text)| *color == code && text.contains("second line")));
+        assert_eq!(continuation.last().unwrap().0, prose);
+
+        let mut matched = HighlightLines::new(syntax, theme);
+        colors(&mut matched, "``first line\n");
+        assert!(colors(&mut matched, "`shorter delimiter stays code\n")
+            .iter()
+            .all(|(color, _)| *color == code));
+        let closing = colors(&mut matched, "second line`` after\n");
+        assert!(closing
+            .iter()
+            .any(|(color, text)| *color == code && text.contains("second line")));
+        assert!(closing
+            .iter()
+            .any(|(color, text)| *color == prose && text.contains("after")));
+
+        let heading = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("keyword").unwrap()])
+            .foreground;
+        for (boundary, expected, closer) in [
+            ("# Heading\n", heading, None),
+            ("---\r\n", heading, None),
+            ("```rust\n", heading, Some("```\n")),
+            ("~~~rust\n", heading, Some("~~~\n")),
+        ] {
+            let mut lines = HighlightLines::new(syntax, theme);
+            colors(&mut lines, "unmatched `code\n");
+            let boundary_colors = colors(&mut lines, boundary);
+            assert!(
+                boundary_colors.iter().all(|(color, _)| *color == expected),
+                "{boundary:?}: {boundary_colors:?} expected {expected:?}"
+            );
+            if let Some(closer) = closer {
+                assert!(colors(&mut lines, "**literal code body**\n")
+                    .iter()
+                    .all(|(color, _)| *color == code));
+                colors(&mut lines, closer);
+            }
+            assert!(
+                colors(&mut lines, "ordinary prose\n")
+                    .iter()
+                    .all(|(color, _)| *color == prose),
+                "after {boundary:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn fences_keep_indented_list_and_blockquote_bodies_as_code() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let prose = Highlighter::new(theme).get_default().foreground;
+        let code = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+
+        for (opening, body, blank, closing) in [
+            ("    ```rust\n", "    let value = 1;\n", "\n", "    ```\n"),
+            ("    ~~~rust\n", "    let value = 1;\n", "\n", "    ~~~\n"),
+            ("1. ```rust\n", "   let value = 1;\n", "\n", "   ```\n"),
+            ("> ```rust\n", "> let value = 1;\n", ">\n", "> ```\n"),
+        ] {
+            let mut lines = HighlightLines::new(syntax, theme);
+            non_empty_colors(&settings, &mut lines, opening);
+            assert!(
+                non_empty_colors(&settings, &mut lines, body)
+                    .iter()
+                    .all(|(color, _)| *color == code),
+                "{opening:?} should start a code fence"
+            );
+            non_empty_colors(&settings, &mut lines, blank);
+            assert!(
+                non_empty_colors(&settings, &mut lines, body)
+                    .iter()
+                    .all(|(color, _)| *color == code),
+                "blank lines must not close {opening:?}"
+            );
+            non_empty_colors(&settings, &mut lines, closing);
+            assert!(
+                non_empty_colors(&settings, &mut lines, "ordinary prose after fence\n")
+                    .iter()
+                    .all(|(color, _)| *color == prose),
+                "{closing:?} should close the code fence"
+            );
+        }
+        for indent in ["    ", "     ", "\t", " \t", "  \t", "   \t", "\t "] {
+            for fence in ["```", "~~~"] {
+                let mut lines = HighlightLines::new(syntax, theme);
+                non_empty_colors(&settings, &mut lines, &format!("{indent}{fence}rust\n"));
+                assert!(
+                    non_empty_colors(
+                        &settings,
+                        &mut lines,
+                        "ordinary prose after indented code\n"
+                    )
+                    .iter()
+                    .all(|(color, _)| *color == prose),
+                    "{indent:?}{fence} is indented code, not an open fence"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn list_continuation_fences_close_relative_to_the_item() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let prose = Highlighter::new(theme).get_default().foreground;
+        let code = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for fence in ["```", "~~~"] {
+            for (items, opening, indent) in [
+                ("- item\n", "   ", "  "),
+                ("- outer\n  - inner\n", "     ", "    "),
+                ("1. item\n", "    ", "   "),
+                ("123456789. item\n", "            ", "           "),
+                ("", "- ", "  "),
+                ("- outer\n", "  - ", "    "),
+                ("", "1. ", "   "),
+                ("", "123456789. ", "           "),
+                ("", "-\t", "    "),
+                ("", "1.\t", "\t"),
+                ("", "12.\t", "    "),
+                ("", "1234.\t", "\t\t"),
+                ("", "123456789.\t", "            "),
+                ("", " -\t", "\t"),
+                ("", "  -\t", "    "),
+                ("", "   -\t", "\t\t"),
+                ("", "- \t ", "     "),
+                ("- outer\n", "  -\t", "\t"),
+            ] {
+                let mut lines = HighlightLines::new(syntax, theme);
+                for line in items.split_inclusive('\n') {
+                    styled_segments(&settings, &mut lines, line);
+                }
+                styled_segments(&settings, &mut lines, &format!("{opening}{fence}sh\n"));
+                styled_segments(&settings, &mut lines, &format!("{indent}    {fence}\n"));
+                assert!(
+                    non_empty_colors(
+                        &settings,
+                        &mut lines,
+                        &format!("{indent}   **still code**\n")
+                    )
+                    .iter()
+                    .all(|(color, _)| *color == code),
+                    "four relative spaces must not close a fence"
+                );
+                styled_segments(&settings, &mut lines, &format!("{indent}   {fence}\n"));
+                let result =
+                    non_empty_colors(&settings, &mut lines, &format!("{indent}prose after\n"));
+                assert!(
+                    result.iter().all(|(color, _)| *color == prose),
+                    "{items:?} {fence} {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shallower_list_fence_reopens_as_a_top_level_block() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for fence in ["```", "~~~"] {
+            for (item, indent, shallow) in [
+                ("- item\n", "  ", ""),
+                ("1. item\n", "   ", " "),
+                ("123456789. item\n", "           ", "   "),
+            ] {
+                let mut lines = HighlightLines::new(syntax, theme);
+                styled_segments(&settings, &mut lines, item);
+                styled_segments(&settings, &mut lines, &format!("{indent}{fence}\n"));
+                styled_segments(&settings, &mut lines, &format!("{indent}inside list\n"));
+                styled_segments(&settings, &mut lines, &format!("{shallow}{fence}\n"));
+                assert!(
+                    non_empty_colors(&settings, &mut lines, "**outside but still code**\n")
+                        .iter()
+                        .all(|(color, _)| *color == code),
+                    "{item:?} {shallow:?}{fence} must reopen outside the list"
+                );
+                styled_segments(&settings, &mut lines, &format!("{fence}\n"));
+                assert!(non_empty_colors(&settings, &mut lines, "ordinary prose\n")
+                    .iter()
+                    .all(|(color, _)| *color == prose));
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_inline_spans_preserve_list_and_continuation_markup() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for (seed, prefix) in [
+            ("", "- "),
+            ("- item\n", "  "),
+            ("- outer\n  - inner\n", "    "),
+            ("", "123456789. "),
+        ] {
+            let mut lines = HighlightLines::new(syntax, theme);
+            for line in seed.split_inclusive('\n') {
+                styled_segments(&settings, &mut lines, line);
+            }
+            let text = format!(
+                "{prefix}{}\\*literal\\* **bold** [link](url) tail\n",
+                "`span` ".repeat(1_000)
+            );
+            let segments = styled_segments(&settings, &mut lines, &text);
+            assert_eq!(
+                segments
+                    .iter()
+                    .filter(|(style, _)| style.foreground == code)
+                    .map(|(_, text)| text.matches("span").count())
+                    .sum::<usize>(),
+                1_000,
+                "{seed:?} {prefix:?}"
+            );
+            assert!(segments.iter().any(|(style, text)| {
+                text.contains("literal") && style.foreground == prose && style.font_style.is_empty()
+            }));
+            assert!(segments.iter().any(|(style, text)| {
+                text.contains("bold") && style.font_style.contains(FontStyle::BOLD)
+            }));
+            assert!(segments
+                .iter()
+                .any(|(style, text)| { text.contains("[link](url)") && style.foreground == code }));
+            assert_eq!(segments.last().unwrap().0.foreground, prose);
+        }
+    }
+
+    #[test]
+    #[ignore = "bounded manual timing probe; run with --ignored --nocapture"]
+    fn list_inline_span_scaling_probe() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let code = Highlighter::new(theme)
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for count in [1_000, 5_000, 10_000] {
+            let text = format!("- {}tail\n", "`span` ".repeat(count));
+            let mut lines = HighlightLines::new(syntax, theme);
+            let started = std::time::Instant::now();
+            let segments = styled_segments(&settings, &mut lines, &text);
+            let elapsed = started.elapsed();
+            let spans = segments
+                .iter()
+                .filter(|(style, _)| style.foreground == code)
+                .map(|(_, text)| text.matches("span").count())
+                .sum::<usize>();
+            assert_eq!(
+                spans,
+                count,
+                "first segments: {:?}",
+                &segments[..segments.len().min(8)]
+            );
+            eprintln!(
+                "list spans={count}, bytes={}, segments={}, elapsed={elapsed:?}",
+                text.len(),
+                segments.len()
+            );
+        }
+    }
+
+    #[test]
+    fn quoted_fences_end_with_the_containing_blockquote() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        let heading = highlighter
+            .style_for_stack(&[Scope::new("keyword").unwrap()])
+            .foreground;
+        for fence in ["```", "~~~"] {
+            for boundary in ["", "\n", "\r\n"] {
+                let mut lines = HighlightLines::new(syntax, theme);
+                non_empty_colors(&settings, &mut lines, &format!("> {fence}text\n"));
+                // A quoted blank line stays inside the fence, even when the
+                // quote marker's indentation changes on the following line.
+                non_empty_colors(&settings, &mut lines, ">\n");
+                assert!(
+                    non_empty_colors(&settings, &mut lines, "  > **literal code**\n")
+                        .iter()
+                        .all(|(color, _)| *color == code)
+                );
+                if !boundary.is_empty() {
+                    non_empty_colors(&settings, &mut lines, boundary);
+                }
+                assert!(
+                    non_empty_colors(&settings, &mut lines, "# Outside heading\n")
+                        .iter()
+                        .all(|(color, _)| *color == heading),
+                    "{fence:?}, {boundary:?}"
+                );
+                assert!(non_empty_colors(&settings, &mut lines, "Outside prose\n")
+                    .iter()
+                    .all(|(color, _)| *color == prose));
+            }
+        }
+    }
+
+    #[test]
+    fn structural_markdown_scopes_use_readable_theme_colors() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let heading = highlighter
+            .style_for_stack(&[Scope::new("keyword").unwrap()])
+            .foreground;
+        let link = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        let structure = highlighter
+            .style_for_stack(&[Scope::new("constant.numeric").unwrap()])
+            .foreground;
+        assert_ne!(heading, prose);
+        assert_ne!(link, prose);
+        assert_ne!(structure, prose);
+
+        let mut lines = HighlightLines::new(syntax, theme);
+        assert!(non_empty_colors(&settings, &mut lines, "# Heading\n")
+            .iter()
+            .all(|(color, _)| *color == heading));
+        assert!(non_empty_colors(
+            &settings,
+            &mut lines,
+            "[LocalPaste](https://example.test)\n"
+        )
+        .iter()
+        .all(|(color, _)| *color == link));
+        for marker in ["> quoted text\n", "- listed text\n"] {
+            let colors = non_empty_colors(&settings, &mut lines, marker);
+            assert_eq!(colors[0].0, structure, "{marker:?}");
+            assert_eq!(colors[1].0, prose, "{marker:?}");
+        }
+    }
+
+    #[test]
+    fn underscore_italics_do_not_match_within_identifiers_or_urls() {
+        let settings = settings();
+        let syntax = super::super::resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let text = "my_var_name http://x.com/a_b_c _emphasis_ *asterisk*\n";
+        let ranges = [
+            text.find("my_var_name").unwrap()
+                ..text.find("my_var_name").unwrap() + "my_var_name".len(),
+            text.find("http://x.com/a_b_c").unwrap()
+                ..text.find("http://x.com/a_b_c").unwrap() + "http://x.com/a_b_c".len(),
+        ];
+        let mut lines = HighlightLines::new(syntax, theme);
+        let segments = styled_segments(&settings, &mut lines, text);
+        let mut offset = 0;
+        let mut emphasis_is_italic = false;
+        let mut asterisk_is_italic = false;
+        for (style, segment) in segments {
+            let range = offset..offset + segment.len();
+            offset = range.end;
+            if style.font_style.contains(FontStyle::ITALIC) {
+                assert!(
+                    ranges.iter().all(|protected| {
+                        range.end <= protected.start || protected.end <= range.start
+                    }),
+                    "{segment:?} in an identifier or URL was styled as italics"
+                );
+                emphasis_is_italic |= segment.contains("emphasis");
+                asterisk_is_italic |= segment.contains("asterisk");
+            }
+        }
+        assert_eq!(offset, text.len());
+        assert!(emphasis_is_italic);
+        assert!(asterisk_is_italic);
+    }
+}

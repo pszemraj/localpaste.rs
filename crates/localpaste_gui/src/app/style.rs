@@ -94,6 +94,9 @@ impl LocalPasteApp {
             return;
         }
 
+        // LocalPaste has one dark palette. Select its slot before installing the
+        // style so the first native system-theme update cannot replace it.
+        ctx.set_theme(egui::ThemePreference::Dark);
         let mut fonts = FontDefinitions::default();
         fonts.font_data.insert(
             FONT_0XPROTO.to_string(),

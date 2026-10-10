@@ -10,15 +10,16 @@ These instructions apply to the headless `localpaste` server. The desktop GUI (`
 - [macOS (launchd)](#macos-launchd)
 - [Windows](#windows)
 - [Common Patterns](#common-patterns)
-- [Embedded API Discovery](#embedded-api-discovery)
+- [Backups](#backups)
 
 ---
+
 ## Quick Start
 
-Build/install commands are documented in [dev/devlog.md](dev/devlog.md).
-The examples below assume the server binary is available at `$HOME/.cargo/bin/localpaste` (the default `cargo install` location on Unix-like systems).
+Install the server with the `cargo install` commands in the [README](../README.md#server-and-cli). The examples below assume the server binary is available at `$HOME/.cargo/bin/localpaste` (the default `cargo install` location on Unix-like systems).
 
 Security defaults and public-bind policy live in [security.md](security.md).
+
 Storage compatibility and single-writer rules live in [storage.md](storage.md).
 
 ```bash
@@ -26,6 +27,8 @@ mkdir -p ~/.cache/localpaste
 nohup "$HOME/.cargo/bin/localpaste" > ~/.cache/localpaste/server.log 2>&1 &
 echo $! > ~/.cache/localpaste/localpaste.pid
 ```
+
+The server listens on `127.0.0.1:38411` by default, which is also where `lpaste` looks when it finds no running GUI, so `lpaste list` reaches it without flags. If `PORT` or `BIND` changes the address, pass `--server` or set `LP_SERVER`; see [CLI workflows](cli-gui-workflows.md#connect-to-the-running-gui).
 
 ## Process Management
 
@@ -41,9 +44,6 @@ fi
 # Fallback: stop by process name
 pkill -x localpaste || true
 
-# Dev fallback (only if you started it via cargo run)
-pkill -f "cargo run -p localpaste_server --bin localpaste" || true
-
 # Verify port release
 lsof -i :38411
 
@@ -51,21 +51,17 @@ lsof -i :38411
 # lsof -t -i :38411 | xargs kill -9 2>/dev/null
 ```
 
-> [!CAUTION]
-> `kill -9` can leave stale lock state and require manual recovery on next start.
+Use graceful shutdown first. Forced termination skips orderly request completion; the OS releases the database owner lock when the process exits. The name-based fallback also matches a GUI started from a release archive, whose executable is likewise named `localpaste`, so prefer the PID file when both may be running.
 
 ### Lock Safety
 
-When lock acquisition fails, stop the owning process and retry.
-There is no `--force-unlock` path.
-For semantics and error contracts, use:
-[dev/locking-model.md](dev/locking-model.md) and [storage.md](storage.md).
+A start that fails with "already held by another LocalPaste writer" means another LocalPaste process, either the GUI or another server, has the same `DB_PATH` open. Stop that process, or give this one a different `DB_PATH`, and start again. The OS releases the lock whenever the owning process exits, even if it was killed, so a `db.owner.lock` file left on disk is normal and needs no cleanup. Do not delete it to get past the error: the lock is held on the open file, so deleting the file frees nothing and can let two writers open the same database. For semantics and error contracts, see [dev/locking-model.md](dev/locking-model.md) and [storage.md](storage.md).
 
 ## Linux (systemd)
 
 ### System-wide Service
 
-Create `/etc/systemd/system/localpaste.service`:
+Create `/etc/systemd/system/localpaste.service`, replacing `username` and the binary path with your account and installation path:
 
 ```ini
 [Unit]
@@ -75,7 +71,7 @@ After=network.target
 [Service]
 Type=simple
 User=username
-ExecStart=/usr/local/bin/localpaste
+ExecStart=/home/username/.cargo/bin/localpaste
 Restart=on-failure
 Environment="RUST_LOG=info"
 
@@ -160,6 +156,24 @@ Register-ScheduledTask -TaskName "LocalPaste" -Action $Action -Trigger $Trigger
 
 ## Common Patterns
 
+### Backups
+
+Run `localpaste --backup` to write a snapshot of the database beside `data.redb`, named `data.redb.backup.<unix-timestamp>.redb`. The command needs the database to itself, so stop any GUI or server using that `DB_PATH` first. Setting `AUTO_BACKUP=true` makes the server take the same snapshot on every start against an existing database. LocalPaste neither schedules nor prunes snapshots; copy them to another disk or machine to survive the loss of the database directory, and remove old ones yourself.
+
+To restore, work on a copy so the original database and the snapshot stay untouched:
+
+1. Stop the GUI or server that will use the restored database.
+2. Copy the snapshot into a new directory as `data.redb`. Nothing else needs copying: the owner lock and the GUI's `.api-addr` file are created again on start.
+3. Start LocalPaste with `DB_PATH` pointing at that directory and check that the expected pastes and version history are present.
+
+```bash
+mkdir -p "$HOME/localpaste-restored"
+cp path/to/snapshot.redb "$HOME/localpaste-restored/data.redb"
+DB_PATH="$HOME/localpaste-restored" localpaste
+```
+
+To inspect the copy in the GUI instead, launch it with the same `DB_PATH`. Opening a snapshot from an older build can run a startup [compatibility repair](storage.md#compatibility-policy), which writes a backup of its own next to the copy. Once the contents look right, keep using the new directory as `DB_PATH`, or move it into the original location after setting the old directory aside.
+
 ### Auto-restart on Crash
 
 With systemd:
@@ -178,7 +192,7 @@ With cron:
 
 ### Log Rotation
 
-```bash
+```text
 # /etc/logrotate.d/localpaste
 /home/username/.cache/localpaste/*.log {
     daily
@@ -194,9 +208,3 @@ With cron:
 ```bash
 curl -fsS "http://127.0.0.1:38411/api/pastes/meta?limit=1" >/dev/null || echo "Service down"
 ```
-
-## Embedded API Discovery
-
-- Prefer explicit `--server`/`LP_SERVER` for deterministic automation.
-- Use `lpaste --no-discovery ...` to disable `.api-addr` discovery.
-- Discovery trust checks and fallback rules: [architecture.md#10-discovery-and-trust](architecture.md#10-discovery-and-trust)

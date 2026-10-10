@@ -1,10 +1,11 @@
 //! Protocol types for the native GUI backend worker.
 
+use super::SidebarCollection;
 use chrono::{DateTime, Utc};
 use localpaste_core::diff::DiffResponse;
 use localpaste_core::models::{
     folder::Folder,
-    paste::{Paste, PasteMeta, VersionMeta, VersionSnapshot},
+    paste::{Paste, PasteMeta, SearchScope, VersionMeta, VersionSnapshot},
 };
 use localpaste_core::semantic::DerivedMeta;
 use ropey::Rope;
@@ -24,15 +25,24 @@ pub enum CoreCmd {
     },
     /// Search pastes with optional folder/language filters.
     SearchPastes {
+        collection: SidebarCollection,
+        scope: SearchScope,
         query: String,
         limit: usize,
         folder_id: Option<String>,
         language: Option<String>,
     },
     /// Search metadata globally for command palette discovery.
-    SearchPalette { query: String, limit: usize },
+    SearchPalette {
+        scope: SearchScope,
+        query: String,
+        limit: usize,
+    },
     /// Load a single paste by id for display in the editor pane.
-    GetPaste { id: String },
+    GetPaste { id: String, selection_epoch: u64 },
+    /// Load a paste body for a picker copy action without changing editor selection.
+    /// The worker echoes `request_id` on every outcome to reject superseded copies.
+    GetPasteForCopy { id: String, request_id: u64 },
     /// Load a comparison target for the detached diff modal.
     GetDiffTargetPaste { id: String },
     /// Create a new paste with the provided content.
@@ -119,20 +129,54 @@ pub enum CoreEvent {
     PasteList { items: Vec<PasteSummary> },
     /// Response containing ranked search results.
     SearchResults {
+        collection: SidebarCollection,
+        scope: SearchScope,
         query: String,
         folder_id: Option<String>,
         language: Option<String>,
         items: Vec<PasteSummary>,
     },
+    /// A sidebar search could not complete in this query/filter context.
+    SearchFailed {
+        collection: SidebarCollection,
+        scope: SearchScope,
+        query: String,
+        folder_id: Option<String>,
+        language: Option<String>,
+        message: String,
+    },
     /// Response containing command palette search results.
     PaletteSearchResults {
+        scope: SearchScope,
         query: String,
         items: Vec<PasteSummary>,
     },
+    /// A paste-picker search could not complete.
+    PaletteSearchFailed {
+        scope: SearchScope,
+        query: String,
+        message: String,
+    },
     /// Response containing the full paste payload requested by id.
-    PasteLoaded { paste: Paste },
+    PasteLoaded { paste: Paste, selection_epoch: u64 },
+    /// A paste requested by this selection epoch no longer exists.
+    PasteSelectionMissing { id: String, selection_epoch: u64 },
     /// Loading a specific paste failed due to backend/storage error.
-    PasteLoadFailed { id: String, message: String },
+    PasteLoadFailed {
+        id: String,
+        selection_epoch: u64,
+        message: String,
+    },
+    /// Response containing a paste body requested only for copying from the picker.
+    PasteCopyLoaded { paste: Paste, request_id: u64 },
+    /// A paste requested for picker copy no longer exists in the database.
+    PasteCopyMissing { id: String, request_id: u64 },
+    /// Loading a paste for picker copy failed due to backend/storage error.
+    PasteCopyLoadFailed {
+        id: String,
+        request_id: u64,
+        message: String,
+    },
     /// Response containing the detached diff target payload requested by id.
     DiffTargetLoaded { paste: Paste },
     /// The requested detached diff target id no longer exists in the database.
@@ -154,6 +198,8 @@ pub enum CoreEvent {
         /// succeeded through a path where undo is intentionally unavailable.
         undo_token: Option<String>,
     },
+    /// Deleting a specific paste failed before any row was removed.
+    PasteDeleteFailed { id: String, message: String },
     /// A live delete-undo token was evicted to keep the backend undo buffer bounded.
     PasteUndoEvicted { undo_token: String },
     /// Response confirming a paste was restored from delete undo.
@@ -215,6 +261,10 @@ pub struct PasteSummary {
     pub folder_id: Option<String>,
     pub tags: Vec<String>,
     pub derived: DerivedMeta,
+    /// Compact raw-body context for a matching paste-picker result.
+    ///
+    /// List and sidebar projections leave this unset so they remain metadata-only.
+    pub match_excerpt: Option<String>,
 }
 
 impl PasteSummary {
@@ -240,6 +290,7 @@ impl PasteSummary {
             folder_id: meta.folder_id.clone(),
             tags: meta.tags.clone(),
             derived: meta.derived.clone(),
+            match_excerpt: None,
         }
     }
 }

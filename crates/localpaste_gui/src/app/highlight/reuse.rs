@@ -18,8 +18,8 @@ fn hash_bytes_step(mut hash: u64, bytes: &[u8]) -> u64 {
 ///
 /// # Arguments
 /// - `idx`: Line index being evaluated.
-/// - `prev_line_reused`: Whether the previous line was reused without recompute.
-/// - `old_lines`: Optional cached line values aligned to current line indices.
+/// - `prev_reused_index`: Original index of the last line if it was reused.
+/// - `old_lines`: Cached lines and original indices aligned to current indices.
 /// - `parse_state`: Current parse state before processing this line.
 /// - `highlight_state`: Current highlight state before processing this line.
 /// - `default_state`: `(parse, highlight)` state expected at the first line.
@@ -29,8 +29,8 @@ fn hash_bytes_step(mut hash: u64, bytes: &[u8]) -> u64 {
 /// `true` when line-level reuse is safe for the current state boundary.
 pub(crate) fn line_start_state_matches<T, F>(
     idx: usize,
-    prev_line_reused: bool,
-    old_lines: &[Option<T>],
+    prev_reused_index: Option<usize>,
+    old_lines: &[Option<(usize, T)>],
     parse_state: &ParseState,
     highlight_state: &HighlightState,
     default_state: (&ParseState, &HighlightState),
@@ -39,18 +39,27 @@ pub(crate) fn line_start_state_matches<T, F>(
 where
     F: Fn(&T) -> (&ParseState, &HighlightState),
 {
+    let Some((old_idx, _)) = old_lines.get(idx).and_then(|line| line.as_ref()) else {
+        return false;
+    };
     if idx == 0 {
-        return *default_state.0 == *parse_state && *default_state.1 == *highlight_state;
+        return *old_idx == 0
+            && *default_state.0 == *parse_state
+            && *default_state.1 == *highlight_state;
     }
-    if prev_line_reused {
+    // Hash alignment can join a retained prefix to a suffix across deleted
+    // lines. The suffix's old start state belongs to its original predecessor.
+    if prev_reused_index.is_some_and(|prev| prev + 1 == *old_idx) {
         return true;
     }
     old_lines
         .get(idx - 1)
         .and_then(|line| line.as_ref())
-        .map(|line| {
+        .map(|(prev_idx, line)| {
             let (end_parse, end_highlight) = end_state_for(line);
-            *end_parse == *parse_state && *end_highlight == *highlight_state
+            *prev_idx + 1 == *old_idx
+                && *end_parse == *parse_state
+                && *end_highlight == *highlight_state
         })
         .unwrap_or(false)
 }
@@ -66,7 +75,7 @@ where
 /// # Returns
 /// `true` when a cached line exists at `idx` and hash values match.
 pub(crate) fn line_hash_matches<T, F>(
-    old_lines: &[Option<T>],
+    old_lines: &[Option<(usize, T)>],
     idx: usize,
     expected_hash: u64,
     hash_for: F,
@@ -77,7 +86,7 @@ where
     old_lines
         .get(idx)
         .and_then(|line| line.as_ref())
-        .map(|line| hash_for(line) == expected_hash)
+        .map(|(_, line)| hash_for(line) == expected_hash)
         .unwrap_or(false)
 }
 
@@ -97,7 +106,8 @@ pub(crate) fn hash_bytes(bytes: &[u8]) -> u64 {
 /// - `hash_for`: Hash extractor for `T`.
 ///
 /// # Returns
-/// Vec aligned to `new_hashes`, with reusable entries in prefix/suffix slots.
+/// Vec aligned to `new_hashes`, preserving each reusable line's original index
+/// so parser-state reuse cannot cross a deletion boundary.
 ///
 /// # Panics
 /// Panics if internal prefix/suffix alignment invariants are violated.
@@ -105,7 +115,7 @@ pub(crate) fn align_old_lines_by_hash<T, F>(
     old_lines: Vec<T>,
     new_hashes: &[u64],
     hash_for: F,
-) -> Vec<Option<T>>
+) -> Vec<Option<(usize, T)>>
 where
     F: Fn(&T) -> u64,
 {
@@ -120,14 +130,14 @@ where
         return out;
     }
 
-    let mut old: Vec<Option<T>> = old_lines.into_iter().map(Some).collect();
+    let mut old: Vec<Option<(usize, T)>> = old_lines.into_iter().enumerate().map(Some).collect();
 
     let mut prefix = 0usize;
     while prefix < old_len && prefix < new_len {
         let Some(ref line) = old[prefix] else {
             break;
         };
-        if hash_for(line) == new_hashes[prefix] {
+        if hash_for(&line.1) == new_hashes[prefix] {
             prefix += 1;
         } else {
             break;
@@ -141,7 +151,7 @@ where
         let Some(ref line) = old[old_idx] else {
             break;
         };
-        if hash_for(line) == new_hashes[new_idx] {
+        if hash_for(&line.1) == new_hashes[new_idx] {
             suffix += 1;
         } else {
             break;

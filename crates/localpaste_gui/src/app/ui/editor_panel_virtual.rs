@@ -20,26 +20,6 @@ pub(super) struct VirtualEditorRenderOptions<'a> {
 }
 
 impl LocalPasteApp {
-    fn queue_virtual_cursor_follow_scroll(
-        &mut self,
-        scroll_offset_y: f32,
-        editor_height: f32,
-    ) -> bool {
-        let cursor_row = self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
-        let viewport_rows = ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
-        if let Some(offset) = follow_cursor_scroll_offset_y(
-            true,
-            cursor_row,
-            scroll_offset_y,
-            viewport_rows,
-            self.virtual_line_height,
-        ) {
-            self.virtual_pending_scroll_offset_y = Some(offset.max(0.0));
-            return true;
-        }
-        false
-    }
-
     /// Renders the interactive rope-backed virtual editor surface.
     ///
     /// # Arguments
@@ -67,6 +47,34 @@ impl LocalPasteApp {
             scroll = scroll.vertical_scroll_offset(offset.max(0.0));
         }
 
+        // A gesture belongs to the surface under its press, with that event's
+        // modifiers. Frame modifiers may already have changed by release/drag.
+        let primary_press = ui.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers,
+                } => Some((*pos, *modifiers)),
+                _ => None,
+            })
+        });
+        let primary_release = ui.input(|input| {
+            input.events.iter().rev().find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    ..
+                } => Some(*pos),
+                _ => None,
+            })
+        });
+        if primary_press.is_some() {
+            self.virtual_pointer_press_modifiers = None;
+            self.virtual_drag_active = false;
+        }
         let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
         let focus_editor_requested = self.focus_editor_next;
         let editor_shortcuts_unblocked_for_frame = !self.editor_shortcuts_blocked();
@@ -120,7 +128,6 @@ impl LocalPasteApp {
         let content_wrap_width =
             (wrap_width - line_number_gutter - VIRTUAL_EDITOR_TEXT_INSET).max(editor_char_width);
         self.virtual_wrap_width = wrap_width;
-        self.virtual_viewport_height = editor_height;
         if self.virtual_layout.needs_rebuild(
             self.virtual_editor_buffer.revision(),
             content_wrap_width,
@@ -139,9 +146,17 @@ impl LocalPasteApp {
                 layout_rebuild_ms = started.elapsed().as_secs_f32() * 1000.0;
             }
         }
-        const EOF_PADDING_ROWS: usize = 3;
+        let eof_padding_rows = (editor_height / self.virtual_line_height / 2.0).ceil() as usize + 3;
         let content_rows = self.virtual_layout.total_rows().max(1);
-        let total_rows = content_rows.saturating_add(EOF_PADDING_ROWS);
+        let total_rows = content_rows.saturating_add(eof_padding_rows);
+        let scroll_style = ui.spacing().scroll;
+        let floating_scrollbar_hit_width = if scroll_style.floating
+            && total_rows as f32 * self.virtual_line_height > editor_height
+        {
+            scroll_style.bar_width
+        } else {
+            0.0
+        };
         self.virtual_galley_cache.prepare_frame(
             line_count,
             VirtualGalleyContext::new(
@@ -157,428 +172,489 @@ impl LocalPasteApp {
         let had_focus = focused;
         let mut ime_cursor_rect: Option<egui::Rect> = None;
         let mut editor_pointer_action_handled = false;
-        let scroll_output =
-            scroll.show_rows(ui, self.virtual_line_height, total_rows, |ui, range| {
-                ui.set_min_width(wrap_width);
-                visible_rows = range.len();
-                visible_row_range = Some(range.clone());
-                struct RowRender {
-                    line_idx: usize,
-                    segment_start: usize,
-                    segment_chars: usize,
-                    starts_line: bool,
-                    ends_line: bool,
-                    rect: egui::Rect,
-                    text_rect: egui::Rect,
-                    text_origin: egui::Pos2,
-                    galley: Arc<egui::Galley>,
-                }
-                enum RowAction {
-                    Click {
-                        global: usize,
-                    },
-                    Triple {
+        let scroll_output = ui
+            .scope(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                scroll.show_rows(ui, self.virtual_line_height, total_rows, |ui, range| {
+                    ui.set_min_width(wrap_width);
+                    visible_rows = range.len();
+                    visible_row_range = Some(range.clone());
+                    struct RowRender {
                         line_idx: usize,
-                    },
-                    Double {
-                        line_idx: usize,
-                        line_start: usize,
-                        column_in_line: usize,
-                    },
-                    DragStart {
-                        global: usize,
-                    },
-                }
-                let mut rows = Vec::with_capacity(range.len());
-                let mut pending_action: Option<RowAction> = None;
-                let mut last_synced_line: Option<usize> = None;
-                for row_idx in range.clone() {
-                    if row_idx >= content_rows {
+                        segment_start: usize,
+                        segment_chars: usize,
+                        starts_line: bool,
+                        ends_line: bool,
+                        rect: egui::Rect,
+                        text_rect: egui::Rect,
+                        text_origin: egui::Pos2,
+                        galley: Arc<egui::Galley>,
+                    }
+                    impl RowRender {
+                        /// Maps a pointer position to a character within this rendered row.
+                        ///
+                        /// # Arguments
+                        /// - `pointer_pos`: Pointer location in the row's UI coordinates.
+                        ///
+                        /// # Returns
+                        /// Global character index clamped to this row's character range.
+                        ///
+                        /// # Panics
+                        /// Panics if the rendered row's rectangle bounds are invalid.
+                        fn char_index_at(&self, pointer_pos: egui::Pos2) -> usize {
+                            let local_pos = egui::vec2(
+                                (pointer_pos
+                                    .x
+                                    .clamp(self.text_rect.min.x, self.text_rect.max.x)
+                                    - self.text_origin.x)
+                                    .max(0.0),
+                                (pointer_pos.y.clamp(self.rect.min.y, self.rect.max.y)
+                                    - self.text_origin.y)
+                                    .max(0.0),
+                            );
+                            let cursor = self.galley.cursor_from_pos(local_pos);
+                            self.segment_start
+                                .saturating_add(cursor.index.min(self.segment_chars))
+                        }
+                    }
+                    enum RowAction {
+                        Click {
+                            global: usize,
+                        },
+                        Triple {
+                            line_idx: usize,
+                        },
+                        Double {
+                            line_idx: usize,
+                            line_start: usize,
+                            column_in_line: usize,
+                        },
+                        DragStart {
+                            global: usize,
+                        },
+                    }
+                    let mut rows = Vec::with_capacity(range.len());
+                    let mut pending_action: Option<RowAction> = None;
+                    let mut last_synced_line: Option<usize> = None;
+                    for row_idx in range.clone() {
+                        if row_idx >= content_rows {
+                            let row_width = ui.available_width();
+                            let (_, response) = ui.allocate_exact_size(
+                                egui::vec2(row_width, self.virtual_line_height),
+                                virtual_row_hit_test_sense(),
+                            );
+                            if response.hovered() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
+                            }
+                            continue;
+                        }
+                        let (line_idx, row_in_line) = self.virtual_layout.row_to_line(row_idx);
+                        let line_start = self.virtual_editor_buffer.line_col_to_char(line_idx, 0);
+                        let line_chars = self.virtual_layout.line_chars(line_idx);
+                        let segment_range = self
+                            .virtual_layout
+                            .row_char_range(&self.virtual_editor_buffer, row_idx);
+                        let segment_chars = segment_range.end.saturating_sub(segment_range.start);
+                        let segment_start_in_line = segment_range.start.saturating_sub(line_start);
+                        let line_start_byte =
+                            self.virtual_editor_buffer.rope().char_to_byte(line_start);
+                        let segment_start_byte = self
+                            .virtual_editor_buffer
+                            .rope()
+                            .char_to_byte(segment_range.start)
+                            .saturating_sub(line_start_byte);
+                        let segment_end_byte = self
+                            .virtual_editor_buffer
+                            .rope()
+                            .char_to_byte(segment_range.end)
+                            .saturating_sub(line_start_byte);
+                        let line_visual_rows = self.virtual_layout.line_visual_rows(line_idx);
+                        let starts_line = row_in_line == 0;
+                        let ends_line = row_in_line.saturating_add(1) >= line_visual_rows;
+                        let render_line = options
+                            .highlight_render_match
+                            .and_then(|render| render.lines.get(line_idx));
+                        if last_synced_line != Some(line_idx) {
+                            self.virtual_galley_cache
+                                .sync_line_rows(line_idx, line_visual_rows);
+                            last_synced_line = Some(line_idx);
+                        }
+                        let galley = if let Some(cached) =
+                            self.virtual_galley_cache.get(line_idx, row_in_line)
+                        {
+                            if perf_enabled {
+                                galley_hits = galley_hits.saturating_add(1);
+                            }
+                            cached
+                        } else {
+                            let build_started = perf_enabled.then(Instant::now);
+                            self.virtual_editor_buffer.slice_chars_into(
+                                segment_range.clone(),
+                                &mut self.virtual_line_scratch,
+                            );
+                            // `Galley` retains `LayoutJob.text`, so each cache miss needs an owned
+                            // per-row `String` anyway; move the scratch buffer into the job to avoid
+                            // an extra clone/allocation on the miss path.
+                            let mut job = build_virtual_line_segment_job_owned(
+                                ui,
+                                std::mem::take(&mut self.virtual_line_scratch),
+                                editor_font,
+                                render_line,
+                                options.use_plain,
+                                segment_start_byte..segment_end_byte,
+                            );
+                            job.wrap.max_width = f32::INFINITY;
+                            let shaped = ui.fonts_mut(|f| f.layout_job(job));
+                            debug_assert!(
+                                shaped.rows.len() <= 1,
+                                "virtual row segment produced wrapped galley"
+                            );
+                            self.virtual_galley_cache
+                                .insert(line_idx, row_in_line, shaped.clone());
+                            if let Some(started) = build_started {
+                                galley_build_ms += started.elapsed().as_secs_f32() * 1000.0;
+                                galley_misses = galley_misses.saturating_add(1);
+                            }
+                            shaped
+                        };
                         let row_width = ui.available_width();
-                        let (_, response) = ui.allocate_exact_size(
+                        let (rect, response) = ui.allocate_exact_size(
                             egui::vec2(row_width, self.virtual_line_height),
                             virtual_row_hit_test_sense(),
+                        );
+                        let text_min_x =
+                            (rect.min.x + line_number_gutter + VIRTUAL_EDITOR_TEXT_INSET)
+                                .min(rect.max.x);
+                        let text_origin = egui::pos2(text_min_x, rect.min.y);
+                        let text_rect = egui::Rect::from_min_max(text_origin, rect.max);
+                        let row_hit_rect = egui::Rect::from_min_max(
+                            rect.min,
+                            egui::pos2(
+                                (rect.max.x - floating_scrollbar_hit_width).max(rect.min.x),
+                                rect.max.y,
+                            ),
                         );
                         if response.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
                         }
-                        continue;
-                    }
-                    let (line_idx, row_in_line) = self.virtual_layout.row_to_line(row_idx);
-                    let line_start = self.virtual_editor_buffer.line_col_to_char(line_idx, 0);
-                    let line_chars = self.virtual_layout.line_chars(line_idx);
-                    let segment_range = self
-                        .virtual_layout
-                        .row_char_range(&self.virtual_editor_buffer, row_idx);
-                    let segment_chars = segment_range.end.saturating_sub(segment_range.start);
-                    let segment_start_in_line = segment_range.start.saturating_sub(line_start);
-                    let line_start_byte =
-                        self.virtual_editor_buffer.rope().char_to_byte(line_start);
-                    let segment_start_byte = self
-                        .virtual_editor_buffer
-                        .rope()
-                        .char_to_byte(segment_range.start)
-                        .saturating_sub(line_start_byte);
-                    let segment_end_byte = self
-                        .virtual_editor_buffer
-                        .rope()
-                        .char_to_byte(segment_range.end)
-                        .saturating_sub(line_start_byte);
-                    let line_visual_rows = self.virtual_layout.line_visual_rows(line_idx);
-                    let starts_line = row_in_line == 0;
-                    let ends_line = row_in_line.saturating_add(1) >= line_visual_rows;
-                    let render_line = options
-                        .highlight_render_match
-                        .and_then(|render| render.lines.get(line_idx));
-                    if last_synced_line != Some(line_idx) {
-                        self.virtual_galley_cache
-                            .sync_line_rows(line_idx, line_visual_rows);
-                        last_synced_line = Some(line_idx);
-                    }
-                    let galley = if let Some(cached) =
-                        self.virtual_galley_cache.get(line_idx, row_in_line)
-                    {
-                        if perf_enabled {
-                            galley_hits = galley_hits.saturating_add(1);
+                        let primary_pressed_on_row = primary_press.filter(|(pos, _)| {
+                            row_hit_rect.contains(*pos)
+                                && ui.clip_rect().contains(*pos)
+                                && ui.ctx().layer_id_at(*pos) == Some(ui.layer_id())
+                        });
+                        if let Some((_, modifiers)) = primary_pressed_on_row {
+                            self.virtual_pointer_press_modifiers = Some(modifiers);
                         }
-                        cached
-                    } else {
-                        let build_started = perf_enabled.then(Instant::now);
-                        self.virtual_editor_buffer.slice_chars_into(
-                            segment_range.clone(),
-                            &mut self.virtual_line_scratch,
-                        );
-                        // `Galley` retains `LayoutJob.text`, so each cache miss needs an owned
-                        // per-row `String` anyway; move the scratch buffer into the job to avoid
-                        // an extra clone/allocation on the miss path.
-                        let mut job = build_virtual_line_segment_job_owned(
-                            ui,
-                            std::mem::take(&mut self.virtual_line_scratch),
-                            editor_font,
-                            render_line,
-                            options.use_plain,
-                            segment_start_byte..segment_end_byte,
-                        );
-                        job.wrap.max_width = f32::INFINITY;
-                        let shaped = ui.fonts_mut(|f| f.layout_job(job));
-                        debug_assert!(
-                            shaped.rows.len() <= 1,
-                            "virtual row segment produced wrapped galley"
-                        );
-                        self.virtual_galley_cache
-                            .insert(line_idx, row_in_line, shaped.clone());
-                        if let Some(started) = build_started {
-                            galley_build_ms += started.elapsed().as_secs_f32() * 1000.0;
-                            galley_misses = galley_misses.saturating_add(1);
-                        }
-                        shaped
-                    };
-                    let row_width = ui.available_width();
-                    let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(row_width, self.virtual_line_height),
-                        virtual_row_hit_test_sense(),
-                    );
-                    let text_min_x = (rect.min.x + line_number_gutter + VIRTUAL_EDITOR_TEXT_INSET)
-                        .min(rect.max.x);
-                    let text_origin = egui::pos2(text_min_x, rect.min.y);
-                    let text_rect = egui::Rect::from_min_max(text_origin, rect.max);
-                    if response.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
-                    }
-                    let (primary_pressed_on_row, current_pointer_pos) = ui.input(|input| {
-                        let pointer_pos = input
-                            .pointer
-                            .interact_pos()
-                            .or_else(|| input.pointer.latest_pos());
-                        let pressed_on_row =
-                            input.pointer.button_pressed(egui::PointerButton::Primary)
-                                && pointer_pos.map(|pos| rect.contains(pos)).unwrap_or(false);
-                        (pressed_on_row, pointer_pos)
-                    });
-                    if pending_action.is_none()
-                        && (response.drag_started() || response.clicked() || primary_pressed_on_row)
-                    {
-                        let pointer_pos = response.interact_pointer_pos().or(current_pointer_pos);
-                        if let Some(pointer_pos) = pointer_pos {
-                            let clamped_x = pointer_pos.x.clamp(text_rect.min.x, text_rect.max.x);
-                            let clamped_y = pointer_pos.y.clamp(rect.min.y, rect.max.y);
-                            let local_pos = egui::vec2(
-                                (clamped_x - text_origin.x).max(0.0),
-                                (clamped_y - text_origin.y).max(0.0),
-                            );
-                            let cursor = galley.cursor_from_pos(local_pos);
-                            let local_col = cursor.index.min(segment_chars);
-                            let global = segment_range.start.saturating_add(local_col);
-                            if response.drag_started() {
-                                self.reset_virtual_click_streak();
-                                pending_action = Some(RowAction::DragStart { global });
-                            } else if response.clicked() {
-                                let click_count = self.register_virtual_click(pointer_pos);
-                                match click_count {
-                                    3 => {
-                                        pending_action = Some(RowAction::Triple { line_idx });
+                        let pointer_pos = primary_pressed_on_row
+                            .map(|(pos, _)| pos)
+                            .or_else(|| response.interact_pointer_pos());
+                        let owns_pointer = pointer_pos.is_some_and(|pos| {
+                            ui.ctx()
+                                .layer_id_at(pos)
+                                .is_none_or(|layer_id| layer_id == ui.layer_id())
+                        });
+                        let row = RowRender {
+                            line_idx,
+                            segment_start: segment_range.start,
+                            segment_chars,
+                            starts_line,
+                            ends_line,
+                            rect,
+                            text_rect,
+                            text_origin,
+                            galley,
+                        };
+                        if pending_action.is_none()
+                            && owns_pointer
+                            && self.virtual_pointer_press_modifiers.is_some()
+                            && (response.drag_started()
+                                || response.clicked()
+                                || primary_pressed_on_row.is_some())
+                        {
+                            if let Some(pointer_pos) = pointer_pos {
+                                let global = row.char_index_at(pointer_pos);
+                                let local_col = global.saturating_sub(row.segment_start);
+                                if response.drag_started() {
+                                    self.reset_virtual_click_streak();
+                                    pending_action = Some(RowAction::DragStart { global });
+                                } else if response.clicked() {
+                                    let click_count = self.register_virtual_click(pointer_pos);
+                                    match click_count {
+                                        3 => {
+                                            pending_action = Some(RowAction::Triple { line_idx });
+                                        }
+                                        2 => {
+                                            pending_action = Some(RowAction::Double {
+                                                line_idx,
+                                                line_start,
+                                                column_in_line: segment_start_in_line
+                                                    .saturating_add(local_col)
+                                                    .min(line_chars),
+                                            });
+                                        }
+                                        _ => {
+                                            pending_action = Some(RowAction::Click { global });
+                                        }
                                     }
-                                    2 => {
-                                        pending_action = Some(RowAction::Double {
-                                            line_idx,
-                                            line_start,
-                                            column_in_line: segment_start_in_line
-                                                .saturating_add(local_col)
-                                                .min(line_chars),
-                                        });
-                                    }
-                                    _ => {
-                                        pending_action = Some(RowAction::Click { global });
-                                    }
+                                } else {
+                                    pending_action = Some(RowAction::Click { global });
                                 }
-                            } else {
-                                pending_action = Some(RowAction::Click { global });
                             }
                         }
+                        rows.push(row);
                     }
-                    rows.push(RowRender {
-                        line_idx,
-                        segment_start: segment_range.start,
-                        segment_chars,
-                        starts_line,
-                        ends_line,
-                        rect,
-                        text_rect,
-                        text_origin,
-                        galley,
-                    });
-                }
 
-                if let Some(action) = pending_action {
-                    self.virtual_editor_state.has_focus = true;
-                    request_virtual_editor_focus(
-                        ui,
-                        editor_id,
-                        editor_shortcuts_unblocked_for_frame,
-                    );
-                    focused = true;
-                    editor_pointer_action_handled = true;
-                    match action {
-                        RowAction::Click { global } => {
-                            self.virtual_editor_state
-                                .set_cursor(global, self.virtual_editor_buffer.len_chars());
-                            self.virtual_editor_state.clear_preferred_column();
-                            self.reset_virtual_caret_blink();
-                        }
-                        RowAction::Triple { line_idx } => {
-                            self.virtual_select_line(line_idx);
-                            self.reset_virtual_caret_blink();
-                        }
-                        RowAction::Double {
-                            line_idx,
-                            line_start,
-                            column_in_line,
-                        } => {
-                            let word_bounds = {
-                                self.virtual_editor_buffer.line_without_newline_into(
-                                    line_idx,
-                                    &mut self.virtual_line_scratch,
-                                );
-                                virtual_editor_double_click_selection_bounds(
-                                    line_start,
-                                    column_in_line,
-                                    self.virtual_line_scratch.as_str(),
-                                    |global| self.clamp_virtual_cursor_for_render(global),
-                                )
-                            };
-                            if let Some((global_start, global_end)) = word_bounds {
-                                self.virtual_editor_state.set_cursor(
-                                    global_start,
-                                    self.virtual_editor_buffer.len_chars(),
-                                );
+                    if let Some(action) = pending_action {
+                        self.virtual_editor_state.has_focus = true;
+                        request_virtual_editor_focus(
+                            ui,
+                            editor_id,
+                            editor_shortcuts_unblocked_for_frame,
+                        );
+                        focused = true;
+                        editor_pointer_action_handled = true;
+                        match action {
+                            RowAction::Click { global } => {
                                 self.virtual_editor_state.move_cursor(
-                                    global_end,
+                                    global,
+                                    self.virtual_editor_buffer.len_chars(),
+                                    self.virtual_pointer_press_modifiers
+                                        .is_some_and(|mods| mods.shift),
+                                );
+                                self.virtual_editor_state.clear_preferred_column();
+                                self.reset_virtual_caret_blink();
+                            }
+                            RowAction::Triple { line_idx } => {
+                                self.virtual_select_line(line_idx);
+                                self.reset_virtual_caret_blink();
+                            }
+                            RowAction::Double {
+                                line_idx,
+                                line_start,
+                                column_in_line,
+                            } => {
+                                let word_bounds = {
+                                    self.virtual_editor_buffer.line_without_newline_into(
+                                        line_idx,
+                                        &mut self.virtual_line_scratch,
+                                    );
+                                    virtual_editor_double_click_selection_bounds(
+                                        line_start,
+                                        column_in_line,
+                                        self.virtual_line_scratch.as_str(),
+                                        |global| self.clamp_virtual_cursor_for_render(global),
+                                    )
+                                };
+                                if let Some((global_start, global_end)) = word_bounds {
+                                    self.virtual_editor_state.set_cursor(
+                                        global_start,
+                                        self.virtual_editor_buffer.len_chars(),
+                                    );
+                                    self.virtual_editor_state.move_cursor(
+                                        global_end,
+                                        self.virtual_editor_buffer.len_chars(),
+                                        true,
+                                    );
+                                } else {
+                                    let global = self.clamp_virtual_cursor_for_render(
+                                        line_start.saturating_add(column_in_line),
+                                    );
+                                    self.virtual_editor_state
+                                        .set_cursor(global, self.virtual_editor_buffer.len_chars());
+                                }
+                                self.virtual_editor_state.clear_preferred_column();
+                                self.reset_virtual_caret_blink();
+                            }
+                            RowAction::DragStart { global } => {
+                                // The press already established the anchor. Preserve
+                                // it when movement first crosses egui's drag threshold.
+                                self.virtual_editor_state.move_cursor(
+                                    global,
                                     self.virtual_editor_buffer.len_chars(),
                                     true,
                                 );
-                            } else {
-                                let global = self.clamp_virtual_cursor_for_render(
-                                    line_start.saturating_add(column_in_line),
-                                );
-                                self.virtual_editor_state
-                                    .set_cursor(global, self.virtual_editor_buffer.len_chars());
+                                self.virtual_drag_active = true;
+                                self.virtual_editor_state.clear_preferred_column();
+                                self.reset_virtual_caret_blink();
                             }
-                            self.virtual_editor_state.clear_preferred_column();
-                            self.reset_virtual_caret_blink();
                         }
-                        RowAction::DragStart { global } => {
-                            self.virtual_editor_state
-                                .set_cursor(global, self.virtual_editor_buffer.len_chars());
-                            self.virtual_editor_state.move_cursor(
-                                global,
-                                self.virtual_editor_buffer.len_chars(),
-                                true,
-                            );
-                            self.virtual_drag_active = true;
-                            self.virtual_editor_state.clear_preferred_column();
-                            self.reset_virtual_caret_blink();
-                        }
+                        ui.ctx().request_repaint();
                     }
-                    ui.ctx().request_repaint();
-                }
 
-                let pointer_pos = ui.input(|input| {
-                    input
-                        .pointer
-                        .interact_pos()
-                        .or_else(|| input.pointer.latest_pos())
-                });
-                let pointer_down = ui.input(|input| input.pointer.primary_down());
-                if pointer_down && self.virtual_drag_active {
-                    if let Some(pointer_pos) = pointer_pos {
-                        let viewport_rect = ui.clip_rect();
-                        let target_row = rows
-                            .iter()
-                            .find(|row| {
-                                pointer_pos.y >= row.rect.min.y && pointer_pos.y <= row.rect.max.y
-                            })
-                            .or_else(|| {
-                                let first = rows.first()?;
-                                let last = rows.last()?;
-                                if pointer_pos.y < first.rect.min.y {
-                                    Some(first)
-                                } else if pointer_pos.y > last.rect.max.y {
-                                    Some(last)
-                                } else {
-                                    None
+                    let pointer_pos = ui.input(|input| {
+                        input
+                            .pointer
+                            .interact_pos()
+                            .or_else(|| input.pointer.latest_pos())
+                    });
+                    let pointer_down = ui.input(|input| input.pointer.primary_down());
+                    let released_owned_drag = !self.virtual_drag_active
+                        && self.virtual_pointer_press_modifiers.is_some()
+                        && primary_release.is_some()
+                        && ui.input(|input| input.pointer.is_decidedly_dragging());
+                    if released_owned_drag {
+                        // egui clears a potential drag when the first threshold-crossing
+                        // movement and release arrive in one frame, so no row response
+                        // reports `drag_started`. The remembered content press still owns
+                        // that gesture; finish it through the ordinary drag endpoint path.
+                        self.virtual_drag_active = true;
+                        self.virtual_editor_state.clear_preferred_column();
+                        self.reset_virtual_click_streak();
+                    }
+                    let finishing_drag = !pointer_down && primary_release.is_some();
+                    if self.virtual_drag_active && (pointer_down || finishing_drag) {
+                        if let Some(pointer_pos) = primary_release.or(pointer_pos).filter(|pos| {
+                            ui.ctx()
+                                .layer_id_at(*pos)
+                                .is_none_or(|layer_id| layer_id == ui.layer_id())
+                        }) {
+                            let viewport_rect = ui.clip_rect();
+                            let target_row = rows
+                                .iter()
+                                .find(|row| {
+                                    pointer_pos.y >= row.rect.min.y
+                                        && pointer_pos.y <= row.rect.max.y
+                                })
+                                .or_else(|| {
+                                    let first = rows.first()?;
+                                    let last = rows.last()?;
+                                    if pointer_pos.y < first.rect.min.y {
+                                        Some(first)
+                                    } else if pointer_pos.y > last.rect.max.y {
+                                        Some(last)
+                                    } else {
+                                        None
+                                    }
+                                });
+                            if let Some(row) = target_row {
+                                let global = row.char_index_at(pointer_pos);
+                                self.virtual_editor_state.move_cursor(
+                                    global,
+                                    self.virtual_editor_buffer.len_chars(),
+                                    true,
+                                );
+                                self.reset_virtual_caret_blink();
+                            }
+                            if pointer_down {
+                                let scroll_delta = drag_autoscroll_delta(
+                                    pointer_pos.y,
+                                    viewport_rect.min.y,
+                                    viewport_rect.max.y,
+                                    self.virtual_line_height,
+                                );
+                                if scroll_delta != 0.0 {
+                                    ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
+                                    ui.ctx().request_repaint();
                                 }
-                            });
-                        if let Some(row) = target_row {
-                            let clamped_pos = egui::pos2(
-                                pointer_pos
-                                    .x
-                                    .clamp(row.text_rect.min.x, row.text_rect.max.x),
-                                pointer_pos.y.clamp(row.rect.min.y, row.rect.max.y),
-                            );
-                            let local_pos = egui::vec2(
-                                (clamped_pos.x - row.text_origin.x).max(0.0),
-                                (clamped_pos.y - row.text_origin.y).max(0.0),
-                            );
-                            let cursor = row.galley.cursor_from_pos(local_pos);
-                            let global = row
-                                .segment_start
-                                .saturating_add(cursor.index.min(row.segment_chars));
-                            self.virtual_editor_state.move_cursor(
-                                global,
-                                self.virtual_editor_buffer.len_chars(),
-                                true,
-                            );
-                            self.reset_virtual_caret_blink();
-                        }
-                        let scroll_delta = drag_autoscroll_delta(
-                            pointer_pos.y,
-                            viewport_rect.min.y,
-                            viewport_rect.max.y,
-                            self.virtual_line_height,
-                        );
-                        if scroll_delta != 0.0 {
-                            ui.scroll_with_delta(egui::vec2(0.0, scroll_delta));
-                        }
-                    }
-                } else if !pointer_down {
-                    self.virtual_drag_active = false;
-                }
-
-                let selection_fill = ui.visuals().selection.bg_fill;
-                let now = Instant::now();
-                let blink_ticks = now
-                    .duration_since(self.virtual_caret_phase_start)
-                    .as_millis()
-                    / CARET_BLINK_INTERVAL.as_millis().max(1);
-                let caret_visible = blink_ticks % 2 == 0;
-                let clamped_caret_cursor =
-                    self.clamp_virtual_cursor_for_render(self.virtual_editor_state.cursor());
-                let paint_started = perf_enabled.then(Instant::now);
-                for row in rows {
-                    let galley = row.galley;
-                    if let Some(selection) =
-                        self.virtual_selection_for_line(row.segment_start, row.segment_chars)
-                    {
-                        paint_virtual_selection_overlay(
-                            ui.painter(),
-                            row.text_rect,
-                            galley.as_ref(),
-                            selection,
-                            selection_fill,
-                        );
-                    }
-                    if row.starts_line {
-                        ui.painter().text(
-                            egui::pos2(
-                                row.text_rect.min.x - VIRTUAL_EDITOR_LINE_NUMBER_PADDING,
-                                row.rect.center().y,
-                            ),
-                            egui::Align2::RIGHT_CENTER,
-                            (row.line_idx.saturating_add(1)).to_string(),
-                            line_number_font.clone(),
-                            COLOR_TEXT_MUTED,
-                        );
-                    }
-                    ui.painter()
-                        .galley(row.text_origin, galley.clone(), ui.visuals().text_color());
-
-                    if focused {
-                        let cursor = clamped_caret_cursor;
-                        let affinity = self.virtual_editor_state.wrap_boundary_affinity();
-                        let segment_end = row.segment_start.saturating_add(row.segment_chars);
-                        let at_row_start = cursor == row.segment_start;
-                        let at_row_end = cursor == segment_end;
-                        let shows_caret = if cursor < segment_end {
-                            !(at_row_start
-                                && !row.starts_line
-                                && affinity == WrapBoundaryAffinity::Upstream)
-                        } else {
-                            at_row_end
-                                && (row.ends_line || affinity == WrapBoundaryAffinity::Upstream)
-                        };
-                        if cursor >= row.segment_start && shows_caret {
-                            let local_col = cursor.saturating_sub(row.segment_start);
-                            let caret_rect = galley.pos_from_cursor(CCursor::new(local_col));
-                            let x = (row.text_origin.x + caret_rect.min.x).max(row.text_origin.x);
-                            let y_min = row.text_origin.y + caret_rect.min.y;
-                            let mut y_max = row.text_origin.y + caret_rect.max.y;
-                            if y_max <= y_min {
-                                y_max = y_min + self.virtual_line_height.max(1.0);
                             }
-                            let global_caret_rect = egui::Rect::from_min_max(
-                                egui::pos2(x, y_min),
-                                egui::pos2(x, y_max),
+                        }
+                    }
+                    if !pointer_down {
+                        self.virtual_drag_active = false;
+                    }
+
+                    let selection_fill = ui.visuals().selection.bg_fill;
+                    let now = Instant::now();
+                    let blink_ticks = now
+                        .duration_since(self.virtual_caret_phase_start)
+                        .as_millis()
+                        / CARET_BLINK_INTERVAL.as_millis().max(1);
+                    let caret_visible = blink_ticks % 2 == 0;
+                    let clamped_caret_cursor =
+                        self.clamp_virtual_cursor_for_render(self.virtual_editor_state.cursor());
+                    let paint_started = perf_enabled.then(Instant::now);
+                    for row in rows {
+                        let galley = row.galley;
+                        if let Some(selection) =
+                            self.virtual_selection_for_line(row.segment_start, row.segment_chars)
+                        {
+                            paint_virtual_selection_overlay(
+                                ui.painter(),
+                                row.text_rect,
+                                galley.as_ref(),
+                                selection,
+                                selection_fill,
                             );
-                            ime_cursor_rect = Some(global_caret_rect);
-                            if caret_visible {
-                                ui.painter().line_segment(
-                                    [egui::pos2(x, y_min), egui::pos2(x, y_max)],
-                                    Stroke::new(1.0, ui.visuals().text_color()),
+                        }
+                        if row.starts_line {
+                            ui.painter().text(
+                                egui::pos2(
+                                    row.text_rect.min.x - VIRTUAL_EDITOR_LINE_NUMBER_PADDING,
+                                    row.rect.center().y,
+                                ),
+                                egui::Align2::RIGHT_CENTER,
+                                (row.line_idx.saturating_add(1)).to_string(),
+                                line_number_font.clone(),
+                                COLOR_TEXT_MUTED,
+                            );
+                        }
+                        ui.painter().galley(
+                            row.text_origin,
+                            galley.clone(),
+                            ui.visuals().text_color(),
+                        );
+
+                        {
+                            let cursor = clamped_caret_cursor;
+                            let affinity = self.virtual_editor_state.wrap_boundary_affinity();
+                            let segment_end = row.segment_start.saturating_add(row.segment_chars);
+                            let at_row_start = cursor == row.segment_start;
+                            let at_row_end = cursor == segment_end;
+                            let shows_caret = if cursor < segment_end {
+                                !(at_row_start
+                                    && !row.starts_line
+                                    && affinity == WrapBoundaryAffinity::Upstream)
+                            } else {
+                                at_row_end
+                                    && (row.ends_line || affinity == WrapBoundaryAffinity::Upstream)
+                            };
+                            if cursor >= row.segment_start && shows_caret {
+                                let local_col = cursor.saturating_sub(row.segment_start);
+                                let caret_rect = galley.pos_from_cursor(CCursor::new(local_col));
+                                let x =
+                                    (row.text_origin.x + caret_rect.min.x).max(row.text_origin.x);
+                                let y_min = row.text_origin.y + caret_rect.min.y;
+                                let mut y_max = row.text_origin.y + caret_rect.max.y;
+                                if y_max <= y_min {
+                                    y_max = y_min + self.virtual_line_height.max(1.0);
+                                }
+                                let global_caret_rect = egui::Rect::from_min_max(
+                                    egui::pos2(x, y_min),
+                                    egui::pos2(x, y_max),
                                 );
+                                ime_cursor_rect = Some(global_caret_rect);
+                                if focused && caret_visible {
+                                    ui.painter().line_segment(
+                                        [egui::pos2(x, y_min), egui::pos2(x, y_max)],
+                                        Stroke::new(1.0, ui.visuals().text_color()),
+                                    );
+                                }
                             }
                         }
                     }
-                }
-                if let Some(started) = paint_started {
-                    paint_ms = started.elapsed().as_secs_f32() * 1000.0;
-                }
-            });
-        let follow_requested = self.virtual_follow_cursor_next_frame;
-        if follow_requested {
-            self.virtual_follow_cursor_next_frame = false;
-        }
-        if had_focus && !self.virtual_drag_active {
-            let cursor_row = self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
-            let viewport_rows =
-                ((editor_height / self.virtual_line_height).floor().max(1.0)) as usize;
-            if let Some(offset) = follow_cursor_scroll_offset_y(
-                follow_requested,
-                cursor_row,
+                    if let Some(started) = paint_started {
+                        paint_ms = started.elapsed().as_secs_f32() * 1000.0;
+                    }
+                })
+            })
+            .inner;
+        self.virtual_viewport_height = scroll_output.inner_rect.height();
+        self.virtual_viewport = EditorViewport {
+            rect: Some(scroll_output.inner_rect),
+            caret: ime_cursor_rect,
+            offset_y: scroll_output.state.offset.y,
+        };
+        if let Some(reveal) = self.virtual_cursor_reveal.take() {
+            let row = self.virtual_cursor_row_index(self.virtual_editor_state.cursor());
+            let offset = reveal.offset(
+                row,
                 scroll_output.state.offset.y,
-                viewport_rows,
+                scroll_output.inner_rect.height(),
                 self.virtual_line_height,
-            ) {
-                self.virtual_pending_scroll_offset_y = Some(offset.max(0.0));
+            );
+            if (offset - scroll_output.state.offset.y).abs() > 0.5 {
+                self.virtual_pending_scroll_offset_y = Some(offset);
+                ui.ctx().request_repaint();
             }
         }
         // Include scrollbar gutter when classifying inside/outside editor clicks.
@@ -595,37 +671,53 @@ impl LocalPasteApp {
         // Treat any primary click inside the editor viewport as an explicit focus
         // claim, even when no row hit-test action fired (e.g. empty space below
         // the last visual row).
-        let primary_pressed =
-            ui.input(|input| input.pointer.button_pressed(egui::PointerButton::Primary));
-        let pointer_press_pos = ui.input(|input| {
-            input
-                .pointer
-                .interact_pos()
-                .or_else(|| input.pointer.latest_pos())
-        });
+        let pointer_press_pos = primary_press.map(|(pos, _)| pos);
         let clicked_inside_editor = pointer_press_pos
-            .map(|pos| primary_pressed && interaction_rect.contains(pos))
+            .map(|pos| {
+                interaction_rect.contains(pos) && ui.ctx().layer_id_at(pos) == Some(ui.layer_id())
+            })
             .unwrap_or(false);
         let clicked_inside_editor_content = pointer_press_pos
-            .map(|pos| primary_pressed && scroll_output.inner_rect.contains(pos))
+            .map(|pos| {
+                let content_rect = egui::Rect::from_min_max(
+                    scroll_output.inner_rect.min,
+                    egui::pos2(
+                        (scroll_output.inner_rect.max.x - floating_scrollbar_hit_width)
+                            .max(scroll_output.inner_rect.min.x),
+                        scroll_output.inner_rect.max.y,
+                    ),
+                );
+                content_rect.contains(pos)
+            })
             .unwrap_or(false);
         if clicked_inside_editor {
+            if clicked_inside_editor_content {
+                self.virtual_pointer_press_modifiers =
+                    primary_press.map(|(_, modifiers)| modifiers);
+            }
             self.virtual_editor_state.has_focus = true;
             request_virtual_editor_focus(ui, editor_id, editor_shortcuts_unblocked_for_frame);
             egui_focus = true;
             if clicked_inside_editor_content && !editor_pointer_action_handled {
                 let eof =
                     self.clamp_virtual_cursor_for_render(self.virtual_editor_buffer.len_chars());
-                self.virtual_editor_state
-                    .set_cursor(eof, self.virtual_editor_buffer.len_chars());
+                self.virtual_editor_state.move_cursor(
+                    eof,
+                    self.virtual_editor_buffer.len_chars(),
+                    self.virtual_pointer_press_modifiers
+                        .is_some_and(|mods| mods.shift),
+                );
                 self.virtual_editor_state.clear_preferred_column();
                 self.reset_virtual_click_streak();
                 self.reset_virtual_caret_blink();
                 ui.ctx().request_repaint();
             }
         }
+        if !ui.input(|input| input.pointer.primary_down()) {
+            self.virtual_pointer_press_modifiers = None;
+        }
         let clicked_outside_editor = pointer_press_pos
-            .map(|pos| primary_pressed && !interaction_rect.contains(pos))
+            .map(|pos| !interaction_rect.contains(pos))
             .unwrap_or(false);
         let explicit_blur = should_explicitly_blur_virtual_editor(
             clicked_outside_editor,
@@ -723,15 +815,10 @@ impl LocalPasteApp {
             if apply_result.changed {
                 self.mark_dirty();
             }
-            if apply_result.cursor_moved {
-                let queued_follow_scroll = self.queue_virtual_cursor_follow_scroll(
-                    scroll_output.state.offset.y,
-                    editor_height,
-                );
-                self.virtual_follow_cursor_next_frame =
-                    !queued_follow_scroll && apply_result.pasted;
-            }
-            if apply_result.changed || apply_result.cursor_moved {
+            if apply_result.changed
+                || apply_result.cursor_moved
+                || self.virtual_cursor_reveal.is_some()
+            {
                 ui.ctx().request_repaint();
             }
             let selection_chars = self

@@ -49,7 +49,113 @@ pub(super) fn display_language_label(
 /// Markdown fenced-code representation.
 pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) -> String {
     let lang = language.unwrap_or("text");
-    format!("```{}\n{}\n```", lang, content)
+    let fence_len = content
+        .split(|ch| ch != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or_default()
+        .max(2)
+        + 1;
+    let fence = "`".repeat(fence_len);
+    format!("{fence}{lang}\n{content}\n{fence}")
+}
+
+/// Formats selected text as a Markdown link when the clipboard holds one web URL.
+///
+/// # Arguments
+/// - `label`: Selected editor text to retain as the link label.
+/// - `clipboard`: Clipboard text containing a single HTTP(S) URL.
+///
+/// # Returns
+/// A link retaining the original URL spelling, or `None` for ordinary pasted text
+/// and for a selection that is itself a URL, which the paste replaces.
+///
+/// # Panics
+/// Code-span offsets come from ASCII backtick matches, so slices are always on UTF-8 boundaries.
+pub(super) fn format_markdown_link(label: &str, clipboard: &str) -> Option<String> {
+    let destination = web_url(clipboard)?;
+    // Replacing a URL, including one inside an existing link or reference
+    // definition, must not nest a new link around it.
+    if web_url(label).is_some() {
+        return None;
+    }
+    // Only equal-length backtick runs delimit code spans. Index their next
+    // matches once so many unmatched runs cannot cause repeated suffix scans.
+    let mut ticks: Vec<(usize, usize)> = Vec::new();
+    for (offset, _) in label.match_indices('`') {
+        match ticks.last_mut() {
+            Some((_, end)) if *end == offset => *end += 1,
+            _ => ticks.push((offset, offset + 1)),
+        }
+    }
+    let mut next = std::collections::HashMap::new();
+    let mut code_ends = std::collections::HashMap::new();
+    for &(start, end) in ticks.iter().rev() {
+        if let Some(close) = next.insert(end - start, end) {
+            code_ends.insert(start, close);
+        }
+    }
+    let mut link = String::from("[");
+    let mut chars = label.char_indices().peekable();
+    while let Some((offset, ch)) = chars.next() {
+        if let Some(&end) = (ch == '`').then(|| code_ends.get(&offset)).flatten() {
+            // Escapes are literal inside code. Code-span line endings render
+            // as spaces; keep the generated link within a single paragraph.
+            link.push_str(
+                &label[offset..end]
+                    .replace("\r\n", " ")
+                    .replace(['\r', '\n'], " "),
+            );
+            while chars.peek().is_some_and(|(offset, _)| *offset < end) {
+                chars.next();
+            }
+            continue;
+        }
+        match ch {
+            '\n' => link.push_str("&#10;"),
+            '\r' => link.push_str("&#13;"),
+            '\\' => {
+                link.push(ch);
+                if let Some((_, escaped)) = chars.peek().filter(|(_, ch)| ch.is_ascii_punctuation())
+                {
+                    // Preserve existing escapes without creating new code spans.
+                    link.push(*escaped);
+                    chars.next();
+                } else {
+                    link.push(ch);
+                }
+            }
+            '[' | ']' | '<' | '>' | '`' => {
+                link.push('\\');
+                link.push(ch);
+            }
+            _ => link.push(ch),
+        }
+    }
+    link.push_str("](");
+    for ch in destination.chars() {
+        // CommonMark decodes escapes and entities in link destinations.
+        if matches!(ch, '\\' | '(' | ')' | '<' | '>' | '&') {
+            link.push('\\');
+        }
+        link.push(ch);
+    }
+    link.push(')');
+    Some(link)
+}
+
+/// Returns trimmed text when it is exactly one HTTP(S) URL with a host.
+fn web_url(text: &str) -> Option<&str> {
+    let url = text.trim();
+    if url.chars().any(|ch| ch.is_whitespace() || ch.is_control()) {
+        return None;
+    }
+    let (scheme, _) = url.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    url::Url::parse(url).ok()?.host_str()?;
+    Some(url)
 }
 
 /// Parses comma-separated tags, trimming whitespace and removing case-insensitive duplicates.
@@ -188,6 +294,18 @@ mod tests {
         assert_eq!(
             format_fenced_code_block("print('hi')", None),
             "```text\nprint('hi')\n```"
+        );
+    }
+
+    #[test]
+    fn format_fenced_code_block_uses_a_delimiter_longer_than_content_runs() {
+        assert_eq!(
+            format_fenced_code_block("before\n```\nafter", Some("markdown")),
+            "````markdown\nbefore\n```\nafter\n````"
+        );
+        assert_eq!(
+            format_fenced_code_block("`````", None),
+            "``````text\n`````\n``````"
         );
     }
 

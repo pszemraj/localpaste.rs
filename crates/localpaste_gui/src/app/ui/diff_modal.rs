@@ -72,6 +72,8 @@ impl LocalPasteApp {
         };
 
         let mut keep_open = true;
+        let close_on_escape =
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let mut pending_target: Option<String> = None;
         let _recomputed_diff_preview = self.sync_diff_preview_cache();
 
@@ -82,6 +84,11 @@ impl LocalPasteApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Compare current paste against:");
+                    if self.version_ui.diff_query_focus_requested
+                        && super::focus_visible_query(ui, egui::Id::new(DIFF_QUERY_INPUT_ID))
+                    {
+                        self.version_ui.diff_query_focus_requested = false;
+                    }
                     ui.add(
                         egui::TextEdit::singleline(&mut self.version_ui.diff_query)
                             .id(egui::Id::new(DIFF_QUERY_INPUT_ID))
@@ -100,6 +107,7 @@ impl LocalPasteApp {
                     left.add_space(4.0);
 
                     egui::ScrollArea::vertical()
+                        .id_salt("diff_candidates")
                         .max_height(640.0)
                         .show(left, |ui| {
                             for item in self.diff_candidates() {
@@ -193,6 +201,7 @@ impl LocalPasteApp {
                                     let row_height =
                                         right.text_style_height(&egui::TextStyle::Monospace).max(1.0);
                                     egui::ScrollArea::vertical()
+                                        .id_salt("diff_preview")
                                         .max_height(DIFF_MODAL_HEIGHT)
                                         .auto_shrink([false, false])
                                         .show_rows(right, row_height, diff_lines.len(), |ui, range| {
@@ -227,7 +236,7 @@ impl LocalPasteApp {
         if let Some(target_id) = pending_target {
             self.request_diff_target(target_id);
         }
-        if !keep_open {
+        if close_on_escape || !keep_open {
             self.close_diff_modal();
         }
     }

@@ -205,7 +205,7 @@ fn virtual_select_line_matrix_handles_terminal_and_non_terminal_lines() {
 }
 
 #[test]
-fn staged_highlight_waits_for_idle() {
+fn staged_highlight_waits_for_idle_in_virtual_editor_mode() {
     let mut harness = make_app();
     insert_active_text(&mut harness.app, "x", 0);
     let active_revision = harness.app.active_revision();
@@ -232,7 +232,7 @@ fn staged_highlight_waits_for_idle() {
         changed_line_range: None,
         lines: Vec::new(),
     };
-    harness.app.highlight_staged = Some(render.clone());
+    harness.app.highlight_staged = Some(render);
     let now = Instant::now();
     harness.app.last_interaction_at = Some(now);
     harness.app.maybe_apply_staged_highlight(now);
@@ -654,71 +654,86 @@ fn queue_highlight_patch_prefers_latest_staged_base() {
 }
 
 #[test]
-fn queue_highlight_patch_clears_matching_pending_request() {
-    let mut harness = make_app();
-    harness.app.highlight_staged = Some(HighlightRender {
-        paste_id: "alpha".to_string(),
-        revision: 11,
-        text_len: harness.app.active_text_chars(),
-        base_revision: None,
-        base_text_len: None,
-        language_hint: "py".to_string(),
-        theme_key: "base16-mocha.dark".to_string(),
-        changed_line_range: None,
-        lines: vec![
-            HighlightRenderLine::plain(4),
-            HighlightRenderLine::plain(5),
-            HighlightRenderLine::plain(6),
-        ],
-    });
-    harness.app.highlight_pending = Some(super::super::highlight::HighlightRequestMeta {
-        paste_id: "alpha".to_string(),
-        revision: 12,
-        text_len: harness.app.active_text_chars(),
-        language_hint: "py".to_string(),
-        theme_key: "base16-mocha.dark".to_string(),
-    });
+fn queue_highlight_patch_clears_only_matching_pending_request() {
+    for pending_revision in [12, 13] {
+        let mut harness = make_app();
+        harness.app.highlight_staged = Some(HighlightRender {
+            paste_id: "alpha".to_string(),
+            revision: 11,
+            text_len: harness.app.active_text_chars(),
+            base_revision: None,
+            base_text_len: None,
+            language_hint: "py".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            changed_line_range: None,
+            lines: vec![
+                HighlightRenderLine::plain(4),
+                HighlightRenderLine::plain(5),
+                HighlightRenderLine::plain(6),
+            ],
+        });
+        harness.app.highlight_pending = Some(super::super::highlight::HighlightRequestMeta {
+            paste_id: "alpha".to_string(),
+            revision: pending_revision,
+            text_len: harness.app.active_text_chars(),
+            language_hint: "py".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+        });
 
-    harness.app.queue_highlight_patch(HighlightPatch {
-        paste_id: "alpha".to_string(),
-        revision: 12,
-        text_len: harness.app.active_text_chars(),
-        base_revision: 11,
-        base_text_len: harness.app.active_text_chars(),
-        language_hint: "py".to_string(),
-        theme_key: "base16-mocha.dark".to_string(),
-        total_lines: 3,
-        line_range: 1..2,
-        lines: vec![HighlightRenderLine::plain(99)],
-    });
+        harness.app.queue_highlight_patch(HighlightPatch {
+            paste_id: "alpha".to_string(),
+            revision: 12,
+            text_len: harness.app.active_text_chars(),
+            base_revision: 11,
+            base_text_len: harness.app.active_text_chars(),
+            language_hint: "py".to_string(),
+            theme_key: "base16-mocha.dark".to_string(),
+            total_lines: 3,
+            line_range: 1..2,
+            lines: vec![HighlightRenderLine::plain(99)],
+        });
 
-    assert!(harness.app.highlight_pending.is_none());
+        assert_eq!(
+            harness
+                .app
+                .highlight_pending
+                .as_ref()
+                .map(|pending| pending.revision),
+            (pending_revision == 13).then_some(13)
+        );
+    }
 }
 
 #[test]
 fn queue_highlight_patch_requires_matching_base_revision_and_text_length() {
     let mut harness = make_app();
-    harness.app.highlight_render = Some(HighlightRender {
+    let app = &mut harness.app;
+    app.virtual_editor_buffer.replace_char_range(0..1, "C");
+    let revision = app.active_revision();
+    app.highlight_render = Some(HighlightRender {
         paste_id: "alpha".to_string(),
-        revision: 5,
-        text_len: harness.app.active_text_chars(),
+        revision: 0,
+        text_len: app.active_text_chars(),
         base_revision: None,
         base_text_len: None,
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         changed_line_range: None,
-        lines: vec![
-            HighlightRenderLine::plain(2),
-            HighlightRenderLine::plain(2),
-            HighlightRenderLine::plain(2),
-        ],
+        lines: vec![HighlightRenderLine::plain(2); 3],
     });
-    harness.app.queue_highlight_patch(HighlightPatch {
+    app.highlight_pending = Some(HighlightRequestMeta {
+        paste_id: "alpha".into(),
+        revision,
+        text_len: app.active_text_len_bytes(),
+        language_hint: "py".into(),
+        theme_key: "base16-mocha.dark".into(),
+    });
+    app.queue_highlight_patch(HighlightPatch {
         paste_id: "alpha".to_string(),
-        revision: 6,
-        text_len: harness.app.active_text_chars(),
+        revision,
+        text_len: app.active_text_chars(),
         base_revision: 4,
-        base_text_len: harness.app.active_text_chars().saturating_add(99),
+        base_text_len: app.active_text_chars().saturating_add(99),
         language_hint: "py".to_string(),
         theme_key: "base16-mocha.dark".to_string(),
         total_lines: 3,
@@ -726,9 +741,8 @@ fn queue_highlight_patch_requires_matching_base_revision_and_text_length() {
         lines: vec![HighlightRenderLine::plain(9)],
     });
 
-    assert!(harness.app.highlight_staged.is_none());
-    let active = harness
-        .app
+    assert!(app.highlight_staged.is_none());
+    let active = app
         .highlight_render
         .as_ref()
         .expect("active render should remain");
@@ -738,6 +752,30 @@ fn queue_highlight_patch_requires_matching_base_revision_and_text_length() {
         .map(|line| line.len_for_test())
         .collect();
     assert_eq!(lens, vec![2, 2, 2]);
+    assert!(
+        app.highlight_pending.is_none(),
+        "a rejected completed reply must allow recovery"
+    );
+    assert!(app.should_request_highlight("py", "base16-mocha.dark", false, "alpha"));
+    app.dispatch_highlight_request(
+        revision,
+        HighlightRequestText::Rope(app.virtual_editor_buffer.rope().clone()),
+        "py",
+        "base16-mocha.dark",
+        "alpha",
+    );
+    let reply = app
+        .highlight_worker
+        .rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("recovery render");
+    let HighlightWorkerResult::Render(render) = reply.result else {
+        panic!("unmatched worker base requires full render")
+    };
+    app.queue_highlight_render(render);
+    app.apply_staged_highlight();
+    assert_eq!(app.highlight_render.as_ref().unwrap().revision, revision);
+    assert!(app.highlight_pending.is_none());
 }
 
 #[test]
@@ -843,63 +881,6 @@ fn apply_staged_highlight_patch_evicts_only_changed_virtual_editor_lines() {
 }
 
 #[test]
-fn staged_highlight_waits_for_idle_in_virtual_editor_mode() {
-    let mut harness = make_app();
-    harness
-        .app
-        .virtual_editor_buffer
-        .replace_char_range(0..0, "x")
-        .expect("virtual edit delta");
-    harness.app.highlight_render = Some(HighlightRender {
-        paste_id: "alpha".to_string(),
-        revision: 0,
-        text_len: harness.app.active_text_len_bytes(),
-        base_revision: None,
-        base_text_len: None,
-        language_hint: "py".to_string(),
-        theme_key: "base16-mocha.dark".to_string(),
-        changed_line_range: None,
-        lines: Vec::new(),
-    });
-    harness.app.highlight_staged = Some(HighlightRender {
-        paste_id: "alpha".to_string(),
-        revision: 1,
-        text_len: harness.app.active_text_len_bytes(),
-        base_revision: None,
-        base_text_len: None,
-        language_hint: "py".to_string(),
-        theme_key: "base16-mocha.dark".to_string(),
-        changed_line_range: None,
-        lines: Vec::new(),
-    });
-    let now = Instant::now();
-    harness.app.last_interaction_at = Some(now);
-    harness.app.maybe_apply_staged_highlight(now);
-
-    assert_eq!(
-        harness
-            .app
-            .highlight_render
-            .as_ref()
-            .map(|render| render.revision),
-        Some(0)
-    );
-    assert!(harness.app.highlight_staged.is_some());
-
-    harness
-        .app
-        .maybe_apply_staged_highlight(now + HIGHLIGHT_APPLY_IDLE + Duration::from_millis(5));
-    assert_eq!(
-        harness
-            .app
-            .highlight_render
-            .as_ref()
-            .map(|render| render.revision),
-        Some(1)
-    );
-}
-
-#[test]
 fn highlight_debounce_window_adapts_to_edit_size_and_buffer() {
     let mut harness = make_app();
     assert_eq!(
@@ -908,7 +889,7 @@ fn highlight_debounce_window_adapts_to_edit_size_and_buffer() {
     );
 
     harness.app.highlight_edit_hint = Some(VirtualEditHint {
-        start_line: 0,
+        start_byte: 0,
         touched_lines: 1,
         inserted_chars: 1,
         deleted_chars: 0,

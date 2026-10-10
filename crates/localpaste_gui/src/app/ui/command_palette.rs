@@ -3,7 +3,7 @@
 use super::super::shortcuts::{runtime_shortcut_label, RuntimeShortcutAction};
 use super::super::*;
 use crate::backend::CoreCmd;
-use eframe::egui::{self, RichText};
+use eframe::egui;
 
 /// Executable actions exposed by the command palette.
 #[derive(Clone, Debug)]
@@ -18,6 +18,12 @@ pub(crate) enum CommandPaletteAction {
     FocusSearch,
     ToggleProperties,
     RefreshList,
+    Export,
+    Duplicate,
+    Copy,
+    CopyLink,
+    Find,
+    PastePicker,
     OpenPaste(String),
     DeletePaste(String),
     CopyPasteRaw(String),
@@ -33,17 +39,15 @@ pub(crate) struct CommandPaletteItem {
 }
 
 impl LocalPasteApp {
-    /// Renders the command palette modal and handles quick-action input.
+    /// Render commands without interleaving paste search results.
     ///
     /// # Panics
-    /// Panics if egui text layout internals fail while shaping palette rows.
+    /// Panics if egui text layout fails while shaping rows.
     pub(crate) fn render_command_palette(&mut self, ctx: &egui::Context) {
         if !self.command_palette_open {
             return;
         }
-
-        let mut pending_action: Option<CommandPaletteAction> = None;
-
+        let mut pending = None;
         egui::Window::new("Command Palette")
             .id(egui::Id::new("command_palette_modal"))
             .collapsible(false)
@@ -51,124 +55,76 @@ impl LocalPasteApp {
             .default_width(680.0)
             .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 60.0))
             .show(ctx, |ui| {
-                let mut query_buf = self.command_palette_query.clone();
-                let query_resp = ui.add(
-                    egui::TextEdit::singleline(&mut query_buf)
+                super::focus_visible_query(ui, egui::Id::new(COMMAND_PALETTE_INPUT_ID));
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.command_palette_query)
                         .id(egui::Id::new(COMMAND_PALETTE_INPUT_ID))
-                        .hint_text("Run a command or search pastes..."),
+                        .return_key(None)
+                        .hint_text("Search commands..."),
                 );
-                query_resp.request_focus();
-                if query_resp.changed() {
-                    self.set_command_palette_query(query_buf);
+                if response.changed() {
+                    self.command_palette_selected = 0;
                 }
-
-                if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+                {
                     self.command_palette_open = false;
+                    self.restore_discovery_focus(ctx);
                     return;
                 }
-
                 let actions = self.command_palette_actions();
-                let results = self.palette_results();
-                let total_items = actions.len().saturating_add(results.len());
-                if total_items == 0 {
-                    ui.add_space(8.0);
-                    let query = self.command_palette_query.trim();
-                    if !query.is_empty() && self.palette_search_last_sent != query {
-                        ui.label(RichText::new("Searching...").color(COLOR_TEXT_MUTED));
-                    } else {
-                        ui.label(RichText::new("No commands or results").color(COLOR_TEXT_MUTED));
-                    }
+                if actions.is_empty() {
+                    ui.label("No matching commands");
                     return;
                 }
-                self.clamp_command_palette_selection_with_results_len(results.len());
-
-                if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
-                    self.command_palette_selected =
-                        (self.command_palette_selected + 1).min(total_items.saturating_sub(1));
+                let down = ui.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+                });
+                let up = ui.input_mut(|input| {
+                    input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
+                });
+                if down {
+                    self.command_palette_selected += 1;
                 }
-                if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
+                if up {
                     self.command_palette_selected = self.command_palette_selected.saturating_sub(1);
                 }
-                if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
-                    if self.command_palette_selected < actions.len() {
-                        pending_action =
-                            Some(actions[self.command_palette_selected].action.clone());
-                    } else {
-                        let idx = self.command_palette_selected.saturating_sub(actions.len());
-                        if idx < results.len() {
-                            pending_action =
-                                Some(CommandPaletteAction::OpenPaste(results[idx].id.clone()));
-                        }
-                    }
+                self.command_palette_selected =
+                    self.command_palette_selected.min(actions.len() - 1);
+                if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+                {
+                    pending = Some(actions[self.command_palette_selected].action.clone());
                 }
-
-                ui.add_space(8.0);
-                ui.label(RichText::new("Commands").small().color(COLOR_TEXT_MUTED));
-                for (idx, item) in actions.iter().enumerate() {
-                    let selected = idx == self.command_palette_selected;
-                    let response = ui.selectable_label(
-                        selected,
-                        RichText::new(format!("{}  {}", item.label, item.hint)),
-                    );
-                    if response.clicked() {
-                        self.command_palette_selected = idx;
-                        pending_action = Some(item.action.clone());
-                    }
-                }
-
-                ui.add_space(6.0);
-                ui.label(RichText::new("Pastes").small().color(COLOR_TEXT_MUTED));
-                let row_height = ui.spacing().interact_size.y + 6.0;
                 egui::ScrollArea::vertical()
-                    .max_height(320.0)
-                    .auto_shrink([false; 2])
-                    .show_rows(ui, row_height, results.len(), |ui, range| {
-                        for idx in range {
-                            if let Some(item) = results.get(idx) {
-                                let absolute_idx = actions.len().saturating_add(idx);
-                                let selected = absolute_idx == self.command_palette_selected;
-                                ui.horizontal(|ui| {
-                                    let lang = display_language_label(
-                                        item.language.as_deref(),
-                                        false,
-                                        item.content_len >= HIGHLIGHT_PLAIN_THRESHOLD,
-                                    );
-                                    let label = format!("{}  [{}]", item.name, lang);
-                                    if ui
-                                        .selectable_label(selected, RichText::new(label))
-                                        .clicked()
-                                    {
-                                        self.command_palette_selected = absolute_idx;
-                                        pending_action =
-                                            Some(CommandPaletteAction::OpenPaste(item.id.clone()));
-                                    }
-                                    if ui.small_button("Delete").clicked() {
-                                        pending_action = Some(CommandPaletteAction::DeletePaste(
-                                            item.id.clone(),
-                                        ));
-                                    }
-                                    if ui.small_button("Copy").clicked() {
-                                        pending_action = Some(CommandPaletteAction::CopyPasteRaw(
-                                            item.id.clone(),
-                                        ));
-                                    }
-                                    if ui.small_button("Copy Fenced").clicked() {
-                                        pending_action = Some(
-                                            CommandPaletteAction::CopyPasteFenced(item.id.clone()),
-                                        );
-                                    }
-                                });
+                    .max_height(400.0)
+                    .show(ui, |ui| {
+                        for (index, item) in actions.iter().enumerate() {
+                            let selected = index == self.command_palette_selected;
+                            let row = ui.selectable_label(
+                                selected,
+                                format!("{}  {}", item.label, item.hint),
+                            );
+                            if selected
+                                && (down || up || response.changed() || response.gained_focus())
+                            {
+                                row.scroll_to_me(None);
+                            }
+                            if row.clicked() {
+                                pending = Some(item.action.clone());
                             }
                         }
                     });
             });
-
-        if let Some(action) = pending_action {
+        if let Some(action) = pending {
             self.execute_command_palette_action(ctx, action);
         }
     }
 
-    fn execute_command_palette_action(
+    /// Execute a command or a paste-picker row action using the normal app workflow.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context for clipboard requests.
+    /// - `action`: Selected command or result action.
+    pub(super) fn execute_command_palette_action(
         &mut self,
         ctx: &egui::Context,
         action: CommandPaletteAction,
@@ -178,6 +134,7 @@ impl LocalPasteApp {
                 action,
                 CommandPaletteAction::NewPaste
                     | CommandPaletteAction::PasteAsNew
+                    | CommandPaletteAction::Duplicate
                     | CommandPaletteAction::DeleteSelected
                     | CommandPaletteAction::DeletePaste(_)
             )
@@ -185,7 +142,49 @@ impl LocalPasteApp {
             self.set_mutation_shortcut_blocked_status();
             return;
         }
+        // These actions intentionally move focus into a different workflow.
+        let restore_focus = !matches!(
+            action,
+            CommandPaletteAction::Find
+                | CommandPaletteAction::FocusSearch
+                | CommandPaletteAction::PastePicker
+                | CommandPaletteAction::NewPaste
+                | CommandPaletteAction::Duplicate
+                | CommandPaletteAction::PasteAsNew
+                | CommandPaletteAction::OpenPaste(_)
+                | CommandPaletteAction::DeleteSelected
+                | CommandPaletteAction::DeletePaste(_)
+                | CommandPaletteAction::OpenDiffModal
+                | CommandPaletteAction::OpenHistoryModal
+        );
         match action {
+            CommandPaletteAction::Export => {
+                self.export_selected_paste();
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::Duplicate => {
+                self.create_new_paste_with_content(self.active_snapshot());
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::Copy => {
+                if let Some(id) = self.selected_id.clone() {
+                    self.queue_palette_copy(id, false);
+                }
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::CopyLink => {
+                if let Some(id) = &self.selected_id {
+                    self.queue_clipboard_text(util::api_paste_link_for_copy(self.server_addr, id));
+                }
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::Find => {
+                self.open_editor_find();
+                self.command_palette_open = false;
+            }
+            CommandPaletteAction::PastePicker => {
+                self.open_paste_picker();
+            }
             CommandPaletteAction::NewPaste => {
                 self.create_new_paste();
                 self.command_palette_open = false;
@@ -231,7 +230,7 @@ impl LocalPasteApp {
                 self.open_palette_selection(id);
             }
             CommandPaletteAction::DeletePaste(id) => {
-                self.send_palette_delete(id);
+                self.send_palette_delete(ctx, id);
             }
             CommandPaletteAction::CopyPasteRaw(id) => {
                 self.queue_palette_copy(id, false);
@@ -240,34 +239,20 @@ impl LocalPasteApp {
                 self.queue_palette_copy(id, true);
             }
         }
+        if !self.command_palette_open && !self.paste_picker_open && !self.shortcut_help_open {
+            if restore_focus {
+                self.restore_discovery_focus(ctx);
+            } else {
+                self.discovery_return_focus = None;
+            }
+        }
     }
 
-    /// Returns the current count of executable command rows visible in the palette.
+    /// Build the executable command rows matching the current command query.
     ///
     /// # Returns
-    /// Number of command rows after query filtering.
-    pub(crate) fn command_palette_action_count(&self) -> usize {
-        self.command_palette_actions().len()
-    }
-
-    /// Clamps the absolute palette selection index using command rows + result rows.
-    ///
-    /// # Arguments
-    /// - `results_len`: Number of paste-result rows currently available.
-    pub(crate) fn clamp_command_palette_selection_with_results_len(&mut self, results_len: usize) {
-        let total_items = self
-            .command_palette_action_count()
-            .saturating_add(results_len);
-        if total_items == 0 {
-            self.command_palette_selected = 0;
-            return;
-        }
-        if self.command_palette_selected >= total_items {
-            self.command_palette_selected = total_items.saturating_sub(1);
-        }
-    }
-
-    fn command_palette_actions(&self) -> Vec<CommandPaletteItem> {
+    /// Commands available for the current selection, filtered by label and hint.
+    pub(in crate::app) fn command_palette_actions(&self) -> Vec<CommandPaletteItem> {
         let query = self.command_palette_query.trim().to_ascii_lowercase();
         let mut items = Vec::new();
 
@@ -278,10 +263,28 @@ impl LocalPasteApp {
         });
         items.push(CommandPaletteItem {
             label: "Paste as new paste".to_string(),
-            hint: shortcut_hint(RuntimeShortcutAction::PasteAsNew),
+            hint: String::new(),
             action: CommandPaletteAction::PasteAsNew,
         });
+        items.push(CommandPaletteItem {
+            label: "Open paste picker".into(),
+            hint: shortcut_hint(RuntimeShortcutAction::TogglePastePicker),
+            action: CommandPaletteAction::PastePicker,
+        });
         if self.selected_id.is_some() {
+            for (label, action) in [
+                ("Export paste", CommandPaletteAction::Export),
+                ("Duplicate paste", CommandPaletteAction::Duplicate),
+                ("Copy paste", CommandPaletteAction::Copy),
+                ("Copy link", CommandPaletteAction::CopyLink),
+                ("Find in paste", CommandPaletteAction::Find),
+            ] {
+                items.push(CommandPaletteItem {
+                    label: label.into(),
+                    hint: String::new(),
+                    action,
+                });
+            }
             items.push(CommandPaletteItem {
                 label: "Delete selected".to_string(),
                 hint: shortcut_hint(RuntimeShortcutAction::DeleteSelected),
@@ -340,7 +343,7 @@ impl LocalPasteApp {
             .collect()
     }
 
-    /// Queues a copy action for a palette result, loading selection if needed.
+    /// Copies a picker result without changing the editor selection.
     ///
     /// # Arguments
     /// - `id`: Paste id targeted by the copy action.
@@ -351,23 +354,23 @@ impl LocalPasteApp {
         } else {
             PaletteCopyAction::Raw(id.clone())
         };
+
+        if self.selected_id.as_deref() == Some(id.as_str()) && self.selected_paste.is_some() {
+            let language = self.edit_language.clone().or_else(|| {
+                self.selected_paste
+                    .as_ref()
+                    .and_then(|paste| paste.language.clone())
+            });
+            self.complete_palette_copy(action, self.active_snapshot(), language);
+            return;
+        }
+
+        self.palette_copy_request_id = self.palette_copy_request_id.wrapping_add(1);
         self.pending_copy_action = Some(action);
-
-        if self.selected_id.as_deref() != Some(id.as_str()) {
-            if !self.select_paste(id.clone()) {
-                self.pending_copy_action = None;
-                return;
-            }
-            self.set_status("Loading paste for copy...");
-            return;
-        }
-
-        if self.selected_paste.is_some() {
-            self.try_complete_pending_copy();
-            return;
-        }
-
-        if !self.dispatch_backend_cmd(CoreCmd::GetPaste { id }) {
+        if !self.dispatch_backend_cmd(CoreCmd::GetPasteForCopy {
+            id,
+            request_id: self.palette_copy_request_id,
+        }) {
             self.pending_copy_action = None;
             self.set_status("Load paste for copy failed: backend unavailable.");
             return;
@@ -375,24 +378,151 @@ impl LocalPasteApp {
         self.set_status("Loading paste for copy...");
     }
 
-    fn palette_results(&self) -> Vec<PasteSummary> {
-        if self.command_palette_query.trim().is_empty() {
-            return self.all_pastes.iter().take(30).cloned().collect();
-        }
-        self.palette_search_results.clone()
+    /// Applies a detached picker-copy response when it matches the latest copy request.
+    ///
+    /// # Arguments
+    /// - `paste`: Detached snapshot returned by the backend.
+    /// - `request_id`: Identity of the copy request that produced this snapshot.
+    pub(crate) fn apply_palette_copy_loaded(&mut self, paste: Paste, request_id: u64) {
+        let Some(action) = self.take_pending_palette_copy_for(paste.id.as_str(), request_id) else {
+            return;
+        };
+        self.complete_palette_copy(action, paste.content, paste.language);
     }
 
-    /// Sends a delete command for a palette-selected paste and closes palette.
-    pub(crate) fn send_palette_delete(&mut self, id: String) {
-        if self.send_delete_paste(id) {
-            self.command_palette_open = false;
+    /// Clears the latest picker-copy request when its target no longer exists.
+    ///
+    /// # Arguments
+    /// - `id`: Paste id whose detached load found no row.
+    /// - `request_id`: Identity of the copy request whose target is missing.
+    pub(crate) fn apply_palette_copy_missing(&mut self, id: String, request_id: u64) {
+        if self
+            .take_pending_palette_copy_for(id.as_str(), request_id)
+            .is_some()
+        {
+            self.set_status("Paste is no longer available to copy.");
+        }
+    }
+
+    /// Clears the latest picker-copy request when its detached load fails.
+    ///
+    /// # Arguments
+    /// - `id`: Paste id whose copy load failed.
+    /// - `request_id`: Identity of the copy request that failed.
+    /// - `message`: Backend failure text displayed for the current copy request.
+    pub(crate) fn apply_palette_copy_load_failed(
+        &mut self,
+        id: String,
+        request_id: u64,
+        message: String,
+    ) {
+        if self
+            .take_pending_palette_copy_for(id.as_str(), request_id)
+            .is_some()
+        {
+            self.set_status(message);
+        }
+    }
+
+    /// Clears a picker-copy request when its target is deleted before the response arrives.
+    pub(crate) fn clear_pending_palette_copy_for(&mut self, id: &str) {
+        let _ = self.take_pending_palette_copy_for(id, self.palette_copy_request_id);
+    }
+
+    fn complete_palette_copy(
+        &mut self,
+        action: PaletteCopyAction,
+        content: String,
+        language: Option<String>,
+    ) {
+        match action {
+            PaletteCopyAction::Raw(_) => {
+                self.queue_clipboard_text(content);
+                self.set_status("Copied paste content.");
+            }
+            PaletteCopyAction::Fenced(_) => {
+                self.queue_clipboard_text(super::super::util::format_fenced_code_block(
+                    content.as_str(),
+                    language.as_deref(),
+                ));
+                self.set_status("Copied fenced code block.");
+            }
+        }
+    }
+
+    fn take_pending_palette_copy_for(
+        &mut self,
+        id: &str,
+        request_id: u64,
+    ) -> Option<PaletteCopyAction> {
+        if request_id != self.palette_copy_request_id {
+            return None;
+        }
+        let matches = matches!(
+            self.pending_copy_action.as_ref(),
+            Some(PaletteCopyAction::Raw(action_id) | PaletteCopyAction::Fenced(action_id))
+                if action_id == id
+        );
+        matches.then(|| self.pending_copy_action.take()).flatten()
+    }
+
+    /// Deletes a picker result while retaining a safe keyboard destination.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context used to restore the originating input's focus.
+    /// - `id`: Paste being deleted.
+    pub(crate) fn send_palette_delete(&mut self, ctx: &egui::Context, id: String) {
+        if self.picker_delete_transition_active() {
+            self.set_picker_delete_transition_blocked_status();
+            return;
+        }
+        let deleting_selected = self.selected_id.as_deref() == Some(id.as_str());
+        if self.send_delete_paste(id.clone()) {
+            if deleting_selected {
+                self.begin_picker_delete_transition(id);
+                // The editor is about to be removed asynchronously. Keep typing in
+                // the picker rather than accepting edits into that doomed buffer.
+                self.focus_editor_next = false;
+                ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(PASTE_PICKER_INPUT_ID)));
+            } else {
+                self.close_paste_picker();
+                if self.discovery_return_focus.is_some() {
+                    self.restore_discovery_focus(ctx);
+                } else {
+                    self.focus_editor_next = self.selected_paste.is_some();
+                }
+            }
         }
     }
 
     /// Opens the selected palette result in the main editor view.
     pub(crate) fn open_palette_selection(&mut self, id: String) {
-        if self.select_paste(id) {
-            self.command_palette_open = false;
+        if self.picker_delete_transition_active() {
+            self.set_picker_delete_transition_blocked_status();
+            return;
+        }
+        let opening = PendingPickerOpen {
+            id: id.clone(),
+            query: self.paste_picker_query.trim().to_owned(),
+            scope: self.paste_picker_scope,
+            case_sensitive: env_flag_enabled("LOCALPASTE_SEARCH_CASE_SENSITIVE"),
+            input_events: Vec::new(),
+            input_ready: false,
+        };
+        if self.select_paste(id.clone()) {
+            self.pending_picker_open = Some(opening);
+            self.pending_picker_selection_pin = self
+                .pending_selection_id
+                .as_ref()
+                .filter(|pending| *pending == &id)
+                .cloned();
+            if self.selected_id.as_deref() == Some(id.as_str()) && self.selected_paste.is_some() {
+                self.prime_editor_find_from_picker_open();
+            }
+            // Keep the loaded document pinned while prerequisite saves defer
+            // target acquisition; successful selection transfers the pin.
+            self.picker_selection_pin = self.selected_id.clone().or(Some(id));
+            self.close_paste_picker();
         }
     }
 }

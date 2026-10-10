@@ -131,7 +131,12 @@ fn save_events_during_active_search_force_fresh_backend_search() {
 
         harness.app.maybe_dispatch_search();
         match recv_cmd(&harness.cmd_rx) {
-            CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "alpha"),
+            CoreCmd::SearchPastes {
+                collection: crate::backend::SidebarCollection::All,
+                scope: localpaste_core::models::paste::SearchScope::All,
+                query,
+                ..
+            } => assert_eq!(query, "alpha"),
             other => panic!("unexpected command: {:?}", other),
         }
     }
@@ -541,7 +546,7 @@ fn select_paste_dirty_or_metadata_dirty_defers_switch_until_save_ack() {
         assert!(harness.app.pending_selection_id.is_none());
         assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
         match recv_cmd(&harness.cmd_rx) {
-            CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+            CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
             other => panic!("unexpected command: {:?}", other),
         }
     }
@@ -568,7 +573,7 @@ fn select_paste_while_content_save_in_flight_queues_pending_without_switching() 
 }
 
 #[test]
-fn in_flight_selection_uses_latest_pending_target_and_clears_replaced_copy_intent() {
+fn in_flight_selection_uses_latest_pending_target() {
     let mut harness = make_app();
     harness
         .app
@@ -581,17 +586,10 @@ fn in_flight_selection_uses_latest_pending_target_and_clears_replaced_copy_inten
     harness.app.pastes = harness.app.all_pastes.clone();
     harness.app.save_status = SaveStatus::Saving;
     harness.app.save_in_flight = true;
-    harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("beta".to_string()));
-
     assert!(harness.app.select_paste("beta".to_string()));
     assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
-    assert!(harness.app.pending_copy_action.is_some());
     assert!(harness.app.select_paste("gamma".to_string()));
     assert_eq!(harness.app.pending_selection_id.as_deref(), Some("gamma"));
-    assert!(
-        harness.app.pending_copy_action.is_none(),
-        "replacing pending target should clear copy intent bound to replaced id"
-    );
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
 
     let mut saved = Paste::new("content".to_string(), "Alpha".to_string());
@@ -603,7 +601,7 @@ fn in_flight_selection_uses_latest_pending_target_and_clears_replaced_copy_inten
     assert!(harness.app.pending_selection_id.is_none());
     assert_eq!(harness.app.selected_id.as_deref(), Some("gamma"));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "gamma"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "gamma"),
         other => panic!("unexpected command: {:?}", other),
     }
 }
@@ -670,7 +668,7 @@ fn paste_created_while_dirty_preserves_current_buffers_until_switch_completes() 
     assert!(harness.app.pending_selection_id.is_none());
     assert_eq!(harness.app.selected_id.as_deref(), Some("new-id"));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "new-id"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "new-id"),
         other => panic!("unexpected command: {:?}", other),
     }
 }

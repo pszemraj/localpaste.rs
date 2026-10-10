@@ -2,11 +2,292 @@
 
 /// Language canonicalization and manual UI option tables.
 pub mod canonical;
+mod extensions;
+pub use extensions::preferred_extension;
 mod heuristic;
+mod python;
+pub(crate) use heuristic::looks_like_python_source;
+#[cfg(test)]
+mod classification_tests;
 #[cfg(feature = "magika")]
 mod magika;
 #[cfg(test)]
 mod tests;
+
+/// Git subcommands accepted as command structure without extra shell syntax.
+pub(crate) const SHELL_GIT_SUBCOMMANDS: &[&str] = &[
+    "add",
+    "bisect",
+    "blame",
+    "branch",
+    "checkout",
+    "cherry-pick",
+    "clean",
+    "clone",
+    "commit",
+    "diff",
+    "fetch",
+    "grep",
+    "init",
+    "log",
+    "merge",
+    "mv",
+    "pull",
+    "push",
+    "rebase",
+    "remote",
+    "reset",
+    "restore",
+    "revert",
+    "rev-parse",
+    "rm",
+    "show",
+    "stash",
+    "status",
+    "submodule",
+    "switch",
+    "tag",
+    "worktree",
+];
+
+/// Recognize argument structure specific to shell setup commands.
+///
+/// # Arguments
+/// - `command`: Leading executable or shell builtin word.
+/// - `arguments`: Whitespace-separated arguments following that word.
+/// - `next_command`: Whether the immediately following substantive line is a command.
+///
+/// # Returns
+/// Whether arguments form an assignment, shell option, or setup path rather
+/// than prose that merely contains punctuation or numbers.
+pub(crate) fn setup_command_is_valid(
+    command: &str,
+    arguments: &[&str],
+    next_command: bool,
+) -> bool {
+    let quoted_argument = arguments.first().is_some_and(|first| {
+        ['\'', '"'].iter().any(|quote| {
+            first.starts_with(*quote) && arguments.iter().any(|part| part.ends_with(*quote))
+        })
+    });
+    let compact_arguments = |arguments: &[&str]| {
+        !arguments.is_empty()
+            && !has_unquoted_prose_copula(arguments, false)
+            && !arguments
+                .iter()
+                .any(|part| matches!(*part, "for" | "to" | "the"))
+            && arguments.iter().all(|part| {
+                part.chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+            })
+    };
+    let control_operator = arguments
+        .iter()
+        .enumerate()
+        .find(|(_, part)| part.contains(['&', '|', ';']))
+        .is_some_and(|(index, part)| {
+            let mut prefix: Vec<&str> = arguments.iter().take(index).copied().collect();
+            let head = part.split(['&', '|', ';']).next().unwrap_or_default();
+            if !head.is_empty() {
+                prefix.push(head);
+            }
+            compact_arguments(&prefix)
+        });
+    let structured = match command {
+        "export" => {
+            arguments
+                .first()
+                .is_some_and(|argument| argument.starts_with('-'))
+                || arguments.iter().any(|argument| argument.contains('='))
+        }
+        "set" => {
+            arguments.len() == 1
+                || arguments
+                    .first()
+                    .is_some_and(|argument| argument.starts_with(['-', '+', '/']))
+                || arguments.iter().any(|argument| argument.contains('='))
+        }
+        "cd" => {
+            arguments.len() == 1
+                || arguments
+                    .first()
+                    .is_some_and(|path| path.starts_with('-') || path.contains(['/', '\\']))
+        }
+        "source" => arguments
+            .first()
+            .is_some_and(|path| path.contains(['.', '/', '\\']) || path.starts_with('~')),
+        _ => false,
+    };
+    structured
+        || quoted_argument
+        || control_operator
+        || (next_command && compact_arguments(arguments))
+}
+
+/// Recognize a prose copula near a command-shaped leading word.
+///
+/// # Arguments
+/// - `arguments`: Command arguments following the executable-shaped word.
+/// - `has_shell_syntax`: Whether quoting, options, paths, or operators already
+///   establish command structure.
+///
+/// # Returns
+/// `true` when the first three arguments contain an unquoted copula without
+/// other shell syntax establishing an actual command.
+pub(crate) fn has_unquoted_prose_copula(arguments: &[&str], has_shell_syntax: bool) -> bool {
+    !has_shell_syntax
+        && arguments
+            .iter()
+            .take(3)
+            .any(|part| matches!(*part, "is" | "are" | "was" | "were"))
+}
+
+/// Remove an optional leading shell prompt from a command line.
+///
+/// # Arguments
+/// - `line`: Command line after whitespace and backtick trimming.
+///
+/// # Returns
+/// The line without a leading `$ `, `% `, or `> ` prompt.
+pub(crate) fn strip_shell_prompt(line: &str) -> &str {
+    line.strip_prefix("$ ")
+        .or_else(|| line.strip_prefix("% "))
+        .or_else(|| line.strip_prefix("> "))
+        .unwrap_or(line)
+}
+
+/// Recognize punctuation, options, or digits establishing shell command structure.
+///
+/// # Arguments
+/// - `line`: Command line without a leading shell prompt.
+/// - `arguments`: Whitespace-separated arguments following the command word.
+///
+/// # Returns
+/// Whether shell syntax supplies command evidence beyond the leading word.
+pub(crate) fn command_has_shell_syntax(line: &str, arguments: &[&str]) -> bool {
+    line.contains(['\'', '"', '$', '|', '>', '<', '=', '/', '\\', ';', '&'])
+        || arguments
+            .iter()
+            .any(|part| part.starts_with('-') || part.chars().any(|ch| ch.is_ascii_digit()))
+}
+
+/// Recognize an option token rather than a separated prose dash.
+///
+/// # Returns
+/// Whether a dash-prefixed token contains an option name or number.
+pub(crate) fn is_shell_option(value: &str) -> bool {
+    value
+        .strip_prefix('-')
+        .map(|rest| rest.trim_start_matches('-'))
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|ch| ch.is_ascii_alphanumeric())
+}
+
+/// Recognize a compact path operand, excluding URLs.
+///
+/// # Returns
+/// Whether the argument names a path rather than a prose URL.
+pub(crate) fn is_shell_path(value: &str) -> bool {
+    !value.contains("://")
+        && (value.contains(['/', '\\'])
+            || matches!(value, "." | "..")
+            || value
+                .strip_prefix('.')
+                .and_then(|rest| rest.chars().next())
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_'))
+}
+
+/// Require executable-specific arguments before treating a quote/comment as a command.
+///
+/// # Arguments
+/// - `command`: Executable name.
+/// - `line`: Command line inspected for shell operators and quoting.
+/// - `arguments`: Whitespace-delimited operands after the executable.
+///
+/// # Returns
+/// Whether the command has shell structure or a recognized tool action.
+pub(crate) fn command_has_explicit_arguments(
+    command: &str,
+    line: &str,
+    arguments: &[&str],
+) -> bool {
+    let Some(first) = arguments.first() else {
+        return false;
+    };
+    if arguments.iter().any(|argument| is_shell_option(argument))
+        || is_shell_path(first)
+        || first.contains('$')
+        || line.contains(['|', '>', '<', '=', ';', '&'])
+        || ['\'', '"'].iter().any(|quote| {
+            first.starts_with(*quote) && arguments.iter().any(|part| part.ends_with(*quote))
+        })
+    {
+        return true;
+    }
+    match command {
+        "git" => SHELL_GIT_SUBCOMMANDS.contains(first),
+        "echo" | "printf" => true,
+        "python" | "pytest" | "torchrun" => first.ends_with(".py"),
+        "curl" => first.starts_with("https://") || first.starts_with("http://"),
+        "ssh" => first
+            .split_once('@')
+            .is_some_and(|(user, host)| !user.is_empty() && !host.is_empty()),
+        "docker" if *first == "ps" => true,
+        "npm" if *first == "i" => true,
+        "brew" | "cargo" | "conda" | "docker" | "kubectl" | "npm" | "pip" | "pnpm" | "rustup"
+        | "systemctl" | "uv" | "yarn" => [
+            "activate",
+            "add",
+            "build",
+            "check",
+            "ci",
+            "clippy",
+            "exec",
+            "fmt",
+            "get",
+            "install",
+            "list",
+            "remove",
+            "restart",
+            "run",
+            "show",
+            "start",
+            "status",
+            "stop",
+            "test",
+            "toolchain",
+            "uninstall",
+            "update",
+        ]
+        .contains(first),
+        _ => false,
+    }
+}
+
+/// Accept listed executables after comments without enumerating every tool action.
+///
+/// Quoted lines intentionally continue to require [`command_has_explicit_arguments`]
+/// so ordinary blockquotes do not become shell snippets.
+///
+/// # Arguments
+/// - `command`: Executable name.
+/// - `line`: Command line without a leading prompt.
+/// - `arguments`: Whitespace-delimited operands after the executable.
+///
+/// # Returns
+/// Whether a leading comment plus this command supplies enough technical evidence.
+pub(crate) fn command_has_comment_evidence(command: &str, line: &str, arguments: &[&str]) -> bool {
+    command_has_explicit_arguments(command, line, arguments)
+        || (command != "ls"
+            && !has_unquoted_prose_copula(arguments, false)
+            && !arguments.iter().any(|word| {
+                [
+                    "a", "an", "the", "for", "to", "about", "please", "should", "could", "would",
+                    "we", "you", "our", "your", "in", "at", "by",
+                ]
+                .contains(word)
+            }))
+}
 
 /// Detect language/type of text content.
 ///
@@ -15,6 +296,24 @@ mod tests;
 pub fn detect_language(content: &str) -> Option<String> {
     if markdown_fence_override_applies(content) {
         return Some("markdown".to_string());
+    }
+    if let Some(language) = heuristic::shebang_language(content) {
+        return Some(language.to_string());
+    }
+    if python::compound_body(content) && heuristic::looks_like_python_source(content) {
+        return Some("python".to_string());
+    }
+    if crate::semantic::makefile_note_body(content) {
+        return Some("markdown".to_string());
+    }
+    if crate::semantic::makefile_body_language(content) == Some("makefile") {
+        return Some("makefile".to_string());
+    }
+    if looks_like_shell_command_sequence(content) {
+        return Some("shell".to_string());
+    }
+    if looks_like_rust_panic(content) || looks_like_python_traceback(content) {
+        return Some("log".to_string());
     }
 
     #[cfg(feature = "magika")]
@@ -27,9 +326,124 @@ pub fn detect_language(content: &str) -> Option<String> {
         }
     }
 
+    detect_heuristically(content)
+}
+
+/// Detect structural language hints without statistical inference or a model lock.
+///
+/// # Returns
+/// A canonical language hint suitable for synchronous metadata derivation.
+pub(crate) fn detect_heuristically(content: &str) -> Option<String> {
     heuristic::detect(content)
         .map(|label| canonical::canonicalize(&label))
         .filter(|label| !label.is_empty() && label != "text")
+}
+
+/// Recognize a multi-line shell command sequence before model inference.
+///
+/// # Returns
+/// Whether the content is composed of shell comments and at least two
+/// recognized command lines.
+pub(crate) fn looks_like_shell_command_sequence(content: &str) -> bool {
+    heuristic::looks_like_shell_command_sequence(content)
+}
+
+/// Recognize Rust's runtime panic header, rather than prose mentioning a panic.
+///
+/// # Returns
+/// Whether the runtime's thread and source-location prefix appears first or
+/// follows only a recognized Cargo build/run preamble.
+pub(crate) fn looks_like_rust_panic(content: &str) -> bool {
+    for line in content.lines().take(64).map(str::trim) {
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with("thread '") && line.contains("' panicked at ") {
+            return true;
+        }
+        if !is_cargo_run_preamble(line) {
+            return false;
+        }
+    }
+    false
+}
+
+/// Recognize a complete Python traceback with a frame and final exception row.
+///
+/// # Returns
+/// Whether runtime structure occupies the sampled body, including quoted exception rows.
+pub(crate) fn looks_like_python_traceback(content: &str) -> bool {
+    let sample = crate::text::complete_line_prefix_by_bytes(
+        content.trim(),
+        crate::text::TEXT_SAMPLE_MAX_BYTES,
+    );
+    let mut lines = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| line.strip_prefix("> ").unwrap_or(line).trim_start());
+    let first = lines.next().unwrap_or_default();
+    let first = if matches!(first, "stderr:" | "stdout:") {
+        lines.next().unwrap_or_default()
+    } else {
+        first
+    };
+    if first != "Traceback (most recent call last):" {
+        return false;
+    }
+    let mut frame = false;
+    let mut last = "";
+    for line in lines {
+        frame |= line.starts_with("File \"") && line.contains("\", line ");
+        last = line;
+    }
+    let name = last.split_once(':').map_or(last, |(name, _)| name);
+    frame
+        && name.rsplit('.').next().is_some_and(|class| {
+            class
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_uppercase())
+        })
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'))
+}
+
+/// Accept Cargo's own build/run status and an entered `cargo run` command before
+/// a panic header. Any source, Markdown, or prose line ends the runtime preamble.
+fn is_cargo_run_preamble(line: &str) -> bool {
+    if line.strip_prefix("Compiling ").is_some_and(|status| {
+        status
+            .split_whitespace()
+            .any(|part| part.starts_with('v') && part.get(1..).is_some_and(|v| v.contains('.')))
+    }) || line
+        .strip_prefix("Finished ")
+        .is_some_and(|status| status.contains('`') && status.contains(" profile"))
+        || line.strip_prefix("Running ").is_some_and(|status| {
+            let status = status.trim();
+            status.starts_with('`') && status.get(1..).is_some_and(|rest| rest.contains('`'))
+        })
+    {
+        return true;
+    }
+
+    let command = line
+        .strip_prefix('$')
+        .or_else(|| line.strip_prefix('%'))
+        .or_else(|| line.strip_prefix('>'))
+        .map(str::trim_start)
+        .unwrap_or(line);
+    command == "cargo run" || command.starts_with("cargo run ")
+}
+
+#[cfg(all(test, feature = "magika"))]
+/// Return the current test thread's Magika wrapper call count.
+///
+/// # Returns
+/// Calls observed on the current thread.
+pub(crate) fn magika_detection_call_count() -> usize {
+    magika::detection_call_count()
 }
 
 #[derive(Clone, Copy)]
@@ -39,35 +453,47 @@ struct MarkdownFence {
 }
 
 fn markdown_fence_override_applies(content: &str) -> bool {
-    if !crate::models::paste::is_markdown_content(content) {
-        return false;
-    }
-    is_standalone_fenced_markdown_block(content)
+    standalone_fenced_block(content).is_some()
 }
 
-fn is_standalone_fenced_markdown_block(content: &str) -> bool {
-    let lines: Vec<&str> = content.lines().collect();
-    let Some((start_idx, fence)) = lines.iter().enumerate().find_map(|(idx, line)| {
-        (!line.trim().is_empty())
-            .then(|| parse_markdown_fence_opener(line).map(|fence| (idx, fence)))
-            .flatten()
-    }) else {
-        return false;
+/// Extract the info word and body when the entire paste is one fenced block.
+///
+/// The borrowed body excludes fence delimiters; surrounding prose prevents a
+/// match so real Markdown documents retain their document classification.
+///
+/// # Returns
+/// The optional info word and body when matching fences surround the entire paste.
+pub(crate) fn standalone_fenced_block(content: &str) -> Option<(&str, &str)> {
+    let trimmed = content.trim_end();
+    let mut lines = trimmed.split_inclusive('\n');
+    let mut offset = 0;
+    let first = loop {
+        let line = lines.next()?;
+        if !line.trim().is_empty() {
+            break line;
+        }
+        offset += line.len();
     };
-
-    let Some(end_idx) = lines
-        .iter()
-        .enumerate()
-        .skip(start_idx.saturating_add(1))
-        .find_map(|(idx, line)| line_closes_markdown_fence(line, fence).then_some(idx))
-    else {
-        return false;
-    };
-
-    lines
-        .iter()
-        .skip(end_idx.saturating_add(1))
-        .all(|line| line.trim().is_empty())
+    let fence = parse_markdown_fence_opener(first)?;
+    let opener = first.trim();
+    let info = opener
+        .get(fence.len..)?
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
+    let body_start = offset + first.len();
+    offset = body_start;
+    for line in lines {
+        if line_closes_markdown_fence(line, fence) {
+            return trimmed
+                .get(offset + line.len()..)?
+                .trim()
+                .is_empty()
+                .then_some((info, trimmed.get(body_start..offset)?));
+        }
+        offset += line.len();
+    }
+    None
 }
 
 fn parse_markdown_fence_opener(line: &str) -> Option<MarkdownFence> {
@@ -110,6 +536,26 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
     if markdown_fence_override_applies(content) {
         return Some("markdown".to_string());
     }
+    if label == "makefile" && python::compound_body(content) {
+        return Some("python".to_string());
+    }
+    // Magika also calls heading-led notes with a colon and an indented sentence
+    // Makefiles. Unknown Make syntax is not prose evidence; require a whole note.
+    if label == "makefile" && crate::semantic::makefile_note_body(content) {
+        return Some("markdown".to_string());
+    }
+    if label == "markdown" {
+        if let Some(technical) = crate::semantic::markdown_technical_language(content) {
+            return (technical != "text").then(|| technical.to_string());
+        }
+    }
+
+    if label == "python"
+        && crate::models::paste::is_markdown_content(content)
+        && heuristic::has_python_document_wrapper(content)
+    {
+        return None;
+    }
 
     if label == "yaml" && !looks_like_yaml(content) && !looks_like_flat_config_yaml(content) {
         return None;
@@ -119,7 +565,55 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         return Some("css".to_string());
     }
 
+    if label == "gitattributes" && !looks_like_gitattributes(content) {
+        return None;
+    }
+
+    if label == "batch" && crate::semantic::looks_like_batch_prose(content) {
+        return None;
+    }
+
+    // Magika uses either JSON label for both single values and record streams.
+    // Establish the record format from multiple valid lines in the sample.
+    if matches!(label, "json" | "jsonl") {
+        return Some(if heuristic::looks_like_json_lines(content) {
+            "jsonl".to_string()
+        } else {
+            "json".to_string()
+        });
+    }
+
     Some(label.to_string())
+}
+
+/// Require an attribute assignment or a path pattern before trusting Magika's
+/// gitattributes label, which otherwise also matches short whitespace prose.
+#[cfg(any(feature = "magika", test))]
+fn looks_like_gitattributes(content: &str) -> bool {
+    content.lines().take(512).any(|line| {
+        let mut parts = line.split_whitespace();
+        let Some(pattern) = parts.next() else {
+            return false;
+        };
+        if pattern.starts_with('#') {
+            return false;
+        }
+        let path_pattern = pattern.contains(['*', '?', '/', '.']);
+        let attributes: Vec<_> = parts.collect();
+        !attributes.is_empty()
+            && attributes.iter().all(|attribute| {
+                attribute.contains('=')
+                    || attribute.starts_with(['-', '!'])
+                    || matches!(
+                        *attribute,
+                        "text" | "binary" | "diff" | "merge" | "export-ignore"
+                    )
+                    || (path_pattern
+                        && attribute
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.')))
+            })
+    })
 }
 
 /// Heuristically checks whether content resembles YAML mapping/sequence syntax.

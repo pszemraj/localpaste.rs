@@ -13,10 +13,11 @@ impl LocalPasteApp {
         }
     }
 
-    /// Closes the current-paste find bar without clearing the saved query.
+    /// Closes Find and returns keyboard ownership to the editor, preserving query and selection.
     pub(super) fn close_editor_find(&mut self) {
         self.editor_find.open = false;
         self.editor_find.focus_requested = false;
+        self.focus_editor_next = true;
     }
 
     /// Marks cached current-paste match ranges stale after a buffer replacement.
@@ -29,6 +30,9 @@ impl LocalPasteApp {
 
     /// Reuses the sidebar search query as an in-paste finder when it matches the loaded body.
     pub(super) fn prime_editor_find_from_sidebar_query(&mut self) {
+        if !matches!(self.search_scope, SearchScope::All | SearchScope::Body) {
+            return;
+        }
         if self.editor_find.open && !self.editor_find.query.is_empty() {
             return;
         }
@@ -47,6 +51,51 @@ impl LocalPasteApp {
         self.editor_find.open = true;
         self.editor_find.focus_requested = false;
         self.select_editor_find_match(0);
+    }
+
+    /// Consumes an accepted picker open and reveals its first literal body match.
+    ///
+    /// # Returns
+    /// `true` when the loaded paste belongs to the picker open, including metadata-only hits.
+    pub(super) fn prime_editor_find_from_picker_open(&mut self) -> bool {
+        let Some(mut opening) = self.pending_picker_open.take() else {
+            return false;
+        };
+        if self.selected_id.as_deref() != Some(opening.id.as_str()) {
+            return false;
+        }
+        self.focus_editor_next = true;
+        let query = opening.query.clone();
+        let scope = opening.scope;
+        let case_sensitive = opening.case_sensitive;
+        if !opening.input_events.is_empty() {
+            opening.input_ready = true;
+            self.pending_picker_open = Some(opening);
+        }
+        if !matches!(scope, SearchScope::All | SearchScope::Body) || query.is_empty() {
+            return true;
+        }
+
+        let matches = find_text_ranges(
+            self.active_snapshot().as_str(),
+            query.as_str(),
+            case_sensitive,
+        );
+        if matches.is_empty() {
+            return true;
+        }
+        self.editor_find = EditorFindState {
+            open: true,
+            query,
+            matches,
+            active_match: Some(0),
+            case_sensitive,
+            focus_requested: false,
+            last_buffer_epoch: Some(self.active_buffer_epoch),
+            last_buffer_revision: Some(self.active_revision()),
+        };
+        self.select_editor_find_match(0);
+        true
     }
 
     /// Replaces the current-paste find query and selects the first matching range.
@@ -105,7 +154,11 @@ impl LocalPasteApp {
         let mut case_changed = false;
         let mut previous_requested = false;
         let mut next_requested = false;
-        let mut close_requested = false;
+        // Egui clears focus on Escape before rendering widgets. Route it using
+        // the previous frame's owner instead of the TextEdit response.
+        let find_id = egui::Id::new(EDITOR_FIND_INPUT_ID);
+        let mut close_requested = ui.memory(|memory| memory.had_focus_last_frame(find_id))
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let mut clear_focus_request = false;
 
         ui.scope(|ui| {
@@ -114,7 +167,8 @@ impl LocalPasteApp {
                 ui.label(RichText::new("Find").small().color(COLOR_TEXT_MUTED));
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut query)
-                        .id(egui::Id::new(EDITOR_FIND_INPUT_ID))
+                        .id(find_id)
+                        .return_key(None)
                         .desired_width((ui.available_width() * 0.38).clamp(180.0, 420.0))
                         .hint_text("Search current paste"),
                 );
@@ -124,17 +178,11 @@ impl LocalPasteApp {
                 }
                 query_changed |= response.changed();
                 if response.has_focus() {
-                    ui.input(|input| {
-                        if input.key_pressed(egui::Key::Enter) {
-                            if input.modifiers.shift {
-                                previous_requested = true;
-                            } else {
-                                next_requested = true;
-                            }
-                        }
-                        if input.key_pressed(egui::Key::Escape) {
-                            close_requested = true;
-                        }
+                    ui.input_mut(|input| {
+                        previous_requested |=
+                            input.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter);
+                        next_requested |=
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
                     });
                 }
 
@@ -146,12 +194,15 @@ impl LocalPasteApp {
 
                 if ui.add(editor_find_button("Prev")).clicked() {
                     previous_requested = true;
+                    response.request_focus();
                 }
                 if ui.add(editor_find_button("Next")).clicked() {
                     next_requested = true;
+                    response.request_focus();
                 }
                 if ui.checkbox(&mut case_sensitive, "Case").changed() {
                     case_changed = true;
+                    response.request_focus();
                 }
                 if ui.add(editor_find_button("Close")).clicked() {
                     close_requested = true;
@@ -224,7 +275,10 @@ impl LocalPasteApp {
         {
             return;
         }
-        self.rebuild_editor_find_matches(false);
+        // A replacement buffer resets selection; select its first active hit so
+        // the displayed index and the next navigation step agree with the editor.
+        let select_match = self.editor_find.last_buffer_epoch != Some(self.active_buffer_epoch);
+        self.rebuild_editor_find_matches(select_match);
     }
 
     fn rebuild_editor_find_matches(&mut self, select_match: bool) {
@@ -250,7 +304,12 @@ impl LocalPasteApp {
         let active = previous_active
             .filter(|index| *index < self.editor_find.matches.len())
             .unwrap_or_else(|| {
-                let cursor = self.virtual_editor_state.cursor();
+                // Query growth should refine the selected hit rather than start
+                // after it (the caret normally sits at the selection's end).
+                let cursor = self
+                    .virtual_editor_state
+                    .selection_range()
+                    .map_or_else(|| self.virtual_editor_state.cursor(), |range| range.start);
                 self.editor_find
                     .matches
                     .iter()
@@ -277,7 +336,7 @@ impl LocalPasteApp {
         self.virtual_editor_state.set_cursor(start, len);
         self.virtual_editor_state.move_cursor(end, len, true);
         self.virtual_editor_state.clear_preferred_column();
-        self.virtual_follow_cursor_next_frame = true;
+        self.virtual_cursor_reveal = Some(CursorReveal::Center);
         self.reset_virtual_caret_blink();
     }
 }

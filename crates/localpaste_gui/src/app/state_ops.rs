@@ -2,16 +2,18 @@
 
 /// Filter helpers for sidebar collections, languages, and export filenames.
 pub(super) mod filters;
+mod list_projection;
+mod search;
+mod selection_load;
 
 use super::deferred_saves::rollback_deferred_save_dispatches;
-use super::util::{format_fenced_code_block, parse_tags_csv};
+use super::util::parse_tags_csv;
 use super::{
-    ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, PaletteCopyAction, SaveStatus,
-    SidebarCollection, ToastAction, BACKEND_EVENT_POLL_INTERVAL, BACKEND_EVENT_POLL_WINDOW,
-    PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
+    ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, SaveStatus, SidebarCollection,
+    BACKEND_EVENT_POLL_INTERVAL, BACKEND_EVENT_POLL_WINDOW, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
-use chrono::{Duration as ChronoDuration, Local, Utc};
+use eframe::egui;
 use localpaste_core::{
     models::paste::Paste, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_SEARCH_PASTES_LIMIT,
 };
@@ -23,12 +25,88 @@ use self::filters::{
     language_extension, matches_active_filters, normalize_language_filter_value, sanitize_filename,
 };
 
+/// Observes native widget copies after egui's selectable-label end-pass writer.
+#[derive(Default)]
+struct NativeClipboardObserver {
+    /// Existing request and output prefix from before this pass's user input.
+    pass: Option<(u64, usize)>,
+    /// Request whose delayed reply must be ignored before the next event drain.
+    superseded_request: Option<u64>,
+}
+
+impl egui::Plugin for NativeClipboardObserver {
+    fn debug_name(&self) -> &'static str {
+        "localpaste_native_clipboard"
+    }
+
+    fn on_end_pass(&mut self, ctx: &egui::Context) {
+        let Some((request_id, command_start)) = self.pass.take() else {
+            return;
+        };
+        if ctx.output(|output| {
+            output
+                .commands
+                .iter()
+                .skip(command_start)
+                .any(|command| matches!(command, egui::OutputCommand::CopyText(_)))
+        }) {
+            self.superseded_request = Some(request_id);
+        }
+    }
+}
+
 impl LocalPasteApp {
+    /// Reconciles native clipboard writes before draining delayed copy replies.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context owning the observer, registered after built-in label selection.
+    pub(super) fn reconcile_native_clipboard(&mut self, ctx: &egui::Context) {
+        let superseded = ctx
+            .plugin_or_default::<NativeClipboardObserver>()
+            .lock()
+            .superseded_request
+            .take();
+        if superseded == Some(self.palette_copy_request_id) {
+            self.pending_copy_action = None;
+        }
+    }
+
+    /// Arms end-pass observation for native widget copies in this input pass.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context whose native widgets can copy text after app update returns.
+    pub(super) fn observe_native_clipboard(&self, ctx: &egui::Context) {
+        let command_start = ctx.output(|output| output.commands.len());
+        let pass = self
+            .pending_copy_action
+            .as_ref()
+            .map(|_| (self.palette_copy_request_id, command_start));
+        let _ = ctx.with_plugin::<NativeClipboardObserver, _>(|observer| observer.pass = pass);
+    }
+
+    /// Queues clipboard text and supersedes any older detached copy request.
+    ///
+    /// # Arguments
+    /// - `text`: Text produced by the newest completed copy action.
+    pub(super) fn queue_clipboard_text(&mut self, text: String) {
+        self.pending_copy_action = None;
+        self.clipboard_outgoing = Some(text);
+    }
+
+    /// Emits queued clipboard text once, preserving immediate editor copy output.
+    ///
+    /// # Arguments
+    /// - `ctx`: Egui context receiving the clipboard output command.
+    pub(super) fn flush_clipboard_output(&mut self, ctx: &egui::Context) {
+        if let Some(text) = self.clipboard_outgoing.take() {
+            ctx.send_cmd(egui::OutputCommand::CopyText(text));
+        }
+    }
+
     /// Sends a backend command and arms short-term event polling for its reply.
     ///
-    /// The fallback external refresh timer is intentionally slow, but commands
-    /// dispatched near the end of a quiet frame still need prompt repainting so
-    /// worker responses are drained without waiting for that fallback interval.
+    /// Commands sent in quiet frames arm prompt repainting so worker responses
+    /// are drained before the slow external refresh interval.
     ///
     /// # Returns
     /// `true` when the command was queued and short polling was armed.
@@ -75,11 +153,26 @@ impl LocalPasteApp {
 
     /// Clears UI state that can only complete via backend events after the event channel closes.
     pub(super) fn handle_backend_event_channel_disconnected(&mut self) {
-        if self.pending_undo_restore_tokens.is_empty() {
-            return;
+        self.pending_picker_open = None;
+        self.pending_picker_selection_pin = None;
+        let picker_delete_pending = self.picker_delete_transition_active();
+        self.clear_picker_delete_transition();
+        self.cancel_pending_delete();
+        let picker_search_pending = std::mem::take(&mut self.palette_search_pending);
+        if picker_search_pending {
+            self.fail_palette_search("Paste picker search canceled: backend unavailable.".into());
         }
-        self.pending_undo_restore_tokens.clear();
-        self.set_status("Undo delete canceled: backend unavailable.");
+        let picker_copy_pending = self.pending_copy_action.take().is_some();
+        if !self.pending_undo_restore_tokens.is_empty() {
+            self.pending_undo_restore_tokens.clear();
+            self.set_status("Undo delete canceled: backend unavailable.");
+        } else if picker_delete_pending {
+            self.set_status("Delete canceled: backend unavailable.");
+        } else if picker_copy_pending {
+            self.set_status("Paste copy canceled: backend unavailable.");
+        } else if picker_search_pending {
+            self.set_status("Paste picker search canceled: backend unavailable.");
+        }
     }
 
     fn send_update_paste_or_mark_failed(&mut self, command: CoreCmd, mode: &str) -> bool {
@@ -111,6 +204,9 @@ impl LocalPasteApp {
 
     /// Applies a backend event and synchronizes app state, selection, and save flags.
     pub(super) fn apply_event(&mut self, event: CoreEvent) {
+        if !self.selection_load_is_current(&event) {
+            return;
+        }
         self.on_version_event(&event);
         match event {
             CoreEvent::PasteList { items } => {
@@ -132,10 +228,23 @@ impl LocalPasteApp {
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
             }
-            CoreEvent::PasteLoaded { paste } => {
-                if self.selected_id.as_deref() == Some(paste.id.as_str()) {
-                    self.select_loaded_paste(paste);
-                }
+            CoreEvent::PasteLoaded { paste, .. } => {
+                let paste_id = paste.id.clone();
+                self.select_loaded_paste(paste);
+                self.clear_picker_delete_transition_for_replacement(paste_id.as_str());
+            }
+            CoreEvent::PasteCopyLoaded { paste, request_id } => {
+                self.apply_palette_copy_loaded(paste, request_id)
+            }
+            CoreEvent::PasteCopyMissing { id, request_id } => {
+                self.apply_palette_copy_missing(id, request_id)
+            }
+            CoreEvent::PasteCopyLoadFailed {
+                id,
+                request_id,
+                message,
+            } => {
+                self.apply_palette_copy_load_failed(id, request_id, message);
             }
             CoreEvent::DiffPreviewComputed { request_id, diff } => {
                 self.apply_diff_preview_response(request_id, diff);
@@ -253,26 +362,26 @@ impl LocalPasteApp {
                 self.try_apply_pending_selection();
             }
             CoreEvent::SearchResults {
+                collection,
+                scope,
                 query,
                 folder_id,
                 language,
                 items,
             } => {
                 // Drop stale search responses when query or backend filter context changed.
-                let active_query = self.search_query.trim();
-                let expected_sent_query = self.search_last_sent.trim();
-                let (expected_folder_id, expected_language) = self.search_backend_filters();
-                let response_language = normalize_language_filter_value(language.as_deref());
-                if active_query.is_empty()
-                    || query.trim() != active_query
-                    || query.trim() != expected_sent_query
-                    || folder_id != expected_folder_id
-                    || response_language != expected_language
-                {
+                if !self.sidebar_search_response_is_current(
+                    &collection,
+                    scope,
+                    &query,
+                    folder_id.as_deref(),
+                    language.as_deref(),
+                ) {
                     self.query_perf.search_stale_drops =
                         self.query_perf.search_stale_drops.saturating_add(1);
                     return;
                 }
+                self.search_error = None;
                 self.query_perf.search_results_applied =
                     self.query_perf.search_results_applied.saturating_add(1);
                 if let Some(sent_at) = self.query_perf.search_last_sent_at.take() {
@@ -282,54 +391,54 @@ impl LocalPasteApp {
                 self.pastes = self.filter_by_collection(&items);
                 self.ensure_selection_after_list_update();
             }
-            CoreEvent::PaletteSearchResults { query, items } => {
-                if !self.command_palette_open
-                    || self.command_palette_query.trim().is_empty()
-                    || query.trim() != self.command_palette_query.trim()
+            CoreEvent::SearchFailed {
+                collection,
+                scope,
+                query,
+                folder_id,
+                language,
+                message,
+            } => self.fail_sidebar_search(collection, scope, query, folder_id, language, message),
+            CoreEvent::PaletteSearchResults {
+                query,
+                items,
+                scope,
+            } => {
+                if self.paste_picker_query.trim().is_empty()
+                    || !self.palette_search_response_is_current(scope, query.as_str())
+                    || scope != self.paste_picker_sent_scope
                 {
                     return;
                 }
+                self.palette_search_pending = false;
+                self.palette_search_error = None;
+                self.palette_search_last_sent = query;
+                self.paste_picker_sent_scope = scope;
                 self.palette_search_results = items;
-                // `command_palette_selected` is an absolute index across commands + results.
-                // Clamp in that same combined space so async result updates never remap into commands.
-                self.clamp_command_palette_selection_with_results_len(
-                    self.palette_search_results.len(),
-                );
+                self.clamp_paste_picker_selection(self.palette_search_results.len());
+            }
+            CoreEvent::PaletteSearchFailed {
+                scope,
+                query,
+                message,
+            } => {
+                if !self.palette_search_response_is_current(scope, query.as_str())
+                    || self.palette_search_last_sent != query
+                    || scope != self.paste_picker_sent_scope
+                {
+                    return;
+                }
+                self.fail_palette_search(message);
             }
             CoreEvent::PasteDeleted { id, undo_token } => {
-                let deleted_index = self.pastes.iter().position(|paste| paste.id == id);
-                let was_selected = self.selected_id.as_deref() == Some(id.as_str());
-                self.all_pastes.retain(|paste| paste.id != id);
-                self.pastes.retain(|paste| paste.id != id);
-                self.clear_pending_copy_for(id.as_str());
-                if was_selected {
-                    let adjacent_id = deleted_index.and_then(|index| {
-                        self.pastes
-                            .get(index)
-                            .or_else(|| index.checked_sub(1).and_then(|prev| self.pastes.get(prev)))
-                            .map(|paste| paste.id.clone())
-                    });
-                    self.clear_selection();
-                    if let Some(adjacent_id) = adjacent_id {
-                        let _ = self.select_paste(adjacent_id);
-                    }
-                    if let Some(undo_token) = undo_token {
-                        self.set_status_with_action(
-                            "Paste deleted.",
-                            ToastAction::UndoDelete { undo_token },
-                        );
-                    } else {
-                        self.set_status("Paste deleted. Undo unavailable.");
-                    }
-                } else if let Some(undo_token) = undo_token {
-                    self.set_status_with_action(
-                        "Paste deleted; list refreshed.",
-                        ToastAction::UndoDelete { undo_token },
-                    );
-                } else {
-                    self.set_status("Paste deleted; list refreshed. Undo unavailable.");
+                self.apply_paste_deleted(id, undo_token);
+            }
+            CoreEvent::PasteDeleteFailed { id, message } => {
+                self.clear_picker_delete_transition_for_deleted(id.as_str());
+                if self.pending_delete_id.as_deref() == Some(id.as_str()) {
+                    self.cancel_pending_delete();
                 }
-                self.request_refresh();
+                self.set_status(message);
             }
             CoreEvent::PasteRestored { paste, undo_token } => {
                 let paste_id = paste.id.clone();
@@ -371,10 +480,18 @@ impl LocalPasteApp {
                 self.pending_undo_restore_tokens.remove(&undo_token);
                 self.remove_undo_toast(&undo_token);
             }
-            CoreEvent::PasteMissing { id } => {
+            CoreEvent::PasteMissing { id } | CoreEvent::PasteSelectionMissing { id, .. } => {
+                self.clear_picker_delete_transition_for_replacement(id.as_str());
+                if self
+                    .picker_delete_transition
+                    .as_ref()
+                    .is_some_and(|transition| transition.replacement_id.is_none())
+                {
+                    self.clear_picker_delete_transition_for_deleted(id.as_str());
+                }
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
-                self.clear_pending_copy_for(id.as_str());
+                self.clear_picker_selection_context_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
                     self.set_status("Selected paste was deleted; list refreshed.");
@@ -388,7 +505,7 @@ impl LocalPasteApp {
                     self.version_ui.diff_target_id.as_deref() == Some(id.as_str());
                 self.all_pastes.retain(|paste| paste.id != id);
                 self.pastes.retain(|paste| paste.id != id);
-                self.clear_pending_copy_for(id.as_str());
+                self.clear_picker_selection_context_for(id.as_str());
                 if self.selected_id.as_deref() == Some(id.as_str()) {
                     self.clear_selection();
                     self.set_status("Selected paste was deleted; list refreshed.");
@@ -398,11 +515,10 @@ impl LocalPasteApp {
                 }
                 self.request_refresh();
             }
-            CoreEvent::PasteLoadFailed { id, message } => {
-                self.clear_pending_copy_for(id.as_str());
-                if self.selected_id.as_deref() == Some(id.as_str()) {
-                    self.clear_selection();
-                }
+            CoreEvent::PasteLoadFailed { id, message, .. } => {
+                self.clear_picker_delete_transition_for_replacement(id.as_str());
+                self.clear_picker_selection_context_for(id.as_str());
+                self.clear_selection();
                 self.set_status(message);
             }
             CoreEvent::PasteVersionsLoaded { .. }
@@ -423,14 +539,15 @@ impl LocalPasteApp {
                 // unrelated metadata/content saves that are still awaiting an ack.
                 match source {
                     CoreErrorSource::SaveMetadata if self.metadata_save_in_flight => {
+                        if let Some(id) = self.pending_delete_id.clone() {
+                            self.clear_picker_delete_transition_for_deleted(id.as_str());
+                        }
                         self.cancel_queued_history_reset();
                         self.cancel_pending_delete();
                         self.metadata_dirty = true;
                         self.metadata_save_in_flight = false;
                         self.metadata_save_request = None;
-                        if let Some(pending) = self.pending_selection_id.take() {
-                            self.clear_pending_copy_for(pending.as_str());
-                        }
+                        self.clear_pending_selection_request();
                         if message.to_ascii_lowercase().contains("metadata") {
                             self.set_status(message);
                         } else {
@@ -438,6 +555,9 @@ impl LocalPasteApp {
                         }
                     }
                     CoreErrorSource::SaveContent if self.save_in_flight => {
+                        if let Some(id) = self.pending_delete_id.clone() {
+                            self.clear_picker_delete_transition_for_deleted(id.as_str());
+                        }
                         self.cancel_queued_history_reset();
                         self.cancel_pending_delete();
                         if self.save_status == SaveStatus::Saving {
@@ -445,9 +565,7 @@ impl LocalPasteApp {
                         }
                         self.save_in_flight = false;
                         self.save_request_revision = None;
-                        if let Some(pending) = self.pending_selection_id.take() {
-                            self.clear_pending_copy_for(pending.as_str());
-                        }
+                        self.clear_pending_selection_request();
                         self.set_status(message);
                     }
                     _ => self.set_status(message),
@@ -471,179 +589,29 @@ impl LocalPasteApp {
         self.last_refresh_at = sent_at;
     }
 
-    /// Updates the sidebar search query and starts debounce timing.
-    pub(super) fn set_search_query(&mut self, query: String) {
-        if self.search_query == query {
-            return;
-        }
-        self.search_query = query;
-        self.search_last_input_at = Some(Instant::now());
-    }
-
-    /// Updates command-palette query text and resets palette selection/search state.
-    pub(super) fn set_command_palette_query(&mut self, query: String) {
-        if self.command_palette_query == query {
-            return;
-        }
-        self.command_palette_query = query;
-        self.command_palette_selected = 0;
-        self.palette_search_last_input_at = Some(Instant::now());
-        // Never leave previous-query results visible/actionable after input changes.
-        self.palette_search_last_sent.clear();
-        self.palette_search_results.clear();
-    }
-
-    fn on_primary_filter_changed(&mut self) {
-        self.search_last_sent.clear();
-        if self.search_query.trim().is_empty() {
-            self.recompute_visible_pastes();
-            self.ensure_selection_after_list_update();
-        } else {
-            self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
-        }
-    }
-
-    /// Switches the active smart collection filter and triggers list/search refresh behavior.
-    pub(super) fn set_active_collection(&mut self, collection: SidebarCollection) {
-        if self.active_collection == collection {
-            return;
-        }
-        self.active_collection = collection;
-        self.on_primary_filter_changed();
-    }
-
-    /// Sets the active language filter after canonical normalization.
-    pub(super) fn set_active_language_filter(&mut self, language: Option<String>) {
-        let normalized = normalize_language_filter_value(language.as_deref());
-        if self.active_language_filter == normalized {
-            return;
-        }
-        self.active_language_filter = normalized;
-        self.on_primary_filter_changed();
-    }
-
-    /// Builds sorted language filter options from the currently known paste summaries.
-    /// # Returns
-    /// Canonicalized language values in ascending sort order.
-    pub(super) fn language_filter_options(&self) -> Vec<String> {
-        let mut langs: BTreeSet<String> = BTreeSet::new();
-        for paste in &self.all_pastes {
-            if let Some(lang) = normalize_language_filter_value(paste.language.as_deref()) {
-                langs.insert(lang);
-            }
-        }
-        langs.into_iter().collect()
-    }
-
-    /// Dispatches a debounced sidebar search request when inputs and filters are ready.
-    pub(super) fn maybe_dispatch_search(&mut self) {
-        let query = self.search_query.trim().to_string();
-        if query.is_empty() {
-            let should_restore_list =
-                self.search_last_input_at.take().is_some() || !self.search_last_sent.is_empty();
-            if should_restore_list {
-                self.search_last_sent.clear();
-                self.recompute_visible_pastes();
-                self.ensure_selection_after_list_update();
-            }
-            return;
-        }
-
-        if self.search_last_sent == query {
-            self.query_perf.search_skipped_cached =
-                self.query_perf.search_skipped_cached.saturating_add(1);
-            return;
-        }
-        let Some(last_input_at) = self.search_last_input_at else {
-            return;
-        };
-        if last_input_at.elapsed() < SEARCH_DEBOUNCE {
-            self.query_perf.search_skipped_debounce =
-                self.query_perf.search_skipped_debounce.saturating_add(1);
-            return;
-        }
-
-        let (folder_id, language) = self.search_backend_filters();
-        if !self.dispatch_backend_cmd(CoreCmd::SearchPastes {
-            query: query.clone(),
-            limit: DEFAULT_SEARCH_PASTES_LIMIT,
-            folder_id,
-            language,
-        }) {
-            // Avoid per-frame retry storms/toast spam while backend is unavailable.
-            // Re-arm debounce so we retry on a bounded cadence.
-            self.search_last_input_at = Some(Instant::now());
-            const SEARCH_UNAVAILABLE: &str = "Search failed: backend unavailable.";
-            if self.status.as_ref().map(|status| status.text.as_str()) != Some(SEARCH_UNAVAILABLE) {
-                self.set_status(SEARCH_UNAVAILABLE);
-            }
-            return;
-        }
-        self.search_last_sent = query;
-        self.query_perf.search_requests_sent =
-            self.query_perf.search_requests_sent.saturating_add(1);
-        self.query_perf.search_last_sent_at = Some(Instant::now());
-    }
-
-    /// Dispatches a debounced command-palette search request when applicable.
-    pub(super) fn maybe_dispatch_palette_search(&mut self) {
-        if !self.command_palette_open {
-            return;
-        }
-
-        let query = self.command_palette_query.trim().to_string();
-        if query.is_empty() {
-            if !self.palette_search_last_sent.is_empty() || !self.palette_search_results.is_empty()
-            {
-                self.palette_search_last_sent.clear();
-                self.palette_search_results.clear();
-            }
-            return;
-        }
-
-        if self.palette_search_last_sent == query {
-            return;
-        }
-        let Some(last_input_at) = self.palette_search_last_input_at else {
-            return;
-        };
-        if last_input_at.elapsed() < SEARCH_DEBOUNCE {
-            return;
-        }
-
-        if !self.dispatch_backend_cmd(CoreCmd::SearchPalette {
-            query: query.clone(),
-            limit: PALETTE_SEARCH_LIMIT,
-        }) {
-            // Mirror sidebar-search behavior: bounded retry cadence and deduped status.
-            self.palette_search_last_input_at = Some(Instant::now());
-            const PALETTE_SEARCH_UNAVAILABLE: &str =
-                "Command palette search failed: backend unavailable.";
-            if self.status.as_ref().map(|status| status.text.as_str())
-                != Some(PALETTE_SEARCH_UNAVAILABLE)
-            {
-                self.set_status(PALETTE_SEARCH_UNAVAILABLE);
-            }
-            return;
-        }
-        self.palette_search_last_sent = query;
-    }
-
     /// Selects a paste by id, deferring selection when unsaved edits must be flushed first.
     /// # Returns
     /// `true` when selection was applied or successfully deferred, otherwise `false`.
     pub(super) fn select_paste(&mut self, id: String) -> bool {
-        if self.selected_id.as_deref() == Some(id.as_str()) {
-            return true;
+        if self.picker_delete_transition_active() {
+            self.set_picker_delete_transition_blocked_status();
+            return false;
         }
-        self.cancel_pending_delete();
         // Detached version workflows own the current subject paste; switching away would
         // invalidate the open modal context and, during reset, release the held lock too early.
         if self.selection_transition_block_reason().is_some() {
             self.set_selection_transition_blocked_status();
             return false;
         }
+        if self.selected_id.as_deref() == Some(id.as_str()) {
+            self.picker_selection_pin = None;
+            self.clear_pending_selection_request();
+            return true;
+        }
         if self.save_status == SaveStatus::Dirty || self.metadata_dirty {
+            let previous_pending_selection = self.pending_selection_id.clone();
+            let previous_picker_open = self.pending_picker_open.clone();
+            let previous_picker_pin = self.pending_picker_selection_pin.clone();
             self.queue_pending_selection(id);
             let content_save_needed = self.save_status == SaveStatus::Dirty;
             let metadata_save_needed = self.metadata_dirty;
@@ -657,11 +625,12 @@ impl LocalPasteApp {
             let metadata_save_dispatched = !metadata_save_needed || self.metadata_save_in_flight;
             if !content_save_dispatched || !metadata_save_dispatched {
                 rollback_deferred_save_dispatches(self, content_save_needed, metadata_save_needed);
-                if let Some(pending) = self.pending_selection_id.take() {
-                    self.clear_pending_copy_for(pending.as_str());
-                }
+                self.pending_selection_id = previous_pending_selection;
+                self.pending_picker_open = previous_picker_open;
+                self.pending_picker_selection_pin = previous_picker_pin;
                 return false;
             }
+            self.cancel_pending_delete();
             self.set_status("Saving current paste before switching...");
             return true;
         }
@@ -670,6 +639,7 @@ impl LocalPasteApp {
             || self.save_status == SaveStatus::Saving;
         if save_in_progress {
             self.queue_pending_selection(id);
+            self.cancel_pending_delete();
             self.set_status("Saving current paste before switching...");
             return true;
         }
@@ -677,19 +647,27 @@ impl LocalPasteApp {
     }
 
     fn queue_pending_selection(&mut self, id: String) {
+        if self.pending_picker_selection_pin.as_deref() != Some(id.as_str()) {
+            self.pending_picker_selection_pin = None;
+        }
+        if self
+            .pending_picker_open
+            .as_ref()
+            .is_some_and(|opening| opening.id != id)
+        {
+            self.pending_picker_open = None;
+        }
         if self.pending_selection_id.as_deref() == Some(id.as_str()) {
             return;
         }
-        if let Some(replaced) = self.pending_selection_id.replace(id) {
-            self.clear_pending_copy_for(replaced.as_str());
-        }
+        self.pending_selection_id = Some(id);
     }
 
     /// Cancels any queued selection switch that has not been applied yet.
     pub(super) fn clear_pending_selection_request(&mut self) {
-        if let Some(pending) = self.pending_selection_id.take() {
-            self.clear_pending_copy_for(pending.as_str());
-        }
+        self.pending_selection_id = None;
+        self.pending_picker_open = None;
+        self.pending_picker_selection_pin = None;
     }
 
     /// Applies a fully loaded paste into editor state and resets transient edit caches.
@@ -697,6 +675,7 @@ impl LocalPasteApp {
         let id = paste.id.clone();
         if self.selected_id.as_deref() != Some(id.as_str()) {
             if !self.acquire_paste_lock(id.as_str()) {
+                self.pending_picker_open = None;
                 return;
             }
             if let Some(prev) = self.selected_id.replace(id.clone()) {
@@ -708,8 +687,9 @@ impl LocalPasteApp {
         self.reset_virtual_editor(paste.content.as_str());
         self.clear_highlight_state();
         self.selected_paste = Some(paste);
-        self.prime_editor_find_from_sidebar_query();
-        self.try_complete_pending_copy();
+        if !self.prime_editor_find_from_picker_open() {
+            self.prime_editor_find_from_sidebar_query();
+        }
         self.save_status = SaveStatus::Saved;
         self.last_edit_at = None;
         self.save_in_flight = false;
@@ -739,17 +719,38 @@ impl LocalPasteApp {
     }
 
     fn apply_selection_now(&mut self, id: String) -> bool {
-        self.cancel_pending_delete();
         // Acquire target lock before releasing current selection lock so failed
         // switches never drop the currently editable paste unexpectedly.
         if !self.acquire_paste_lock(id.as_str()) {
+            if self.pending_picker_selection_pin.as_deref() == Some(id.as_str()) {
+                self.pending_picker_selection_pin = None;
+            }
+            if self
+                .pending_picker_open
+                .as_ref()
+                .is_some_and(|opening| opening.id == id)
+            {
+                // A failed target must not keep capturing editor input.
+                self.pending_picker_open = None;
+            }
             return false;
+        }
+        self.cancel_pending_delete();
+        self.pending_selection_id = None;
+        if self.pending_picker_selection_pin.take().as_deref() == Some(id.as_str()) {
+            self.picker_selection_pin = Some(id.clone());
+        } else {
+            self.pending_picker_open = None;
+            self.picker_selection_pin = None;
         }
         if let Some(prev) = self.selected_id.replace(id.clone()) {
             self.release_paste_lock(prev.as_str());
         }
         self.reset_selection_editor_state();
-        if !self.dispatch_backend_cmd(CoreCmd::GetPaste { id }) {
+        if !self.dispatch_backend_cmd(CoreCmd::GetPaste {
+            id,
+            selection_epoch: self.active_buffer_epoch,
+        }) {
             self.clear_selection();
             self.set_status("Get paste failed: backend unavailable.");
             return false;
@@ -779,6 +780,7 @@ impl LocalPasteApp {
 
     /// Clears active/pending selection and releases any held paste lock.
     pub(super) fn clear_selection(&mut self) {
+        self.picker_selection_pin = None;
         self.clear_pending_selection_request();
         self.cancel_pending_delete();
         if let Some(prev) = self.selected_id.take() {
@@ -930,122 +932,6 @@ impl LocalPasteApp {
         self.set_status("Export started...");
     }
 
-    /// Returns the visible-list index of the selected paste, if visible.
-    /// # Returns
-    /// `Some(index)` when the selected paste is visible, otherwise `None`.
-    pub(super) fn selected_index(&self) -> Option<usize> {
-        let id = self.selected_id.as_ref()?;
-        self.pastes.iter().position(|paste| paste.id == *id)
-    }
-
-    /// Returns the sidebar paste id targeted by an arrow-key move, if any.
-    ///
-    /// # Arguments
-    /// - `direction`: Signed navigation delta relative to the current selection.
-    ///
-    /// # Returns
-    /// `Some(id)` when the arrow move should select another visible paste, otherwise `None`.
-    pub(super) fn sidebar_arrow_target_id(&self, direction: i32) -> Option<String> {
-        if direction == 0 {
-            return None;
-        }
-        let current = self.selected_index().unwrap_or(0) as i32;
-        let max_index = self.pastes.len().checked_sub(1)? as i32;
-        let next = (current + direction).clamp(0, max_index) as usize;
-        if self.selected_index() == Some(next) {
-            return None;
-        }
-        self.pastes.get(next).map(|paste| paste.id.clone())
-    }
-
-    fn search_backend_filters(&self) -> (Option<String>, Option<String>) {
-        (None, self.active_language_filter.clone())
-    }
-
-    fn current_filter_cutoffs() -> (chrono::NaiveDate, chrono::NaiveDate, chrono::DateTime<Utc>) {
-        let local_now = Local::now();
-        let now = local_now.with_timezone(&Utc);
-        let today_local = local_now.date_naive();
-        let week_cutoff_day = today_local - ChronoDuration::days(7);
-        let recent_cutoff = now - ChronoDuration::days(30);
-        (today_local, week_cutoff_day, recent_cutoff)
-    }
-
-    /// Filters sidebar summaries through the active collection/language state.
-    /// # Returns
-    /// Visible sidebar rows preserving the input ordering of `items`.
-    pub(super) fn filter_by_collection(&self, items: &[PasteSummary]) -> Vec<PasteSummary> {
-        let (today_local, week_cutoff_day, recent_cutoff) = Self::current_filter_cutoffs();
-        let active_language_filter = self.active_language_filter.as_deref();
-        items
-            .iter()
-            .filter(|item| {
-                matches_active_filters(
-                    item,
-                    &self.active_collection,
-                    active_language_filter,
-                    today_local,
-                    week_cutoff_day,
-                    recent_cutoff,
-                )
-            })
-            .cloned()
-            .collect()
-    }
-
-    fn retain_search_results_for_active_filters(&mut self) {
-        let (today_local, week_cutoff_day, recent_cutoff) = Self::current_filter_cutoffs();
-        let active_collection = self.active_collection.clone();
-        let active_language_filter = self.active_language_filter.clone();
-        self.pastes.retain(|item| {
-            matches_active_filters(
-                item,
-                &active_collection,
-                active_language_filter.as_deref(),
-                today_local,
-                week_cutoff_day,
-                recent_cutoff,
-            )
-        });
-    }
-
-    /// Ensures the current selection still exists in the visible sidebar list.
-    ///
-    /// When the active item no longer matches the current filters, this selects
-    /// the first remaining visible paste or clears selection if none remain.
-    pub(super) fn ensure_selection_after_list_update(&mut self) {
-        if self.selection_transition_block_reason().is_some() {
-            return;
-        }
-        if let Some(pending) = self.pending_selection_id.clone() {
-            if self.pastes.iter().any(|paste| paste.id == pending) {
-                self.try_apply_pending_selection();
-                if self.selected_id.as_deref() == Some(pending.as_str())
-                    || self.pending_selection_id.is_none()
-                {
-                    return;
-                }
-            } else if self.selected_id.is_none() {
-                self.pending_selection_id = None;
-                let _ = self.apply_selection_now(pending);
-                return;
-            }
-        }
-        let selection_valid = self
-            .selected_id
-            .as_ref()
-            .map(|id| self.pastes.iter().any(|p| p.id == *id))
-            .unwrap_or(false);
-        if selection_valid {
-            return;
-        }
-        if let Some(first) = self.pastes.first() {
-            self.select_paste(first.id.clone());
-        } else {
-            self.clear_selection();
-        }
-    }
-
     fn metadata_draft_snapshot(&self) -> MetadataDraftSnapshot {
         MetadataDraftSnapshot {
             name: self.edit_name.clone(),
@@ -1070,50 +956,20 @@ impl LocalPasteApp {
         self.metadata_dirty = false;
     }
 
-    /// Completes deferred command-palette copy actions once target content is available.
-    pub(super) fn try_complete_pending_copy(&mut self) {
-        let Some(action) = self.pending_copy_action.clone() else {
-            return;
-        };
-        let Some(paste) = self.selected_paste.as_ref() else {
-            return;
-        };
-        match action {
-            PaletteCopyAction::Raw(id) if id == paste.id => {
-                let content = if self.selected_id.as_deref() == Some(id.as_str()) {
-                    self.active_snapshot()
-                } else {
-                    paste.content.clone()
-                };
-                self.clipboard_outgoing = Some(content);
-                self.pending_copy_action = None;
-                self.set_status("Copied paste content.");
-            }
-            PaletteCopyAction::Fenced(id) if id == paste.id => {
-                let (content, language) = if self.selected_id.as_deref() == Some(id.as_str()) {
-                    (
-                        self.active_snapshot(),
-                        self.edit_language.as_deref().or(paste.language.as_deref()),
-                    )
-                } else {
-                    (paste.content.clone(), paste.language.as_deref())
-                };
-                self.clipboard_outgoing = Some(format_fenced_code_block(&content, language));
-                self.pending_copy_action = None;
-                self.set_status("Copied fenced code block.");
-            }
-            _ => {}
+    /// Discards picker-open and selection pins owned by a removed paste.
+    pub(super) fn clear_picker_selection_context_for(&mut self, id: &str) {
+        if self.pending_picker_selection_pin.as_deref() == Some(id) {
+            self.pending_picker_selection_pin = None;
         }
-    }
-
-    fn clear_pending_copy_for(&mut self, id: &str) {
-        let should_clear = matches!(
-            self.pending_copy_action.as_ref(),
-            Some(PaletteCopyAction::Raw(action_id) | PaletteCopyAction::Fenced(action_id))
-                if action_id == id
-        );
-        if should_clear {
-            self.pending_copy_action = None;
+        if self.picker_selection_pin.as_deref() == Some(id) {
+            self.picker_selection_pin = None;
+        }
+        if self
+            .pending_picker_open
+            .as_ref()
+            .is_some_and(|opening| opening.id == id)
+        {
+            self.pending_picker_open = None;
         }
     }
 }

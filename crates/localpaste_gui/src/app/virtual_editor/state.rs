@@ -8,6 +8,12 @@ pub(crate) struct ImeState {
     pub(crate) enabled: bool,
     pub(crate) preedit_range: Option<Range<usize>>,
     pub(crate) preedit_text: String,
+    /// Text displaced by the first preedit, retained until commit or cancellation.
+    pub(crate) original_text: String,
+    /// Caret before temporary composition text replaced the selection.
+    pub(crate) original_cursor: usize,
+    /// Selection anchor before the first preedit, preserving selection direction.
+    pub(crate) original_anchor: Option<usize>,
 }
 
 /// Affinity for caret positions that land exactly on internal wrap boundaries.
@@ -38,6 +44,30 @@ impl VirtualEditorState {
     /// Zero-based global char index of the caret.
     pub(crate) fn cursor(&self) -> usize {
         self.cursor
+    }
+
+    /// Returns the selection anchor, preserving its direction relative to the caret.
+    ///
+    /// # Returns
+    /// Global character index of the anchor, if a selection is active.
+    pub(crate) fn anchor(&self) -> Option<usize> {
+        self.anchor
+    }
+
+    /// Restores a directional selection after a block edit or undo/redo.
+    ///
+    /// # Arguments
+    /// - `cursor`: Active selection endpoint.
+    /// - `anchor`: Fixed endpoint, if selected.
+    /// - `text_len`: Character count used to clamp both endpoints.
+    pub(crate) fn restore_selection(
+        &mut self,
+        cursor: usize,
+        anchor: Option<usize>,
+        text_len: usize,
+    ) {
+        self.set_cursor(cursor, text_len);
+        self.anchor = anchor.map(|index| index.min(text_len));
     }
 
     /// Returns the preferred visual column for vertical movement.

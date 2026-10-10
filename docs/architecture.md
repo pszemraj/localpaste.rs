@@ -52,58 +52,28 @@ flowchart LR
 
 `localpaste-gui`:
 
-1. Opens the DB at `DB_PATH`.
-2. Acquires process-lifetime owner lock.
+1. Acquires the process-lifetime owner lock at `DB_PATH`.
+2. Opens the database.
 3. Starts an embedded API server on loopback.
 4. Writes embedded API endpoint to `DB_PATH/.api-addr`.
 5. Runs UI and backend worker in-process.
 
-CLI behavior in this mode:
-
-- `lpaste` prefers explicit `--server` / `LP_SERVER`.
-- If unset and discovery is enabled, it reads `.api-addr`, validates discovered endpoint identity, and only then uses it.
-- If validation fails, it falls back to the default local endpoint.
-- `--no-discovery` disables `.api-addr` probing and uses only explicit/env/default resolution.
+CLI endpoint selection follows [Discovery And Trust](#10-discovery-and-trust).
 
 ### Headless Topology
 
 `localpaste`:
 
-1. Opens the DB at `DB_PATH`.
-2. Acquires owner lock.
+1. Acquires the process-lifetime owner lock at `DB_PATH`.
+2. Opens the database.
 3. Binds HTTP listener (`BIND` or loopback default).
 4. Serves API requests until shutdown.
 
 DB ownership rules for both topologies are in [storage.md#operational-expectations](storage.md#operational-expectations).
 
-```mermaid
-sequenceDiagram
-    participant GUI as localpaste-gui
-    participant API as Embedded API
-    participant FS as Filesystem
-    participant CLI as lpaste
-
-    GUI->>FS: acquire owner lock + open DB
-    GUI->>API: bind loopback listener
-    GUI->>FS: write .api-addr
-    CLI->>CLI: check --server / LP_SERVER
-    alt explicit endpoint provided
-        CLI->>API: send request to explicit endpoint
-    else no explicit endpoint
-        CLI->>FS: read .api-addr
-        CLI->>API: probe /api/pastes/meta?limit=1
-        CLI->>CLI: validate LocalPaste identity headers
-        alt probe valid
-            CLI->>API: use discovered endpoint
-        else probe invalid/stale
-            CLI->>CLI: fall back to default local endpoint
-        end
-    end
-```
-
 ## 3) Storage Design
 
-Storage layout, projection tables, version-history storage, durability, and compatibility policy are defined in [storage.md](storage.md).
+The core persists [paste rows, projections, and version history](storage.md) in redb.
 
 - [`../crates/localpaste_core/src/db/mod.rs`](../crates/localpaste_core/src/db/mod.rs)
 - [`../crates/localpaste_core/src/db/paste/mod.rs`](../crates/localpaste_core/src/db/paste/mod.rs)
@@ -111,11 +81,7 @@ Storage layout, projection tables, version-history storage, durability, and comp
 
 ## 4) Consistency Model
 
-redb write transactions are atomic across all opened tables, so LocalPaste uses:
-
-- single-write-transaction mutations for paste/meta/index/folder updates,
-- no metadata fault markers or reconcile state machine,
-- no cross-table rollback stack for folder-affecting operations.
+The [storage atomicity contract](storage.md#durability-and-atomicity) applies to paste, metadata, recency-index, and folder updates.
 
 Core transaction helper:
 
@@ -124,17 +90,6 @@ Core transaction helper:
 Folder shared operations and invariant repair:
 
 - [`../crates/localpaste_core/src/folder_ops.rs`](../crates/localpaste_core/src/folder_ops.rs)
-
-```mermaid
-flowchart TD
-    W["Write request (create/update/delete/move)"] --> T["Open single redb write transaction"]
-    T --> C["Update authoritative + derived tables"]
-    C --> K{"commit() succeeds?"}
-    K -- yes --> OK["All changes visible atomically"]
-    K -- no --> ABORT["No partial rows committed"]
-
-    R["Read request (list/search/meta)"] --> I["Read from authoritative/metadata tables"]
-```
 
 ## 5) Read And Write Paths
 
@@ -149,32 +104,19 @@ Folder API pathways remain for compatibility and emit deprecation headers; the G
 Version and diff surfaces:
 
 - `/api/paste/:id/versions*` supports list/get/reset-hard/duplicate for historical snapshots.
-- `/api/diff` compares head or historical paste references and rejects combined
-  diff sources above 1 MiB with `413 Payload Too Large`.
+- `/api/diff` and `/api/equal` compare head or historical paste references. Distinct references with combined content above 1 MiB return `413 Payload Too Large`; identical references resolve existence and return equality without that size gate.
 - Content-changing writes may persist an older-head snapshot. Snapshot interval and retention behavior are defined in [storage.md#version-history-storage](storage.md#version-history-storage).
 
 Read behavior:
 
-- list/search use metadata/index projections backed by atomic write consistency,
-- metadata search ranks against `name`, derived handle/terms, tags, and
-  normalized language without deserializing full paste content in the hot path,
-- no stale-index authoritative-table fallback path is required.
+- List and search responses contain metadata rows; fetch `/api/paste/:id` for full content.
+- Lists read metadata and recency projections backed by atomic write consistency.
+- Title and Metadata searches use the projection; All fields and Body searches also read authoritative paste content. Metadata ranking uses `name`, derived handle/terms, tags, and normalized language. Every scope filters and ranks the full store before applying the result limit.
+- Projection updates commit with authoritative writes; reads need no stale-index fallback.
 
 ## 6) Locking And Concurrency
 
-Two lock layers are used:
-
-1. DB owner lock (filesystem/process-wide): one writer process per DB path.
-2. Paste edit locks (in-memory/paste-scoped): prevent API/CLI/bulk mutations on GUI-open pastes.
-
-Lock reference:
-
-- [dev/locking-model.md](dev/locking-model.md)
-
-Primary implementation:
-
-- [`../crates/localpaste_core/src/db/lock.rs`](../crates/localpaste_core/src/db/lock.rs)
-- [`../crates/localpaste_server/src/locks.rs`](../crates/localpaste_server/src/locks.rs)
+See the [lock layers and mutation guards](dev/locking-model.md).
 
 ## 7) HTTP Layer And Security Boundaries
 
@@ -182,11 +124,11 @@ Axum router and middleware live in:
 
 - [`../crates/localpaste_server/src/lib.rs`](../crates/localpaste_server/src/lib.rs)
 
-Security defaults, public-bind policy, CORS behavior, request-size limits, and browser security headers are defined in [security.md](security.md).
+HTTP requests use [loopback binding, size limits, and browser security headers](security.md).
 
 ## 8) Language Detection And Highlighting
 
-Detection, normalization, manual-language behavior, syntax resolution, and virtual-editor highlight staging are defined in [language-detection.md](language-detection.md).
+The core [detects and normalizes languages](language-detection.md#detection-flow); the GUI [resolves grammars and stages highlighting](language-detection.md#gui-highlight-resolution).
 
 ## 9) GUI Save Pipeline
 
@@ -196,7 +138,7 @@ Key properties:
 
 - autosave and keyboard-triggered manual saves dispatch through backend commands,
 - metadata save path is separate from content save path,
-- shutdown force-enqueues final dirty snapshots before backend shutdown acknowledgement.
+- shutdown attempts to drain saves, enqueue final dirty snapshots, and wait for the backend to finish; failures and timeouts are logged, so this is best effort.
 
 Relevant code:
 
@@ -213,26 +155,48 @@ sequenceDiagram
     UI->>UI: detect dirty content/metadata on exit
     UI->>W: enqueue final content save (forced)
     UI->>W: enqueue final metadata save (forced)
-    UI->>W: send Shutdown{flush=true} (compat flag; redb commits on write commit)
-    W->>DB: process queued saves in order
-    W->>DB: commit() per mutation
-    W-->>UI: ShutdownComplete
+    UI->>W: send Shutdown{flush=true} (compatibility flag)
+    alt saves and shutdown complete before timeout
+        W->>DB: process queued saves and commit each mutation
+        W-->>UI: ShutdownComplete
+    else dispatch, save, or shutdown fails
+        UI->>UI: log failure or pending unsaved state
+    end
 ```
 
 ## 10) Discovery And Trust
 
-Embedded server discovery path:
+`lpaste` resolves endpoints as follows. `--no-discovery` skips `.api-addr` probing and uses explicit/env/default resolution.
 
-- GUI writes `.api-addr`.
-- CLI may consume it only when no explicit endpoint override is set.
-- CLI validates:
-  - scheme/loopback constraints,
-  - LocalPaste response fingerprint (`x-localpaste-server: 1`).
+```mermaid
+sequenceDiagram
+    participant API as LocalPaste API
+    participant FS as Filesystem
+    participant CLI as lpaste
+
+    CLI->>CLI: check --server / LP_SERVER
+    alt explicit endpoint provided
+        CLI->>API: send request to explicit endpoint
+    else no explicit endpoint
+        CLI->>FS: read .api-addr
+        CLI->>API: probe /api/pastes/meta?limit=1
+        CLI->>CLI: validate LocalPaste identity headers
+        alt probe valid
+            CLI->>API: use discovered endpoint
+        else probe invalid/stale
+            CLI->>CLI: fall back to default local endpoint
+        end
+    end
+```
+
+Discovered endpoints must use HTTP with a loopback host and return `200` from `/api/pastes/meta?limit=1` with JSON content type, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `x-localpaste-server: 1` headers.
+
+The probe uses 250 ms connection/read/write timeouts. These checks reject stale or unrelated endpoints; the headers identify a compatible API but do not authenticate a local process.
 
 Relevant code:
 
 - [`../crates/localpaste_server/src/embedded.rs`](../crates/localpaste_server/src/embedded.rs)
-- [`../crates/localpaste_cli/src/main.rs`](../crates/localpaste_cli/src/main.rs)
+- [`../crates/localpaste_cli/src/discovery.rs`](../crates/localpaste_cli/src/discovery.rs)
 
 ## 11) Validation Strategy
 

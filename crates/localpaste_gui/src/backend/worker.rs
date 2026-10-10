@@ -265,6 +265,8 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             true
         }
         CoreCmd::SearchPastes {
+            collection,
+            scope,
             query,
             limit,
             folder_id,
@@ -273,20 +275,33 @@ fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
             query::handle_search(
                 state,
                 query::SearchRoute::Standard {
+                    collection,
                     folder_id,
                     language,
                 },
                 query,
                 limit,
+                scope,
             );
             true
         }
-        CoreCmd::SearchPalette { query, limit } => {
-            query::handle_search(state, query::SearchRoute::Palette, query, limit);
+        CoreCmd::SearchPalette {
+            query,
+            limit,
+            scope,
+        } => {
+            query::handle_search(state, query::SearchRoute::Palette, query, limit, scope);
             true
         }
-        CoreCmd::GetPaste { id } => {
-            paste::handle_get_paste(state, id);
+        CoreCmd::GetPaste {
+            id,
+            selection_epoch,
+        } => {
+            paste::handle_get_paste(state, id, selection_epoch);
+            true
+        }
+        CoreCmd::GetPasteForCopy { id, request_id } => {
+            paste::handle_get_paste_for_copy(state, id, request_id);
             true
         }
         CoreCmd::GetDiffTargetPaste { id } => {

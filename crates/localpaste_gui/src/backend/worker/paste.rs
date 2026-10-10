@@ -18,7 +18,8 @@ use tracing::{error, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PasteLoadRoute {
-    Selection,
+    Selection(u64),
+    Copy(u64),
     DiffTarget,
 }
 
@@ -36,8 +37,19 @@ fn delete_undo_staging_can_fallback(err: &AppError) -> bool {
 /// # Arguments
 /// - `state`: Worker state containing db and event channel handles.
 /// - `id`: Paste id to load.
-pub(super) fn handle_get_paste(state: &mut WorkerState, id: String) {
-    handle_get_paste_for_route(state, id, PasteLoadRoute::Selection);
+/// - `selection_epoch`: Editor epoch echoed on every selection-load outcome.
+pub(super) fn handle_get_paste(state: &mut WorkerState, id: String, selection_epoch: u64) {
+    handle_get_paste_for_route(state, id, PasteLoadRoute::Selection(selection_epoch));
+}
+
+/// Fetches a paste body for a picker copy action without loading it into the editor.
+///
+/// # Arguments
+/// - `state`: Worker state containing db and event channel handles.
+/// - `id`: Paste id to load for copying.
+/// - `request_id`: Copy request identity echoed on every outcome.
+pub(super) fn handle_get_paste_for_copy(state: &mut WorkerState, id: String, request_id: u64) {
+    handle_get_paste_for_route(state, id, PasteLoadRoute::Copy(request_id));
 }
 
 /// Fetches a detached diff target paste by id and emits diff-specific events.
@@ -53,25 +65,44 @@ fn handle_get_paste_for_route(state: &mut WorkerState, id: String, route: PasteL
     match state.db.pastes.get(&id) {
         Ok(Some(paste)) => {
             let event = match route {
-                PasteLoadRoute::Selection => CoreEvent::PasteLoaded { paste },
+                PasteLoadRoute::Selection(selection_epoch) => CoreEvent::PasteLoaded {
+                    paste,
+                    selection_epoch,
+                },
+                PasteLoadRoute::Copy(request_id) => {
+                    CoreEvent::PasteCopyLoaded { paste, request_id }
+                }
                 PasteLoadRoute::DiffTarget => CoreEvent::DiffTargetLoaded { paste },
             };
             let _ = state.evt_tx.send(event);
         }
         Ok(None) => {
             let event = match route {
-                PasteLoadRoute::Selection => CoreEvent::PasteMissing { id },
+                PasteLoadRoute::Selection(selection_epoch) => CoreEvent::PasteSelectionMissing {
+                    id,
+                    selection_epoch,
+                },
+                PasteLoadRoute::Copy(request_id) => CoreEvent::PasteCopyMissing { id, request_id },
                 PasteLoadRoute::DiffTarget => CoreEvent::DiffTargetMissing { id },
             };
             let _ = state.evt_tx.send(event);
         }
         Err(err) => {
             let (log_label, event) = match route {
-                PasteLoadRoute::Selection => (
+                PasteLoadRoute::Selection(selection_epoch) => (
                     "backend get failed",
                     CoreEvent::PasteLoadFailed {
                         id,
+                        selection_epoch,
                         message: format!("Get failed: {}", err),
+                    },
+                ),
+                PasteLoadRoute::Copy(request_id) => (
+                    "backend copy get failed",
+                    CoreEvent::PasteCopyLoadFailed {
+                        id,
+                        request_id,
+                        message: format!("Copy failed: {}", err),
                     },
                 ),
                 PasteLoadRoute::DiffTarget => (
@@ -357,11 +388,10 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
             ) {
                 Ok(guards) => guards,
                 Err(err) => {
-                    send_error(
-                        &state.evt_tx,
-                        CoreErrorSource::Other,
-                        format!("Delete failed: {}", err),
-                    );
+                    let _ = state.evt_tx.send(CoreEvent::PasteDeleteFailed {
+                        id,
+                        message: format!("Delete failed: {}", err),
+                    });
                     return;
                 }
             };
@@ -408,11 +438,10 @@ pub(super) fn handle_delete_paste(state: &mut WorkerState, id: String) {
         }
         Err(err) => {
             error!("backend delete failed: {}", err);
-            send_error(
-                &state.evt_tx,
-                CoreErrorSource::Other,
-                format!("Delete failed: {}", err),
-            );
+            let _ = state.evt_tx.send(CoreEvent::PasteDeleteFailed {
+                id,
+                message: format!("Delete failed: {}", err),
+            });
         }
     }
 }

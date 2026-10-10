@@ -1,50 +1,29 @@
 # Development Guide
 
-Build, run, validation, and tooling command matrix.
-Runtime architecture: [../architecture.md](../architecture.md).
-Docs map: [../README.md](../README.md).
-
-## Workspace Layout
-
-```text
-localpaste.rs/
-|-- Cargo.toml
-|-- crates/
-|   |-- localpaste_core/    # config, db, models, naming, errors
-|   |-- localpaste_server/  # axum API + embedded server
-|   |-- localpaste_gui/     # native rewrite desktop app
-|   |-- localpaste_cli/     # lpaste binary
-|   `-- localpaste_tools/   # dataset generators / utilities
-|-- docs/
-|-- assets/
-`-- target/
-```
+Build and run the workspace binaries with the commands below. See [runtime architecture](../architecture.md) for process topology.
 
 ## Binary Map
 
-- `localpaste-gui` - rewrite desktop app (`crates/localpaste_gui`)
-- `localpaste` - headless API server (`crates/localpaste_server`)
-- `lpaste` - CLI client (`crates/localpaste_cli`)
-- `generate-test-data` - synthetic dataset tool (`crates/localpaste_tools`)
-- `check-loc` - line-count policy checker (`crates/localpaste_tools`)
-- `check-ast-dupes` - AST-normalized duplicate/dead-symbol audit (`crates/localpaste_tools`)
+| Crate under `crates/` | Binaries | Purpose |
+| --- | --- | --- |
+| `localpaste_core` | Library only | Config, models, storage, shared operations |
+| `localpaste_gui` | `localpaste-gui` | Native desktop app |
+| `localpaste_server` | `localpaste` | Headless HTTP API |
+| `localpaste_cli` | `lpaste` | HTTP client and endpoint discovery |
+| `localpaste_tools` | `generate-test-data`, `check-loc`, `check-ast-dupes` | Fixtures, line-count policy, duplicate/dead-symbol audit |
 
 ## Build Matrix
 
 ```bash
-# GUI
-cargo build -p localpaste_gui --bin localpaste-gui --release
+# Build all workspace binaries.
+cargo build --workspace --release
+```
 
-# Server
-cargo build -p localpaste_server --bin localpaste --release
+For service and shell use, install the server and CLI into Cargo's binary directory:
 
-# CLI
-cargo build -p localpaste_cli --bin lpaste --release
-
-# Tooling
-cargo build -p localpaste_tools --bin generate-test-data --release
-cargo build -p localpaste_tools --bin check-loc --release
-cargo build -p localpaste_tools --bin check-ast-dupes --release
+```bash
+cargo install --path crates/localpaste_server --bin localpaste
+cargo install --path crates/localpaste_cli --bin lpaste
 ```
 
 ## Run Matrix
@@ -60,25 +39,9 @@ cargo run -p localpaste_server --bin localpaste --release
 ./target/release/lpaste --help
 ```
 
-Runtime contract references:
+For editor-mode flags and tracing env vars, see [gui-notes.md](gui-notes.md).
 
-- Runtime topologies + endpoint discovery/trust checks:
-  [architecture.md#2-runtime-topologies](../architecture.md#2-runtime-topologies)
-  and
-  [architecture.md#10-discovery-and-trust](../architecture.md#10-discovery-and-trust)
-- Single-writer `DB_PATH` + on-disk contract: [storage.md](../storage.md)
-- Lock semantics and API `423 Locked` behavior:
-  [locking-model.md](locking-model.md)
-
-Day-to-day runtime details:
-
-- DB ownership rules: [storage.md#operational-expectations](../storage.md#operational-expectations)
-- The GUI polls for out-of-process DB writes every 30 seconds; app-owned mutations refresh immediately.
-
-For editor-mode flags and tracing env vars, see
-[gui-notes.md](gui-notes.md).
-For repeatable GUI perf validation, see
-[gui-perf-protocol.md](gui-perf-protocol.md).
+For repeatable GUI perf validation, see [gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Validation Loop
 
@@ -106,16 +69,18 @@ cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates --include-t
 # 6) targeted tests for touched areas
 # cargo test -p <crate>
 
-# 7) runtime smoke (server + CLI + restart persistence)
-# run the smoke runbook:
-# devlog.md#runtime-smoke-test-server-cli
+# 7) full build
+cargo build --workspace --all-targets --all-features
 
 # 8) docs contract check
 rustdoc-checker crates --strict
 ```
 
-- Workflow/release helper changes:
-  when touching `.github/workflows/*`, `.github/scripts/*`, or GUI packaging/release behavior, also run:
+After these checks, run the [server/CLI smoke test](#runtime-smoke-test-server-cli) and the [GUI checklist](gui-notes.md#manual-gui-human-step-checklist-comprehensive) as applicable, then commit the validated change. Resolve warnings or record a reason in the [backlog](backlog.md) or [LOC exceptions](loc-exceptions.toml).
+
+Documentation-only changes need checks for the content changed, not the full Rust loop.
+
+For changes to `.github/workflows/*`, `.github/scripts/*`, or GUI packaging, run these checks locally. See [workflow triggers](release-pipeline.md#workflow-triggers) for automated runs.
 
 ```bash
 # release helper regression tests
@@ -126,22 +91,18 @@ python -m unittest discover -s .github/scripts -p 'test_*.py'
 python .github/scripts/validate_workflow.py .github/workflows
 ```
 
-- Manual GUI checklist:
-  [gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive)
-
-Language detection/normalization/highlight behavior is tracked in
-[language-detection.md](../language-detection.md).
+The workflow validator needs PyYAML, `yamllint` on `PATH`, and a working Bash for shell syntax checks.
 
 ## Runtime Smoke Test (Server CLI)
 
-Run this API/core smoke test.
-It validates CRUD behavior and persistence across process restart.
+Run this API/core smoke test. It validates CRUD behavior and persistence across process restart.
 
 ### Bash
 
 ```bash
 export PORT=3055
-export DB_PATH="$(mktemp -d)/lpaste-smoke"
+mkdir -p target
+export DB_PATH="$(mktemp -d "$PWD/target/lpaste-smoke-XXXXXX")"
 export LP_SERVER="http://127.0.0.1:$PORT"
 
 cargo build -p localpaste_server --bin localpaste
@@ -158,28 +119,29 @@ ID="$(./target/debug/lpaste list --limit 1 | awk '{print $1}')"
 
 # Restart persistence check
 kill "$SERVER_PID"
+wait "$SERVER_PID" || true
 ./target/debug/localpaste &
 SERVER_PID=$!
 sleep 1
 ./target/debug/lpaste get "$ID"
 ./target/debug/lpaste delete "$ID"
 ! ./target/debug/lpaste get "$ID"
+./target/debug/lpaste list --limit 10
 
 kill "$SERVER_PID"
-rm -rf "$DB_PATH"
 ```
 
 ### PowerShell
 
 ```powershell
 $env:PORT = "3055"
-$env:DB_PATH = Join-Path $env:TEMP "lpaste-smoke-$([guid]::NewGuid().ToString('N'))"
+$env:DB_PATH = Join-Path (Get-Location) "target/lpaste-smoke-$([guid]::NewGuid().ToString('N'))"
 $env:LP_SERVER = "http://127.0.0.1:$env:PORT"
 
 cargo build -p localpaste_server --bin localpaste
 cargo build -p localpaste_cli --bin lpaste
 
-$proc = Start-Process -FilePath .\target\debug\localpaste.exe -NoNewWindow -PassThru
+$proc = Start-Process -FilePath .\target\debug\localpaste.exe -WindowStyle Hidden -PassThru
 Start-Sleep -Seconds 1
 
 "smoke hello" | .\target\debug\lpaste.exe new --name "smoke-test"
@@ -189,19 +151,21 @@ $id = (.\target\debug\lpaste.exe list --limit 1) -split ' ' | Select-Object -Fir
 
 # Restart persistence check
 Stop-Process -Id $proc.Id
-$proc = Start-Process -FilePath .\target\debug\localpaste.exe -NoNewWindow -PassThru
+$proc = Start-Process -FilePath .\target\debug\localpaste.exe -WindowStyle Hidden -PassThru
 Start-Sleep -Seconds 1
 .\target\debug\lpaste.exe get $id
 .\target\debug\lpaste.exe delete $id
 .\target\debug\lpaste.exe get $id; if ($LASTEXITCODE -eq 0) { throw "deleted paste still exists" }
+.\target\debug\lpaste.exe list --limit 10
 
 Stop-Process -Id $proc.Id
-Remove-Item -Recurse -Force $env:DB_PATH
 ```
+
+The isolated test database remains under `target/` for inspection. The final list must exclude the deleted paste. Use an unused `PORT` if 3055 is occupied.
 
 ## Tooling CLI Contracts
 
-`localpaste_tools` CLI behavior used in automation/CI contracts:
+`localpaste_tools` command behavior:
 
 ### `generate-test-data`
 
@@ -228,6 +192,14 @@ Remove-Item -Recurse -Force $env:DB_PATH
 
 ### `check-ast-dupes`
 
+- Audit scope:
+  - default scans production bodies; `--include-tests` also compares test bodies
+  - test context follows enclosing `cfg(test)` modules, including out-of-line modules and `#[path]` declarations
+  - module links are discovered before standalone roots, independent of source-file ordering; declared `mod.rs` files inherit context, and `src/bin/*.rs` entrypoints resolve child modules beside the entrypoint
+  - files shared by test and production declarations remain in the production audit; disconnected or unresolved files are audited conservatively without Cargo target metadata
+  - test-only helpers are excluded from dead-symbol and visibility findings
+  - `tests/` path segments are relative to `--root`; an ancestor directory named `tests` does not hide production files
+  - recognized callback paths in attribute arguments (for example, Clap `value_parser` and Serde callback values) count as usage; the audit does not expand procedural macros
 - Parse-time validation:
   - `--threshold` in `[0.0, 1.0]`
   - `--near-miss-threshold` in `[0.0, 1.0]`
@@ -237,11 +209,7 @@ Remove-Item -Recurse -Force $env:DB_PATH
   - `--near-miss-threshold <= --threshold`
   - `--root` must exist and be a directory
 - Parse-error policy:
-  - default: parse errors fail the run
+  - default: parse errors fail the run, including files whose test bodies are excluded
   - override: `--allow-parse-errors` allows continued reporting with partial coverage
 - `--fail-on-findings` policy:
   - fails on any reported finding category (duplicates, near-misses, likely-dead, visibility-tighten candidates)
-
-## GUI Release Pipeline
-
-Packaging/release behavior: [../release-gui.md](../release-gui.md).

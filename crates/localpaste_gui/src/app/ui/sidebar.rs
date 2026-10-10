@@ -1,5 +1,6 @@
 //! Top bar and sidebar rendering for paste navigation and quick actions.
 
+use super::super::shortcuts::runtime_shortcut_label;
 use super::super::*;
 use chrono::{DateTime, Duration as ChronoDuration, Local, TimeZone, Utc};
 use eframe::egui::{self, RichText};
@@ -122,15 +123,23 @@ impl LocalPasteApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         // Background chrome should not enter egui's keyboard focus ring while the
                         // editor owns arrow/home/end navigation on muscle memory.
-                        if ui
-                            .add(
-                                egui::Button::new("Shortcuts (F1)")
-                                    .small()
-                                    .sense(non_focusable_click_sense()),
-                            )
-                            .clicked()
+                        let shortcuts = ui.add(
+                            egui::Button::new("Shortcuts (F1)")
+                                .small()
+                                .sense(non_focusable_click_sense()),
+                        );
+                        // Capture the opener before the editor blurs on this press.
+                        if shortcuts.is_pointer_button_down_on() {
+                            self.remember_discovery_focus(ctx);
+                        }
+                        if shortcuts.clicked() {
+                            self.open_shortcut_help(ctx);
+                        } else if ui.input(|input| input.pointer.primary_released())
+                            && !self.command_palette_open
+                            && !self.paste_picker_open
+                            && !self.shortcut_help_open
                         {
-                            self.shortcut_help_open = true;
+                            self.discovery_return_focus = None;
                         }
                     });
                 });
@@ -158,7 +167,10 @@ impl LocalPasteApp {
                 let search_resp = ui.add(
                     egui::TextEdit::singleline(&mut search_buf)
                         .id(egui::Id::new(SEARCH_INPUT_ID))
-                        .hint_text("Search pastes... (Ctrl/Cmd+F)"),
+                        .hint_text(format!(
+                            "Search pastes... ({})",
+                            runtime_shortcut_label(RuntimeShortcutAction::FocusSearch)
+                        )),
                 );
                 if self.search_focus_requested {
                     search_resp.request_focus();
@@ -166,6 +178,17 @@ impl LocalPasteApp {
                 }
                 if search_resp.changed() {
                     self.set_search_query(search_buf);
+                }
+                let scope =
+                    super::search_scope::scope_selector(ui, "sidebar_scope", self.search_scope);
+                self.set_search_scope(scope);
+                if let Some(error) = &self.search_error {
+                    ui.label(RichText::new(error).small().color(COLOR_TEXT_MUTED));
+                    if ui.button("Retry search").clicked() {
+                        self.search_error = None;
+                        self.search_last_sent.clear();
+                        self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+                    }
                 }
 
                 ui.add_space(8.0);
@@ -306,6 +329,7 @@ impl LocalPasteApp {
             (SidebarCollection::Week, "This Week"),
             (SidebarCollection::Recent, "Recent (30d)"),
             (SidebarCollection::Unfiled, "Unfiled"),
+            (SidebarCollection::Documents, "Documents"),
             (SidebarCollection::Code, "Code"),
             (SidebarCollection::Config, "Config"),
             (SidebarCollection::Logs, "Logs"),
@@ -442,6 +466,7 @@ mod tests {
             folder_id: None,
             tags: Vec::new(),
             derived: localpaste_core::semantic::DerivedMeta::default(),
+            match_excerpt: None,
         }
     }
 
@@ -576,6 +601,7 @@ mod tests {
                 handle: Some("fn handle_request".to_string()),
                 terms: vec!["fsdp2".to_string(), "cublaslt".to_string()],
             },
+            match_excerpt: None,
         };
         let tooltip = sidebar_hover_text(&summary);
         assert!(tooltip.contains("untamed-tundra"));

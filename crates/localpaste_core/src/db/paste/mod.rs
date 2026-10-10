@@ -2,6 +2,7 @@
 
 mod compare;
 mod helpers;
+mod search;
 mod version_reset;
 
 use crate::{
@@ -20,14 +21,12 @@ use crate::{
     naming,
     validation::ensure_paste_content_size,
 };
-use chrono::{DateTime, Utc};
 use redb::{ReadTransaction, ReadableDatabase, ReadableTable};
 use std::sync::Arc;
 
 use self::helpers::{
-    deserialize_meta, finalize_meta_search_results, folder_matches_expected,
-    language_matches_filter, meta_matches_filters, push_ranked_meta_top_k, score_meta_match,
-    score_paste_match,
+    deserialize_meta, finalize_meta_search_results, folder_matches_expected, meta_matches_filters,
+    push_ranked_meta_top_k, score_meta_match, score_paste_match,
 };
 
 pub(crate) use self::helpers::discard_paste_versions_for_delete;
@@ -51,7 +50,7 @@ pub(crate) const META_SCHEMA_VERSION_KEY: &str = "__schema_version";
 ///
 /// Bump this whenever the persisted `PasteMeta` projection contract changes,
 /// including semantic-derived fields produced by [`PasteMeta::from`].
-pub(crate) const CURRENT_PASTES_META_SCHEMA_VERSION: u64 = 2;
+pub(crate) const CURRENT_PASTES_META_SCHEMA_VERSION: u64 = 19;
 
 impl PasteDb {
     fn reject_direct_folder_operation(
@@ -171,12 +170,8 @@ impl PasteDb {
     pub fn ensure_meta_index_current(&self) -> Result<(), AppError> {
         {
             let read_txn = self.db.begin_read()?;
-            let meta_state = read_txn.open_table(PASTES_META_STATE)?;
-            if let Some(value) = meta_state.get(META_SCHEMA_VERSION_KEY)? {
-                let decoded_version = bincode::deserialize::<u64>(value.value()).ok();
-                if decoded_version == Some(CURRENT_PASTES_META_SCHEMA_VERSION) {
-                    return Ok(());
-                }
+            if super::meta_index_schema_current(&read_txn)? {
+                return Ok(());
             }
         }
         self.rebuild_meta_index()
@@ -719,155 +714,9 @@ impl PasteDb {
 
         Ok(metas)
     }
-
-    /// Search canonical paste data and return ranked metadata rows.
-    ///
-    /// # Arguments
-    /// - `query`: Search query string.
-    /// - `limit`: Maximum rows to return.
-    /// - `folder_id`: Optional folder filter.
-    /// - `language`: Optional language filter.
-    ///
-    /// # Returns
-    /// Ranked metadata matches (name/tags/content scoring).
-    ///
-    /// # Errors
-    /// Returns an error when storage access or deserialization fails.
-    pub fn search(
-        &self,
-        query: &str,
-        limit: usize,
-        folder_id: Option<String>,
-        language: Option<String>,
-    ) -> Result<Vec<PasteMeta>, AppError> {
-        self.search_with_options(query, limit, folder_id, language, SearchOptions::default())
-    }
-
-    /// Search canonical paste data with explicit search behavior flags.
-    ///
-    /// # Arguments
-    /// - `query`: Search query string.
-    /// - `limit`: Maximum rows to return.
-    /// - `folder_id`: Optional folder filter.
-    /// - `language`: Optional language filter.
-    /// - `options`: Search behavior flags.
-    ///
-    /// # Returns
-    /// Ranked metadata matches (name/tags/content scoring).
-    ///
-    /// # Errors
-    /// Returns an error when storage access or deserialization fails.
-    pub fn search_with_options(
-        &self,
-        query: &str,
-        limit: usize,
-        folder_id: Option<String>,
-        language: Option<String>,
-        options: SearchOptions,
-    ) -> Result<Vec<PasteMeta>, AppError> {
-        let query = query.trim();
-        if query.is_empty() || limit == 0 {
-            return Ok(Vec::new());
-        }
-
-        let language_filter = normalize_language_filter(language.as_deref());
-        let read_txn = self.db.begin_read()?;
-        let pastes_table = read_txn.open_table(PASTES)?;
-        let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
-
-        for item in pastes_table.iter()? {
-            let (_, value) = item?;
-            let paste = deserialize_paste(value.value())?;
-
-            if let Some(ref fid) = folder_id {
-                if paste.folder_id.as_ref() != Some(fid) {
-                    continue;
-                }
-            }
-            if !language_matches_filter(paste.language.as_deref(), language_filter.as_deref()) {
-                continue;
-            }
-
-            let meta = PasteMeta::from(&paste);
-            let score = score_paste_match(&paste, &meta, query, options.case_sensitive);
-            if score > 0 {
-                push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
-            }
-        }
-
-        Ok(finalize_meta_search_results(results, limit))
-    }
-
-    /// Search metadata-only fields and return ranked rows.
-    ///
-    /// # Arguments
-    /// - `query`: Search query string.
-    /// - `limit`: Maximum rows to return.
-    /// - `folder_id`: Optional folder filter.
-    /// - `language`: Optional language filter.
-    ///
-    /// # Returns
-    /// Ranked metadata matches (name/tags/language scoring).
-    ///
-    /// # Errors
-    /// Returns an error when storage access or deserialization fails.
-    pub fn search_meta(
-        &self,
-        query: &str,
-        limit: usize,
-        folder_id: Option<String>,
-        language: Option<String>,
-    ) -> Result<Vec<PasteMeta>, AppError> {
-        self.search_meta_with_options(query, limit, folder_id, language, SearchOptions::default())
-    }
-
-    /// Search metadata-only fields with explicit search behavior flags.
-    ///
-    /// # Arguments
-    /// - `query`: Search query string.
-    /// - `limit`: Maximum rows to return.
-    /// - `folder_id`: Optional folder filter.
-    /// - `language`: Optional language filter.
-    /// - `options`: Search behavior flags.
-    ///
-    /// # Returns
-    /// Ranked metadata matches (name/tags/language scoring).
-    ///
-    /// # Errors
-    /// Returns an error when storage access or deserialization fails.
-    pub fn search_meta_with_options(
-        &self,
-        query: &str,
-        limit: usize,
-        folder_id: Option<String>,
-        language: Option<String>,
-        options: SearchOptions,
-    ) -> Result<Vec<PasteMeta>, AppError> {
-        let query = query.trim();
-        if query.is_empty() || limit == 0 {
-            return Ok(Vec::new());
-        }
-
-        let language_filter = normalize_language_filter(language.as_deref());
-        let read_txn = self.db.begin_read()?;
-        let meta_table = read_txn.open_table(PASTES_META)?;
-        let mut results: Vec<(i32, DateTime<Utc>, PasteMeta)> = Vec::new();
-
-        for item in meta_table.iter()? {
-            let (_, value) = item?;
-            let meta = deserialize_meta(value.value())?;
-            if !meta_matches_filters(&meta, folder_id.as_deref(), language_filter.as_deref()) {
-                continue;
-            }
-            let score = score_meta_match(&meta, query, options.case_sensitive);
-            if score > 0 {
-                push_ranked_meta_top_k(&mut results, (score, meta.updated_at, meta), limit);
-            }
-        }
-
-        Ok(finalize_meta_search_results(results, limit))
-    }
 }
 
+#[cfg(test)]
+mod search_tests;
 #[cfg(test)]
 mod tests;
