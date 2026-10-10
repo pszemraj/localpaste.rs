@@ -460,4 +460,107 @@ mod markdown_block_boundaries {
             }
         }
     }
+
+    #[test]
+    fn nested_quoted_fences_close_at_their_own_quote_depth() {
+        let settings = settings();
+        let syntax = resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for fence in ["```", "~~~", "````", "~~~~"] {
+            for quote in [
+                "> ",
+                ">",
+                "  > ",
+                "> > ",
+                ">> ",
+                ">>",
+                "  > > ",
+                "> > > ",
+                "> > > > > > ",
+            ] {
+                let mut lines = HighlightLines::new(syntax, theme);
+                styled_segments(&settings, &mut lines, &format!("{quote}{fence}rust\n"));
+                for body in ["let x = 1;", "**literal code**", ""] {
+                    assert!(
+                        non_empty_colors(&settings, &mut lines, &format!("{quote}{body}\n"))
+                            .iter()
+                            .all(|(color, _)| *color == code),
+                        "{quote:?}{fence}: {body:?} stays code"
+                    );
+                }
+                if fence.len() > 3 {
+                    // A closer shorter than the opener is still fence content.
+                    assert!(non_empty_colors(
+                        &settings,
+                        &mut lines,
+                        &format!("{quote}{}\n", &fence[..3])
+                    )
+                    .iter()
+                    .all(|(color, _)| *color == code));
+                }
+                styled_segments(&settings, &mut lines, &format!("{quote}{fence}\n"));
+                for line in [format!("{quote}after\n"), "plain line\n".to_owned()] {
+                    let result = non_empty_colors(&settings, &mut lines, &line);
+                    assert_eq!(
+                        result.last().unwrap().0,
+                        prose,
+                        "{quote:?}{fence}: {line:?} follows the closed fence"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nested_quoted_fences_end_when_the_inner_quote_ends() {
+        let settings = settings();
+        let syntax = resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for fence in ["```", "~~~"] {
+            for (opening, boundary) in [
+                ("> > ", "> shallower prose\n"),
+                ("> > ", ">\n"),
+                ("> > ", "plain line\n"),
+                ("> > > ", "> > shallower prose\n"),
+                ("> > > ", "# Outside heading\n"),
+            ] {
+                let mut lines = HighlightLines::new(syntax, theme);
+                styled_segments(&settings, &mut lines, &format!("{opening}{fence}rust\n"));
+                styled_segments(&settings, &mut lines, &format!("{opening}let x = 1;\n"));
+                let result = non_empty_colors(&settings, &mut lines, boundary);
+                assert_ne!(
+                    result.last().unwrap().0,
+                    code,
+                    "{opening:?}{fence}: {boundary:?} leaves the fence"
+                );
+                let result = non_empty_colors(&settings, &mut lines, "plain line\n");
+                assert_eq!(result.last().unwrap().0, prose);
+            }
+            // A deeper quote line inside a shallower fence is literal code, and
+            // cannot close it.
+            let mut lines = HighlightLines::new(syntax, theme);
+            styled_segments(&settings, &mut lines, &format!("> {fence}rust\n"));
+            for line in [format!("> > {fence}\n"), "> > deeper\n".to_owned()] {
+                assert!(
+                    non_empty_colors(&settings, &mut lines, &line)
+                        .iter()
+                        .all(|(color, _)| *color == code),
+                    "{fence}: {line:?} is fence content"
+                );
+            }
+            styled_segments(&settings, &mut lines, &format!("> {fence}\n"));
+            let result = non_empty_colors(&settings, &mut lines, "> after\n");
+            assert_eq!(result.last().unwrap().0, prose);
+        }
+    }
 }
