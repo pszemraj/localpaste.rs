@@ -70,16 +70,18 @@ impl ViewportFitExt for egui::Window<'_> {
 /// Softens pointer feedback for list rows so hover never reads as selection.
 ///
 /// The theme's orange hover fill suits toolbar buttons, but on a list row it
-/// outshines the translucent blue selection fill. Rows hover and press with the
-/// neutral [`COLOR_BG_TERTIARY`] fill and a plain border instead; selected rows
-/// keep the selection fill because egui applies it over these visuals.
+/// outshines the translucent blue selection fill. Rows hover and press with a
+/// neutral fill one surface step above their resting fill and a plain border
+/// instead; selected rows keep the selection fill because egui applies it over
+/// these visuals.
 ///
 /// # Arguments
 /// - `visuals`: Visuals of the scope that renders list rows.
-fn soften_list_row_visuals(visuals: &mut egui::Visuals) {
+/// - `hover_fill`: Neutral fill one step above the rows' resting surface.
+fn soften_list_row_visuals(visuals: &mut egui::Visuals, hover_fill: egui::Color32) {
     for state in [&mut visuals.widgets.hovered, &mut visuals.widgets.active] {
-        state.bg_fill = COLOR_BG_TERTIARY;
-        state.weak_bg_fill = COLOR_BG_TERTIARY;
+        state.bg_fill = hover_fill;
+        state.weak_bg_fill = hover_fill;
         state.bg_stroke = egui::Stroke::new(1.0, COLOR_BORDER);
         state.fg_stroke = egui::Stroke::new(1.0, COLOR_TEXT_PRIMARY);
         state.expansion = 0.0;
@@ -115,7 +117,8 @@ pub(in crate::app) fn list_row(
         row = row.shortcut_text(hint);
     }
     ui.scope(|ui| {
-        soften_list_row_visuals(ui.visuals_mut());
+        // Unfilled rows rest on the panel, so hover lifts them to the tertiary surface.
+        soften_list_row_visuals(ui.visuals_mut(), COLOR_BG_TERTIARY);
         ui.add(row)
     })
     .inner

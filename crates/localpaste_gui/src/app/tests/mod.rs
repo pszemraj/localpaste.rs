@@ -318,6 +318,18 @@ fn rendered_label_center(output: &egui::FullOutput, label: &str) -> egui::Pos2 {
         .unwrap_or_else(|| panic!("missing rendered label {label}"))
 }
 
+/// Fills of every rectangle drawn behind `point`.
+fn fills_behind(output: &egui::FullOutput, point: egui::Pos2) -> Vec<egui::Color32> {
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(rect) if rect.rect.contains(point) => Some(rect.fill),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Builds one unmodified pointer-button step; callers retain their frame policy.
 fn primary_pointer_events(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
     vec![

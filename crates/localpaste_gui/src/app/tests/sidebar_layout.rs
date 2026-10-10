@@ -622,3 +622,43 @@ fn a_selection_outside_the_search_results_is_revealed_when_the_search_is_cleared
         "selection revealed once it is listed again"
     );
 }
+
+#[test]
+fn sidebar_row_hover_is_neutral_and_weaker_than_the_selected_row() {
+    let mut harness = make_app();
+    let rows = long_sidebar_list(10);
+    harness.app.all_pastes = rows.clone();
+    harness.app.pastes = rows;
+    assert!(harness.app.select_paste("paste-0".to_string()));
+    let mut frames = SidebarFrames::new();
+    let output = frames.render(&mut harness.app, vec![]);
+    let resting = rendered_label_center(&output, "Sidebar row 1");
+    let resting_fills = fills_behind(&output, resting);
+
+    // Hover resolves against the previous frame's widget rects.
+    let output = frames.render(&mut harness.app, vec![egui::Event::PointerMoved(resting)]);
+    let fills = fills_behind(&output, resting);
+    assert!(
+        fills.contains(&COLOR_BORDER) && !resting_fills.contains(&COLOR_BORDER),
+        "hover lifts the row from its resting fill: resting {resting_fills:?}, hovered {fills:?}"
+    );
+    assert!(
+        !fills.contains(&COLOR_ACCENT_SURFACE_HOVER) && !fills.contains(&COLOR_ACCENT_SURFACE),
+        "sidebar hover must not use the toolbar accent: {fills:?}"
+    );
+    assert_eq!(
+        harness.app.selected_id.as_deref(),
+        Some("paste-0"),
+        "hover keeps selection"
+    );
+
+    // Hovering the selected row leaves it at the selection fill.
+    let selected = rendered_label_center(&output, "Sidebar row 0");
+    let output = frames.render(&mut harness.app, vec![egui::Event::PointerMoved(selected)]);
+    let fills = fills_behind(&output, selected);
+    let selection = frames.ctx.style().visuals.selection.bg_fill;
+    assert!(
+        fills.contains(&selection) && !fills.contains(&COLOR_BORDER),
+        "hovered selected row keeps the selection fill: {fills:?}"
+    );
+}

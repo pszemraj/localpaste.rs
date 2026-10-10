@@ -16,7 +16,7 @@ The desktop uses a dark palette defined in the theme module: [`../../crates/loca
 | `COLOR_MODAL_CHROME`        | `#8A522A`   | Modal title bars                        |
 | `COLOR_SELECTION_STROKE`    | `#3B82F6`   | Selection outline                       |
 | `COLOR_SELECTION_FILL_RGBA` | `#3B82F655` | Selection fill RGBA tuple (`[r,g,b,a]`) |
-| `COLOR_BORDER`              | `#30363D`   | Divider strokes                         |
+| `COLOR_BORDER`              | `#30363D`   | Divider strokes, sidebar-row hover      |
 | `COLOR_DIFF_REMOVED_BG`     | `#301B1E`   | Removed diff rows (`#F85149` at 15% over `COLOR_BG_PRIMARY`) |
 | `COLOR_DIFF_ADDED_BG`       | `#12261E`   | Added diff rows (`#2EA043` at 15% over `COLOR_BG_PRIMARY`)   |
 

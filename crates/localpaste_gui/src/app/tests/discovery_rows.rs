@@ -130,18 +130,6 @@ fn picker_actions_share_a_right_aligned_column_and_long_names_truncate() {
     }
 }
 
-/// Fills of every rectangle drawn behind `point`.
-fn fills_behind(output: &egui::FullOutput, point: egui::Pos2) -> Vec<egui::Color32> {
-    output
-        .shapes
-        .iter()
-        .filter_map(|clipped| match &clipped.shape {
-            egui::Shape::Rect(rect) if rect.rect.contains(point) => Some(rect.fill),
-            _ => None,
-        })
-        .collect()
-}
-
 /// Settles the palette, then rests the pointer on the center of `label`.
 fn hover_palette_label(
     app: &mut LocalPasteApp,

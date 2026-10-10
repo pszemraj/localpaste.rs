@@ -260,6 +260,8 @@ impl LocalPasteApp {
                     rows_scroll = rows_scroll.vertical_scroll_offset(offset);
                 }
                 rows_scroll.show_rows(ui, row_height, sidebar_items.len(), |ui, range| {
+                    // Rows rest on the tertiary surface, so hover lifts them to the border tone.
+                    super::soften_list_row_visuals(ui.visuals_mut(), COLOR_BORDER);
                     for item_idx in range {
                         match sidebar_items.get(item_idx).copied() {
                             Some(SidebarListItem::Header(bucket)) => {
