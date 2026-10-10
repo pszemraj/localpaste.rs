@@ -21,8 +21,9 @@ contexts:
       push: paragraph
   paragraph:
     # Indented code cannot interrupt a paragraph. Keep its continuation in the
-    # inline context until a blank line or an actual block opening occurs.
-    - match: '^(?=[ \t]*\r?$| {0,3}(?:#{1,6}(?:[ \t]+|\r?$)|`{3,}[^`\n]*$|~{3,}|(?:={3,}|-{3,})[ \t]*\r?$|>|[-+*][ \t]+|1[.)][ \t]+))'
+    # inline context until a blank line or an actual block opening occurs,
+    # including the next link or footnote definition in a chain.
+    - match: '^(?=[ \t]*\r?$| {0,3}(?:#{1,6}(?:[ \t]+|\r?$)|`{3,}[^`\n]*$|~{3,}|(?:={3,}|-{3,})[ \t]*\r?$|>|[-+*][ \t]+|1[.)][ \t]+|\[\^?[^\]\n]+\]:))'
       pop: true
     - include: inline
   markup:

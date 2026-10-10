@@ -241,6 +241,32 @@ mod markdown_block_boundaries {
     }
 
     #[test]
+    fn chained_definitions_after_trailing_text_keep_their_markers() {
+        let settings = settings();
+        let syntax = resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let prose = Highlighter::new(theme).get_default().foreground;
+        for chain in [
+            [
+                "[1]: http://a \"One\"\n",
+                "[2]: http://b \"Two\"\n",
+                "[3]: http://c\n",
+            ],
+            ["[^1]: First.\n", "[^2]: Second.\n", "[^3]: Third.\n"],
+        ] {
+            let mut lines = HighlightLines::new(syntax, theme);
+            for line in chain {
+                let result = non_empty_colors(&settings, &mut lines, line);
+                assert_ne!(
+                    result.first().map(|(color, _)| *color),
+                    Some(prose),
+                    "{line:?}: {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn blank_lines_allow_indented_code_after_paragraphs() {
         let settings = settings();
         let syntax = resolve_syntax(&settings.ps, "markdown");
