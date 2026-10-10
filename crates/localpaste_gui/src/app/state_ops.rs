@@ -379,6 +379,7 @@ impl LocalPasteApp {
                 ) {
                     self.query_perf.search_stale_drops =
                         self.query_perf.search_stale_drops.saturating_add(1);
+                    self.forget_sidebar_search_answered_after_edit(&query);
                     return;
                 }
                 self.search_error = None;

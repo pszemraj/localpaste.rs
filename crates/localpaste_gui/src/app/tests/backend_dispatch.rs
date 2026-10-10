@@ -94,3 +94,62 @@ fn backend_command_dispatch_arms_bounded_event_polling() {
         "short polling should expire after the bounded window"
     );
 }
+
+#[test]
+fn sidebar_search_resends_a_query_whose_reply_arrived_while_it_was_edited() {
+    for failed in [false, true] {
+        let mut harness = make_app();
+        let app = &mut harness.app;
+        let send = |app: &mut LocalPasteApp, query: &str| {
+            app.set_search_query(query.into());
+            app.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
+            app.maybe_dispatch_search();
+        };
+        let reply = |query: &str| {
+            let (collection, scope) = (SidebarCollection::All, SearchScope::All);
+            if failed {
+                CoreEvent::SearchFailed {
+                    collection,
+                    scope,
+                    query: query.into(),
+                    folder_id: None,
+                    language: None,
+                    message: "Search failed: boom".into(),
+                }
+            } else {
+                CoreEvent::SearchResults {
+                    collection,
+                    scope,
+                    query: query.into(),
+                    folder_id: None,
+                    language: None,
+                    items: vec![test_summary("hit", "Hit", None, 3)],
+                }
+            }
+        };
+        send(app, "abc");
+        assert!(matches!(
+            recv_cmd(&harness.cmd_rx),
+            CoreCmd::SearchPastes { query, .. } if query == "abc"
+        ));
+        // The reply lands while the query reads "abcd", then the edit is undone.
+        app.set_search_query("abcd".into());
+        app.apply_event(reply("abc"));
+        send(app, "abc");
+
+        assert!(
+            matches!(
+                harness.cmd_rx.try_recv(),
+                Ok(CoreCmd::SearchPastes { query, .. }) if query == "abc"
+            ),
+            "failed={failed}"
+        );
+        app.apply_event(reply("abc"));
+        if failed {
+            assert!(app.search_error.is_some());
+        } else {
+            assert_eq!(app.pastes.len(), 1);
+            assert_eq!(app.pastes[0].id, "hit");
+        }
+    }
+}

@@ -277,12 +277,26 @@ impl LocalPasteApp {
             folder_id.as_deref(),
             language.as_deref(),
         ) {
+            self.forget_sidebar_search_answered_after_edit(&query);
             return;
         }
         self.search_last_input_at = None;
         self.query_perf.search_last_sent_at = None;
         self.search_error = Some(message.clone());
         self.set_status(message);
+    }
+
+    /// Forgets the last sent sidebar query when its reply arrives while the query
+    /// text differs, so editing back to that text sends it again instead of
+    /// treating the dropped reply as already received.
+    ///
+    /// # Arguments
+    /// - `query`: Query echoed by the dropped response.
+    pub(super) fn forget_sidebar_search_answered_after_edit(&mut self, query: &str) {
+        let query = query.trim();
+        if query == self.search_last_sent.trim() && query != self.search_query.trim() {
+            self.search_last_sent.clear();
+        }
     }
 
     /// Checks sidebar response identity against the active query, scope, and filters.
