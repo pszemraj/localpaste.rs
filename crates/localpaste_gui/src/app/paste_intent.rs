@@ -214,12 +214,21 @@ impl LocalPasteApp {
         if self.selected_id.as_deref() != Some(id.as_str()) && !self.select_paste(id.clone()) {
             return;
         }
-        self.pending_editor_paste = Some(PendingEditorPaste { id, text });
+        match self.pending_editor_paste.as_mut() {
+            Some(pending) if pending.id == id => pending.texts.push(text),
+            _ => {
+                self.pending_editor_paste = Some(PendingEditorPaste {
+                    id,
+                    texts: vec![text],
+                });
+            }
+        }
     }
 
-    /// Appends a deferred `Ctrl/Cmd+Shift+V` payload once its target paste loads.
+    /// Appends deferred `Ctrl/Cmd+Shift+V` payloads once their target paste loads.
     ///
-    /// The payload is dropped when selection moves to a different paste first.
+    /// Payloads replay in press order. The queue is dropped when selection
+    /// moves to a different paste first.
     ///
     /// # Arguments
     /// - `ctx`: Context used to apply the editor edit and request focus.
@@ -242,7 +251,10 @@ impl LocalPasteApp {
         let Some(pending) = self.pending_editor_paste.take() else {
             return;
         };
-        let mut text = pending.text;
+        let mut texts = pending.texts.into_iter();
+        let Some(mut text) = texts.next() else {
+            return;
+        };
         let len = self.virtual_editor_buffer.len_chars();
         if len > 0
             && !matches!(
@@ -255,13 +267,16 @@ impl LocalPasteApp {
             // Appended text starts after the last line rather than extending it.
             text.insert(0, '\n');
         }
-        self.apply_editor_paste(
-            ctx,
-            &[
-                VirtualInputCommand::MoveDocEnd { select: false },
-                VirtualInputCommand::Paste(text),
-            ],
-        );
+        // Later payloads continue at the caret, as if the paste had already
+        // loaded when they arrived, so each stays a separate undo step.
+        let commands: Vec<_> = [
+            VirtualInputCommand::MoveDocEnd { select: false },
+            VirtualInputCommand::Paste(text),
+        ]
+        .into_iter()
+        .chain(texts.map(VirtualInputCommand::Paste))
+        .collect();
+        self.apply_editor_paste(ctx, &commands);
     }
 
     fn apply_editor_paste(&mut self, ctx: &egui::Context, commands: &[VirtualInputCommand]) {

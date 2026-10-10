@@ -114,6 +114,35 @@ fn command_shift_v_without_open_paste_appends_to_top_paste_after_load() {
 }
 
 #[test]
+fn command_shift_v_repeated_before_load_replays_each_payload_in_order() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.selected_id = None;
+    harness.app.selected_paste = None;
+    harness.app.reset_virtual_editor("");
+
+    press_paste_into_editor(&mut harness, &ctx, "first");
+    press_paste_into_editor(&mut harness, &ctx, "second");
+    let mut loaded = Paste::new("existing".into(), "Alpha".into());
+    loaded.id = "alpha".into();
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: loaded,
+        selection_epoch: harness.app.active_buffer_epoch,
+    });
+    run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+
+    // Matches the result had the paste loaded between the two presses.
+    assert_eq!(harness.app.active_snapshot(), "existing\nfirstsecond");
+    assert!(harness.app.pending_editor_paste.is_none());
+    for expected in ["existing\nfirst", "existing"] {
+        harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::Undo]);
+        assert_eq!(harness.app.active_snapshot(), expected);
+    }
+}
+
+#[test]
 fn command_shift_v_pending_append_is_dropped_when_selection_moves_elsewhere() {
     let (mut harness, _events) = make_app_with_event_tx();
     let ctx = egui::Context::default();

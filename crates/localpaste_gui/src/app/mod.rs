@@ -215,11 +215,11 @@ enum PaletteCopyAction {
     Fenced(String),
 }
 
-/// `Ctrl/Cmd+Shift+V` text waiting for its target paste to load.
+/// `Ctrl/Cmd+Shift+V` payloads waiting for their target paste to load, in press order.
 #[derive(Debug, Clone)]
 struct PendingEditorPaste {
     id: String,
-    text: String,
+    texts: Vec<String>,
 }
 
 /// Picker search context retained until its accepted paste selection finishes loading.
