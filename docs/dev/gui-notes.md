@@ -118,7 +118,7 @@ The search scope and language filter share one row under the search field, each 
 
 Empty filter results never discard work in progress: unsaved content, unsaved metadata, and pending saves keep their paste and edit lock until saving completes. Selecting the already-active paste cancels a queued switch to another, and a repeated load reply cannot overwrite an initialized editor draft.
 
-The app's own edits update the list immediately. Writes through the embedded API, such as from `lpaste`, appear in the list when the window regains focus (at most once every 2 seconds) and otherwise within 30 seconds.
+The app's own edits update the list immediately. Writes through the embedded API, such as from `lpaste`, appear in the list when the window regains focus (at most once every 2 seconds) and otherwise within 30 seconds of the previous refresh, even while the window sits idle.
 
 ### Editor
 

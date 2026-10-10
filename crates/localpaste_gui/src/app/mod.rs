@@ -816,10 +816,18 @@ impl eframe::App for LocalPasteApp {
         {
             self.request_refresh();
         }
+        // Wake when the next refresh falls due, counted from the last one. A due
+        // refresh that was not sent (probe seed, closed backend) retries after a
+        // full interval rather than requesting back-to-back frames.
+        let mut refresh_due_in = EXTERNAL_REFRESH_INTERVAL
+            .saturating_sub(Instant::now().saturating_duration_since(self.last_refresh_at));
+        if refresh_due_in.is_zero() {
+            refresh_due_in = EXTERNAL_REFRESH_INTERVAL;
+        }
         let mut repaint_after = if self.save_status == SaveStatus::Dirty {
-            self.autosave_delay.min(EXTERNAL_REFRESH_INTERVAL)
+            self.autosave_delay.min(refresh_due_in)
         } else {
-            EXTERNAL_REFRESH_INTERVAL
+            refresh_due_in
         };
         if let Some(until) = self.search_repaint_after(Instant::now()) {
             repaint_after = repaint_after.min(until);

@@ -153,3 +153,47 @@ fn sidebar_search_resends_a_query_whose_reply_arrived_while_it_was_edited() {
         }
     }
 }
+
+/// Runs full update frames until egui's start-up repaints and fade-ins drain.
+///
+/// # Returns
+/// The repaint delay requested by the last frame.
+fn settled_repaint_delay(app: &mut LocalPasteApp, ctx: &egui::Context) -> Duration {
+    let mut delay = Duration::ZERO;
+    for _ in 0..10 {
+        delay = run_discovery_frame_once(app, ctx, Vec::new()).viewport_output
+            [&egui::ViewportId::ROOT]
+            .repaint_delay;
+    }
+    delay
+}
+
+#[test]
+fn idle_frames_wake_when_the_external_refresh_falls_due() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.virtual_editor_state.has_focus = false;
+    harness.app.focus_editor_next = false;
+    // Longer than every status, toast, and backend-poll wake, so only the
+    // refresh deadline can explain a delay this short.
+    let remaining = Duration::from_secs(12);
+    harness.app.last_refresh_at = Instant::now() - (EXTERNAL_REFRESH_INTERVAL - remaining);
+    let delay = settled_repaint_delay(&mut harness.app, &ctx);
+    assert!(
+        delay <= remaining && delay > remaining - Duration::from_secs(2),
+        "the idle wake must land when the refresh falls due: {delay:?}"
+    );
+    assert!(
+        harness.cmd_rx.try_recv().is_err(),
+        "the refresh is not due yet"
+    );
+
+    // A due refresh that cannot be sent retries later instead of spinning.
+    drop(std::mem::replace(&mut harness.cmd_rx, unbounded().1));
+    harness.app.last_refresh_at = Instant::now() - EXTERNAL_REFRESH_INTERVAL;
+    let delay = settled_repaint_delay(&mut harness.app, &ctx);
+    assert!(
+        delay > Duration::from_secs(1),
+        "an unsent refresh must not request back-to-back frames: {delay:?}"
+    );
+}
