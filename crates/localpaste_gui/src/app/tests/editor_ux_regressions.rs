@@ -81,7 +81,57 @@ fn markdown_url_paste_wraps_selection_and_is_one_reversible_edit() {
                 (
                     "line one\nline two",
                     "https://example.test",
-                    "[line one\nline two](https://example.test)",
+                    "[line one&#10;line two](https://example.test)",
+                ),
+                (
+                    "`[docs] \\ path`",
+                    "https://example.test",
+                    "[`[docs] \\ path`](https://example.test)",
+                ),
+                (
+                    "``a`[b]\\c``",
+                    "https://example.test",
+                    "[``a`[b]\\c``](https://example.test)",
+                ),
+                (
+                    "`unclosed [",
+                    "https://example.test/`",
+                    r"[\`unclosed \[](https://example.test/`)",
+                ),
+                (
+                    "<https://other.test>",
+                    "https://example.test",
+                    r"[\<https://other.test\>](https://example.test)",
+                ),
+                (
+                    "one\n\ntwo",
+                    "https://example.test",
+                    "[one&#10;&#10;two](https://example.test)",
+                ),
+                (
+                    "one\r\n\r\ntwo\n> quote",
+                    "https://example.test",
+                    r"[one&#13;&#10;&#13;&#10;two&#10;\> quote](https://example.test)",
+                ),
+                (
+                    "`one\r\ntwo`",
+                    "https://example.test",
+                    "[`one two`](https://example.test)",
+                ),
+                (
+                    r"\`[docs]\`",
+                    "https://example.test",
+                    r"[\`\[docs\]\`](https://example.test)",
+                ),
+                (
+                    r"\[docs\] \\ path \&copy;",
+                    "https://example.test",
+                    r"[\[docs\] \\ path \&copy;](https://example.test)",
+                ),
+                (
+                    r"`docs\`",
+                    "https://example.test",
+                    r"[`docs\`](https://example.test)",
                 ),
             ] {
                 let mut harness = make_app();
@@ -166,6 +216,74 @@ fn markdown_url_paste_leaves_other_paste_cases_literal() {
 }
 
 #[test]
+fn markdown_url_paste_history_stays_separate_from_surrounding_edits() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.reset_virtual_editor("read docs.");
+    harness.app.edit_language = Some("markdown".into());
+    harness.app.virtual_editor_state.set_cursor(10, 10);
+    harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::InsertText("!".into())]);
+    harness
+        .app
+        .virtual_editor_state
+        .restore_selection(5, Some(9), 11);
+    // Two native paste events in one frame must be applied in order: the
+    // second URL has no selection and remains literal after the first link.
+    harness.app.apply_virtual_commands(
+        &ctx,
+        &[
+            VirtualInputCommand::Paste("https://one.test".into()),
+            VirtualInputCommand::Paste("https://two.test".into()),
+            VirtualInputCommand::InsertText("?".into()),
+        ],
+    );
+    let linked = "read [docs](https://one.test)";
+    assert_eq!(
+        harness.app.active_snapshot(),
+        format!("{linked}https://two.test?.!")
+    );
+    for expected in [
+        format!("{linked}https://two.test.!"),
+        format!("{linked}.!"),
+        "read docs.!".into(),
+        "read docs.".into(),
+    ] {
+        harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::Undo]);
+        assert_eq!(harness.app.active_snapshot(), expected);
+        if expected == "read docs.!" {
+            assert_eq!(harness.app.virtual_editor_state.cursor(), 5);
+            assert_eq!(harness.app.virtual_editor_state.anchor(), Some(9));
+        }
+    }
+    for expected in [
+        "read docs.!".into(),
+        format!("{linked}.!"),
+        format!("{linked}https://two.test.!"),
+        format!("{linked}https://two.test?.!"),
+    ] {
+        harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::Redo]);
+        assert_eq!(harness.app.active_snapshot(), expected);
+    }
+    harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::Undo]);
+    harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::InsertText("changed".into())]);
+    let revised = harness.app.active_snapshot();
+    harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::Redo]);
+    assert_eq!(harness.app.active_snapshot(), revised);
+}
+
+#[test]
 fn native_markdown_url_paste_uses_editor_ownership_and_reveals_the_link() {
     let mut harness = make_app();
     let ctx = egui::Context::default();
@@ -201,6 +319,21 @@ fn native_markdown_url_paste_uses_editor_ownership_and_reveals_the_link() {
         .cmd_rx
         .try_iter()
         .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })));
+    let before = harness.app.active_snapshot();
+    harness
+        .app
+        .virtual_editor_state
+        .restore_selection(10, Some(6), before.chars().count());
+    harness.app.request_paste_as_new(&ctx);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Paste("https://new.test".into())],
+    );
+    assert_eq!(harness.app.active_snapshot(), before);
+    assert!(harness.cmd_rx.try_iter().any(
+        |cmd| matches!(cmd, CoreCmd::CreatePaste { content } if content == "https://new.test")
+    ));
 }
 
 #[test]

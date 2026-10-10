@@ -68,6 +68,9 @@ pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) ->
 ///
 /// # Returns
 /// A link retaining the original URL spelling, or `None` for ordinary pasted text.
+///
+/// # Panics
+/// Code-span offsets come from ASCII backtick matches, so slices are always on UTF-8 boundaries.
 pub(super) fn format_markdown_link(label: &str, clipboard: &str) -> Option<String> {
     let destination = clipboard.trim();
     if destination
@@ -81,12 +84,58 @@ pub(super) fn format_markdown_link(label: &str, clipboard: &str) -> Option<Strin
         return None;
     }
     url::Url::parse(destination).ok()?.host_str()?;
-    let mut link = String::from("[");
-    for ch in label.chars() {
-        if matches!(ch, '\\' | '[' | ']') {
-            link.push('\\');
+    // Only equal-length backtick runs delimit code spans. Index their next
+    // matches once so many unmatched runs cannot cause repeated suffix scans.
+    let mut ticks: Vec<(usize, usize)> = Vec::new();
+    for (offset, _) in label.match_indices('`') {
+        match ticks.last_mut() {
+            Some((_, end)) if *end == offset => *end += 1,
+            _ => ticks.push((offset, offset + 1)),
         }
-        link.push(ch);
+    }
+    let mut next = std::collections::HashMap::new();
+    let mut code_ends = std::collections::HashMap::new();
+    for &(start, end) in ticks.iter().rev() {
+        if let Some(close) = next.insert(end - start, end) {
+            code_ends.insert(start, close);
+        }
+    }
+    let mut link = String::from("[");
+    let mut chars = label.char_indices().peekable();
+    while let Some((offset, ch)) = chars.next() {
+        if let Some(&end) = (ch == '`').then(|| code_ends.get(&offset)).flatten() {
+            // Escapes are literal inside code. Code-span line endings render
+            // as spaces; keep the generated link within a single paragraph.
+            link.push_str(
+                &label[offset..end]
+                    .replace("\r\n", " ")
+                    .replace(['\r', '\n'], " "),
+            );
+            while chars.peek().is_some_and(|(offset, _)| *offset < end) {
+                chars.next();
+            }
+            continue;
+        }
+        match ch {
+            '\n' => link.push_str("&#10;"),
+            '\r' => link.push_str("&#13;"),
+            '\\' => {
+                link.push(ch);
+                if let Some((_, escaped)) = chars.peek().filter(|(_, ch)| ch.is_ascii_punctuation())
+                {
+                    // Preserve existing escapes without creating new code spans.
+                    link.push(*escaped);
+                    chars.next();
+                } else {
+                    link.push(ch);
+                }
+            }
+            '[' | ']' | '<' | '>' | '`' => {
+                link.push('\\');
+                link.push(ch);
+            }
+            _ => link.push(ch),
+        }
     }
     link.push_str("](");
     for ch in destination.chars() {
