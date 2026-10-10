@@ -256,6 +256,11 @@ impl LocalPasteApp {
         let Some(pending) = self.pending_editor_paste.take() else {
             return;
         };
+        // A composition abandoned by clicking elsewhere would restore its old
+        // caret when the paste cancels it, so drop it before measuring the end.
+        if self.cancel_virtual_ime_preedit_if_active(Instant::now()) {
+            self.mark_dirty();
+        }
         // An open Find bar selects its first hit in a newly loaded buffer when
         // it next renders; settle that first so the append's caret placement wins.
         self.ensure_editor_find_matches_current();

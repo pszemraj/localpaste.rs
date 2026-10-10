@@ -123,6 +123,39 @@ fn command_shift_v_without_open_paste_appends_to_top_paste_after_load() {
 }
 
 #[test]
+fn command_shift_v_appends_after_an_abandoned_ime_composition() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.reset_virtual_editor("hello world");
+    harness.app.focus_editor_next = true;
+    run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+    harness.app.virtual_editor_state.set_cursor(5, 11);
+    run_discovery_frame_once(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::Ime(egui::ImeEvent::Enabled),
+            egui::Event::Ime(egui::ImeEvent::Preedit("に".into())),
+        ],
+    );
+    assert!(harness.app.virtual_editor_state.ime.preedit_range.is_some());
+    harness.app.search_focus_requested = true;
+    run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+    run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+    assert!(!harness.app.virtual_editor_state.has_focus);
+
+    press_paste_into_editor(&mut harness, &ctx, "clip");
+
+    let expected = "hello world\nclip";
+    assert_eq!(harness.app.active_snapshot(), expected);
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        expected.chars().count()
+    );
+    assert!(harness.app.virtual_editor_state.ime.preedit_range.is_none());
+}
+
+#[test]
 fn command_shift_v_on_load_keeps_the_caret_after_the_text_with_find_open() {
     let (mut harness, _events) = make_app_with_event_tx();
     let ctx = egui::Context::default();
