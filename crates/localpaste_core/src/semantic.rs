@@ -279,6 +279,7 @@ fn classify_kind(content: &str, language: Option<&str>) -> PasteKind {
 
     if extract_definition_handle(sample, language).is_some()
         || commands::extract_command_handle(sample).is_some()
+        || commands::looks_like_shell_command_sequence(sample)
     {
         return PasteKind::Code;
     }

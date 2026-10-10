@@ -7,6 +7,10 @@
 
 use crate::text::{complete_line_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 
+/// Shell control blocks inside command sequences.
+mod control;
+use control::shell_control_lines;
+
 /// Listed executable names shared by detection and semantic command handles.
 pub(crate) const COMMANDS: &[&str] = &[
     "brew",
@@ -312,19 +316,43 @@ pub(crate) fn has_prose_grammar(text: &str) -> bool {
 fn is_prose_word(word: &str) -> bool {
     let bare = word.trim_end_matches([',', ';', ':']);
     let stem = bare.trim_end_matches(['?', '!', '.']);
+    // Sentences end in one dot or an ellipsis; two dots are a Git range
+    // such as `main..`.
+    let punctuated = stem.len() < bare.len() && &bare[stem.len()..] != "..";
     !stem.is_empty()
         && (stem == "I"
             || FUNCTION_WORDS.contains(&stem.to_lowercase().as_str())
-            || (stem.len() < bare.len() && stem.chars().all(char::is_alphabetic)))
+            || (punctuated && stem.chars().all(char::is_alphabetic)))
 }
 
 /// Apply the prose check to a command's operands.
 ///
 /// CMD's `set name=value` takes the rest of the line as the value, so an
 /// assignment on a `set` line is structure regardless of the words around it.
+/// An `echo` or `printf` message is printed text, so its words are not prose
+/// evidence when it opens as a message of its own (see [`message_stands_alone`]).
 fn operands_read_as_prose(command: &str, arguments: &[&str]) -> bool {
     let text = arguments.join(" ");
-    !(command == "set" && text.contains('=')) && has_prose_grammar(&text)
+    let assignment = command == "set" && text.contains('=');
+    let message = matches!(command, "echo" | "printf") && message_stands_alone(arguments);
+    !(assignment || message) && has_prose_grammar(&text)
+}
+
+/// Recognize an `echo` or `printf` message that starts a sentence of its own.
+///
+/// A printed message opens with a capital letter (`echo Done deploying the
+/// app`, `echo It's done`), a quote, or a `$` expansion. When the word after
+/// `echo` continues in lowercase (`echo chamber is ...`, `echo what Sam
+/// said`), or is the pronoun `I`, `echo` is part of an English sentence.
+fn message_stands_alone(arguments: &[&str]) -> bool {
+    arguments
+        .iter()
+        .find(|argument| !argument.starts_with('-'))
+        .is_some_and(|first| {
+            first.starts_with(['\'', '"', '$'])
+                || (first.starts_with(char::is_uppercase)
+                    && first.split(['\'', '’']).next() != Some("I"))
+        })
 }
 
 /// Command-shape evidence for tools outside the executable handle list.
@@ -407,23 +435,30 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
     }
 
     let rest: Vec<&str> = lines.filter(|line| !line.starts_with('#')).collect();
+    let script = script_anchor(std::iter::once(trimmed).chain(rest.iter().copied()));
     let valid = if is_setup_command {
         let next_command = looks_like_shell_command_sequence(sample)
             || rest
                 .first()
-                .is_some_and(|line| line_is_command(line, false));
+                .is_some_and(|line| line_is_command(line, false, script));
         setup_command_is_valid(command, arguments, next_command)
             && (has_command_syntax || next_command)
     } else {
-        regular_command_is_valid(command, arguments, has_command_syntax)
+        regular_command_is_valid(command, arguments, has_command_syntax, script)
     };
     // A prompt marks a terminal transcript, whose later lines are output.
+    // Otherwise a later prose sentence marks a note that quotes the command;
+    // command lines and shell control lines are not prose, whatever their words.
     let transcript = line.starts_with("$ ") || line.starts_with("% ");
+    let control = shell_control_lines(&rest, script);
     if !valid
         || (!transcript
-            && rest
-                .iter()
-                .any(|line| has_prose_grammar(line) && super::looks_like_prose(line)))
+            && rest.iter().enumerate().any(|(index, line)| {
+                control.as_ref().and_then(|kinds| kinds.get(index)) != Some(&true)
+                    && !line_is_command(line, true, script)
+                    && has_prose_grammar(line)
+                    && super::looks_like_prose(line)
+            }))
     {
         return None;
     }
@@ -445,7 +480,8 @@ pub(super) fn extract_command_handle(sample: &str) -> Option<String> {
 /// - `line`: Candidate line, optionally prompt-prefixed or backtick-wrapped.
 /// - `next_command`: Whether the following substantive line is a command, which
 ///   lets plain setup operands such as `cd repo` count.
-fn line_is_command(line: &str, next_command: bool) -> bool {
+/// - `script`: Whether the surrounding lines form a script (see [`script_anchor`]).
+fn line_is_command(line: &str, next_command: bool, script: bool) -> bool {
     let line = strip_shell_prompt(line.trim().trim_matches('`'));
     let mut parts = line.split_whitespace();
     let Some(command) = parts.next() else {
@@ -457,6 +493,7 @@ fn line_is_command(line: &str, next_command: bool) -> bool {
             command,
             &arguments,
             command_has_shell_syntax(line, &arguments),
+            script,
         )
     } else if SETUP_COMMANDS.contains(&command) {
         setup_command_is_valid(command, &arguments, next_command)
@@ -466,8 +503,17 @@ fn line_is_command(line: &str, next_command: bool) -> bool {
 }
 
 /// Reject prose uses of a listed executable and Git lines without a subcommand.
-fn regular_command_is_valid(command: &str, arguments: &[&str], has_shell_syntax: bool) -> bool {
-    !operands_read_as_prose(command, arguments)
+///
+/// In a script, `echo` and `printf` print whatever words they are given, as
+/// Makefile recipes do, so their operands face no prose check.
+fn regular_command_is_valid(
+    command: &str,
+    arguments: &[&str],
+    has_shell_syntax: bool,
+    script: bool,
+) -> bool {
+    ((script && matches!(command, "echo" | "printf"))
+        || !operands_read_as_prose(command, arguments))
         && (command != "git"
             || has_shell_syntax
             || arguments
@@ -680,9 +726,13 @@ fn command_has_comment_evidence(command: &str, explicit_arguments: bool) -> bool
 
 /// Recognize a compact sequence of shell setup and executable command lines.
 ///
+/// Shell control lines (`for host in a b; do`, `if [ -f x ]; then`, `done`)
+/// count as command lines when their blocks open and close in order (see
+/// [`shell_control_lines`]).
+///
 /// # Returns
-/// `true` when every non-comment line is a recognized command and at least two
-/// command lines are present.
+/// `true` when every non-comment line is a recognized command or control line
+/// and at least two such lines are present.
 pub(crate) fn looks_like_shell_command_sequence(content: &str) -> bool {
     let sample = complete_line_prefix_by_bytes(content.trim(), TEXT_SAMPLE_MAX_BYTES);
     if looks_like_shell_for_loop(sample) {
@@ -690,16 +740,22 @@ pub(crate) fn looks_like_shell_command_sequence(content: &str) -> bool {
     }
     let has_leading_comment = sample.trim_start().starts_with('#');
     let has_leading_prompt = sample.trim_start().starts_with(['$', '%', '>']);
+    let lines: Vec<&str> = sample
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    let script = script_anchor(lines.iter().copied());
+    let Some(control) = shell_control_lines(&lines, script) else {
+        return false;
+    };
     let mut commands = 0usize;
     let mut next_command = false;
     let mut explicit_single_command = false;
-    for line in sample
-        .lines()
-        .rev()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-    {
-        if line.starts_with('#') {
+    for (line, is_control) in lines.iter().zip(control).rev() {
+        if is_control {
+            commands = commands.saturating_add(1);
+            next_command = true;
             continue;
         }
         let line = line.trim_matches('`');
@@ -712,7 +768,7 @@ pub(crate) fn looks_like_shell_command_sequence(content: &str) -> bool {
         };
         let arguments: Vec<&str> = parts.collect();
         let explicit_arguments = command_has_explicit_arguments(command, line, &arguments);
-        if (quoted && !explicit_arguments) || !line_is_command(line, next_command) {
+        if (quoted && !explicit_arguments) || !line_is_command(line, next_command, script) {
             return false;
         }
         commands = commands.saturating_add(1);
@@ -754,4 +810,18 @@ fn looks_like_shell_for_loop(sample: &str) -> bool {
         last = line;
     }
     has_do && (last == "done" || last.ends_with("; done"))
+}
+
+/// Recognize a script: lines among which a listed command other than `echo`
+/// or `printf` stands on its own, as a Makefile target anchors its recipes.
+/// Setup builtins do not count, so `cd app` followed by `echo chamber is a
+/// common expression` stays a note.
+fn script_anchor<'a>(lines: impl IntoIterator<Item = &'a str>) -> bool {
+    lines.into_iter().any(|line| {
+        let line = strip_shell_prompt(line.trim().trim_matches('`'));
+        let command = line.split_whitespace().next().unwrap_or_default();
+        COMMANDS.contains(&command)
+            && !matches!(command, "echo" | "printf")
+            && line_is_command(line, false, false)
+    })
 }

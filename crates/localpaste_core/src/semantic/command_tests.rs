@@ -172,6 +172,131 @@ fn words_that_open_sentences_are_not_listed_tools() {
 }
 
 #[test]
+fn scripts_with_status_messages_ranges_and_control_flow_stay_commands() {
+    for (content, handle, sequence) in [
+        (
+            "cd ~/projects/app\ngit pull\necho Done deploying the app",
+            Some("cd ~/projects/app"),
+            true,
+        ),
+        (
+            "cargo build --release\necho Build finished, copying the binary\ncp target/release/app /usr/local/bin/",
+            Some("cargo build"),
+            true,
+        ),
+        // Another command makes the paste a script, so `echo` prints whatever it says.
+        (
+            "git pull\necho done deploying the app\ncargo build",
+            Some("git pull"),
+            true,
+        ),
+        ("echo Hello, world!", Some("echo Hello"), false),
+        ("echo It's done", Some("echo It"), false),
+        ("printf Done.", Some("printf Done."), false),
+        ("git log main..", Some("git log"), false),
+        ("git diff main...feature", Some("git diff"), false),
+        (
+            "for host in web1 web2 web3; do\n  ssh $host uptime\ndone",
+            None,
+            true,
+        ),
+        (
+            "cd /srv\nfor host in web1 web2 web3; do\n  ssh $host uptime\ndone",
+            Some("cd /srv"),
+            true,
+        ),
+        (
+            "git fetch\nfor host in web1 web2\ndo\n  ssh $host uptime\ndone",
+            Some("git fetch"),
+            true,
+        ),
+        (
+            "if [ -f .env ]; then\n  source .env\nelse\n  echo missing .env\nfi\ncargo run",
+            None,
+            true,
+        ),
+        (
+            "while true; do\n  curl -fsS http://localhost:8080/health\ndone",
+            None,
+            true,
+        ),
+        (
+            "while read -r host; do\n  ssh $host uptime\ndone < hosts.txt",
+            None,
+            true,
+        ),
+        (
+            "for ((i = 0; i < 3; i++)); do\n  curl -fsS http://localhost:8080/health\ndone",
+            None,
+            true,
+        ),
+        (
+            "case \"$1\" in\n  start) systemctl start app ;;\n  stop) systemctl stop app ;;\nesac",
+            None,
+            true,
+        ),
+    ] {
+        for content in with_crlf(content) {
+            assert_eq!(
+                extract_command_handle(&content).as_deref(),
+                handle,
+                "{content}"
+            );
+            assert_eq!(
+                looks_like_shell_command_sequence(&content),
+                sequence,
+                "{content}"
+            );
+            for language in [None, Some("text"), Some("shell")] {
+                assert_eq!(
+                    derive(&content, language).kind,
+                    PasteKind::Code,
+                    "{content}: {language:?}"
+                );
+            }
+            let paste = Paste::new(content.clone(), "script".into());
+            assert_eq!(
+                PasteMeta::from(&paste).derived.kind,
+                PasteKind::Code,
+                "{content}: {:?}",
+                paste.language
+            );
+            if sequence {
+                assert_eq!(paste.language.as_deref(), Some("shell"), "{content}");
+            }
+        }
+    }
+}
+
+#[test]
+fn sentences_with_echo_or_control_words_stay_documents() {
+    for content in [
+        "echo I think the deploy went fine",
+        "echo chamber is what twitter's become",
+        "cd app\necho chamber is a common expression",
+        "cd repo\nif you see errors, call me",
+        "git pull\nfor the record, the deploy is done.",
+        "do the dishes\nthen take out the trash",
+        "for the record, nobody touched the config",
+        "git pull\nThen tell the team the release notes are ready.",
+        // Documented trade-off: unprompted output with a sentence reads as a note.
+        "git status\nOn branch main\nnothing to commit, working tree clean",
+    ] {
+        for content in with_crlf(content) {
+            assert_eq!(extract_command_handle(&content), None, "{content}");
+            assert!(!looks_like_shell_command_sequence(&content), "{content}");
+            for language in [None, Some("text")] {
+                assert_eq!(
+                    derive(&content, language).kind,
+                    PasteKind::Document,
+                    "{content}: {language:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn makefile_recipes_may_echo_sentences() {
     let makefile = "all:\n\t@echo Building the app for you\n\tcargo build --release\n";
     for body in with_crlf(makefile) {
