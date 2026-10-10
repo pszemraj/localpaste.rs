@@ -205,7 +205,7 @@ fn virtual_select_line_matrix_handles_terminal_and_non_terminal_lines() {
 }
 
 #[test]
-fn staged_highlight_waits_for_idle() {
+fn staged_highlight_waits_for_idle_in_virtual_editor_mode() {
     let mut harness = make_app();
     insert_active_text(&mut harness.app, "x", 0);
     let active_revision = harness.app.active_revision();
@@ -232,7 +232,7 @@ fn staged_highlight_waits_for_idle() {
         changed_line_range: None,
         lines: Vec::new(),
     };
-    harness.app.highlight_staged = Some(render.clone());
+    harness.app.highlight_staged = Some(render);
     let now = Instant::now();
     harness.app.last_interaction_at = Some(now);
     harness.app.maybe_apply_staged_highlight(now);
@@ -878,63 +878,6 @@ fn apply_staged_highlight_patch_evicts_only_changed_virtual_editor_lines() {
     assert!(harness.app.virtual_galley_cache.get(0, 0).is_some());
     assert!(harness.app.virtual_galley_cache.get(1, 0).is_none());
     assert!(harness.app.virtual_galley_cache.get(2, 0).is_some());
-}
-
-#[test]
-fn staged_highlight_waits_for_idle_in_virtual_editor_mode() {
-    let mut harness = make_app();
-    harness
-        .app
-        .virtual_editor_buffer
-        .replace_char_range(0..0, "x")
-        .expect("virtual edit delta");
-    harness.app.highlight_render = Some(HighlightRender {
-        paste_id: "alpha".to_string(),
-        revision: 0,
-        text_len: harness.app.active_text_len_bytes(),
-        base_revision: None,
-        base_text_len: None,
-        language_hint: "py".to_string(),
-        theme_key: "base16-mocha.dark".to_string(),
-        changed_line_range: None,
-        lines: Vec::new(),
-    });
-    harness.app.highlight_staged = Some(HighlightRender {
-        paste_id: "alpha".to_string(),
-        revision: 1,
-        text_len: harness.app.active_text_len_bytes(),
-        base_revision: None,
-        base_text_len: None,
-        language_hint: "py".to_string(),
-        theme_key: "base16-mocha.dark".to_string(),
-        changed_line_range: None,
-        lines: Vec::new(),
-    });
-    let now = Instant::now();
-    harness.app.last_interaction_at = Some(now);
-    harness.app.maybe_apply_staged_highlight(now);
-
-    assert_eq!(
-        harness
-            .app
-            .highlight_render
-            .as_ref()
-            .map(|render| render.revision),
-        Some(0)
-    );
-    assert!(harness.app.highlight_staged.is_some());
-
-    harness
-        .app
-        .maybe_apply_staged_highlight(now + HIGHLIGHT_APPLY_IDLE + Duration::from_millis(5));
-    assert_eq!(
-        harness
-            .app
-            .highlight_render
-            .as_ref()
-            .map(|render| render.revision),
-        Some(1)
-    );
 }
 
 #[test]

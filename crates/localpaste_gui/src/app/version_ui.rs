@@ -144,9 +144,7 @@ impl VersionUiState {
         self.diff_target_id = None;
         self.diff_target_paste = None;
         self.diff_loading_target = false;
-        self.diff_preview_cache_key = None;
-        self.diff_preview_pending_request_id = None;
-        self.diff_preview = None;
+        self.clear_diff_preview_cache();
     }
 
     /// Clears diff-target selection state.
@@ -623,9 +621,7 @@ impl LocalPasteApp {
         self.version_ui.diff_target_id = Some(id.clone());
         self.version_ui.diff_target_paste = None;
         self.version_ui.diff_loading_target = true;
-        self.version_ui.diff_preview_cache_key = None;
-        self.version_ui.diff_preview_pending_request_id = None;
-        self.version_ui.diff_preview = None;
+        self.version_ui.clear_diff_preview_cache();
         if !self.dispatch_backend_cmd(CoreCmd::GetDiffTargetPaste { id }) {
             self.version_ui.clear_diff_target_state();
             self.set_status("Diff load failed: backend unavailable.");
@@ -645,9 +641,7 @@ impl LocalPasteApp {
         if self.version_ui.diff_target_id.as_deref() == Some(paste.id.as_str()) {
             self.version_ui.diff_target_paste = Some(paste.clone());
             self.version_ui.diff_loading_target = false;
-            self.version_ui.diff_preview_cache_key = None;
-            self.version_ui.diff_preview_pending_request_id = None;
-            self.version_ui.diff_preview = None;
+            self.version_ui.clear_diff_preview_cache();
         }
     }
 

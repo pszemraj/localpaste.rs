@@ -49,6 +49,13 @@ impl VersionUiState {
         self.history_preview_lines.reset();
     }
 
+    /// Clears the cached diff preview and its pending worker request.
+    pub(super) fn clear_diff_preview_cache(&mut self) {
+        self.diff_preview_cache_key = None;
+        self.diff_preview_pending_request_id = None;
+        self.diff_preview = None;
+    }
+
     fn next_diff_preview_request_id(&mut self) -> u64 {
         self.diff_preview_request_seq = self.diff_preview_request_seq.wrapping_add(1);
         self.diff_preview_request_seq
@@ -133,9 +140,7 @@ impl LocalPasteApp {
     pub(in crate::app) fn sync_diff_preview_cache(&mut self) -> bool {
         let Some(lhs_cache_key) = self.active_snapshot_cache_key() else {
             self.version_ui.clear_active_snapshot_cache();
-            self.version_ui.diff_preview_cache_key = None;
-            self.version_ui.diff_preview_pending_request_id = None;
-            self.version_ui.diff_preview = None;
+            self.version_ui.clear_diff_preview_cache();
             return false;
         };
         let Some(cache_key) =
@@ -151,9 +156,7 @@ impl LocalPasteApp {
                     rhs_content_hash: hash_bytes(rhs.content.as_bytes()),
                 })
         else {
-            self.version_ui.diff_preview_cache_key = None;
-            self.version_ui.diff_preview_pending_request_id = None;
-            self.version_ui.diff_preview = None;
+            self.version_ui.clear_diff_preview_cache();
             return false;
         };
         if self.version_ui.diff_preview_cache_key.as_ref() == Some(&cache_key) {
@@ -183,9 +186,7 @@ impl LocalPasteApp {
             .as_ref()
             .map(|rhs| rhs.content.clone())
         else {
-            self.version_ui.diff_preview_cache_key = None;
-            self.version_ui.diff_preview_pending_request_id = None;
-            self.version_ui.diff_preview = None;
+            self.version_ui.clear_diff_preview_cache();
             return false;
         };
         let request_id = self.version_ui.next_diff_preview_request_id();
@@ -194,9 +195,7 @@ impl LocalPasteApp {
             left_text: self.version_ui.active_snapshot_cache_text.clone(),
             right_text,
         }) {
-            self.version_ui.diff_preview_cache_key = None;
-            self.version_ui.diff_preview_pending_request_id = None;
-            self.version_ui.diff_preview = None;
+            self.version_ui.clear_diff_preview_cache();
             self.set_status("Diff preview failed: backend unavailable.");
             return false;
         }

@@ -122,6 +122,38 @@ fn diff_preview_cache_queues_worker_request_and_reuses_it_until_inputs_change() 
         Err(crossbeam_channel::TryRecvError::Empty)
     ));
 
+    let selected_id = harness.app.selected_id.take();
+    assert!(!harness.app.sync_diff_preview_cache());
+    assert_eq!(
+        harness
+            .app
+            .version_ui
+            .diff_target_paste
+            .as_ref()
+            .map(|paste| paste.id.as_str()),
+        Some("beta")
+    );
+    harness.app.apply_event(CoreEvent::DiffPreviewComputed {
+        request_id,
+        diff: localpaste_core::diff::DiffResponse {
+            equal: true,
+            unified: Vec::new(),
+        },
+    });
+    assert!(harness.app.version_ui.diff_preview.is_none());
+    harness.app.selected_id = selected_id;
+    assert!(harness.app.sync_diff_preview_cache());
+    let request_id = match recv_cmd(&harness.cmd_rx) {
+        CoreCmd::ComputeDiffPreview {
+            request_id: next_request_id,
+            ..
+        } => {
+            assert_eq!(next_request_id, request_id.wrapping_add(1));
+            next_request_id
+        }
+        other => panic!("unexpected command: {:?}", other),
+    };
+
     harness.app.apply_event(CoreEvent::DiffPreviewComputed {
         request_id,
         diff: localpaste_core::diff::DiffResponse {
