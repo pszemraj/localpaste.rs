@@ -145,7 +145,24 @@ fn typed_letter_from_events(events: &[egui::Event]) -> Option<char> {
     })
 }
 
+/// Returns the widget id egui assigns to a language combo box.
+///
+/// `ComboBox::from_id_salt` wraps its argument in `Id::new` and derives the
+/// widget id with `ui.make_persistent_id`, and `ComboBox::is_open` expects that
+/// widget id. Looking up a bare `Id::new(salt)` yields a different id, so the
+/// popup state is never found and the combo always reads as closed.
+///
+/// # Arguments
+/// - `ui`: UI the combo box is added to.
+/// - `combo_id_salt`: Id salt passed to `ComboBox::from_id_salt`.
+fn language_combo_id(ui: &egui::Ui, combo_id_salt: &str) -> egui::Id {
+    ui.make_persistent_id(egui::Id::new(combo_id_salt))
+}
+
 /// Renders a language combo box with open-only letter-jump selection.
+///
+/// While the popup is open, a typed letter selects the first matching option
+/// and scrolls it to the center of the popup so the jump is visible.
 ///
 /// # Arguments
 /// - `ui`: Parent UI receiving the combo box.
@@ -159,8 +176,8 @@ pub(super) fn render_language_choice_combo(
     language_choice: &mut String,
 ) {
     let typed_letter = ui.input(|input| typed_letter_from_events(&input.events));
-    let popup_open = egui::ComboBox::is_open(ui.ctx(), egui::Id::new(combo_id_salt));
-    let _changed = apply_language_selector_typeahead(language_choice, popup_open, typed_letter);
+    let popup_open = egui::ComboBox::is_open(ui.ctx(), language_combo_id(ui, combo_id_salt));
+    let jumped = apply_language_selector_typeahead(language_choice, popup_open, typed_letter);
 
     let auto_label = auto_language_status_label();
     let selected_language_text =
@@ -171,13 +188,16 @@ pub(super) fn render_language_choice_combo(
         combo = combo.width(width);
     }
     combo.show_ui(ui, |ui| {
-        ui.selectable_value(
-            language_choice,
-            auto_language_choice_key().to_string(),
-            "Auto",
+        let options = std::iter::once((auto_language_choice_key(), "Auto")).chain(
+            localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
+                .iter()
+                .map(|option| (option.value, option.label)),
         );
-        for option in localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS {
-            ui.selectable_value(language_choice, option.value.to_string(), option.label);
+        for (value, label) in options {
+            let response = ui.selectable_value(language_choice, value.to_string(), label);
+            if jumped && language_choice.as_str() == value {
+                response.scroll_to_me(Some(egui::Align::Center));
+            }
         }
     });
 }
