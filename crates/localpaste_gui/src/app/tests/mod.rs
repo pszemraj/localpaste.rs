@@ -520,3 +520,4 @@ mod virtual_editor_behaviors;
 mod virtual_editor_focus;
 mod virtual_editor_focus_shortcuts;
 mod virtual_editor_focus_support;
+mod window_focus_return;

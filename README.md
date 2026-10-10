@@ -27,7 +27,7 @@ cargo --version
 cargo run
 ```
 
-In the GUI, the quickest way to keep something is to paste it: copy text anywhere, switch to LocalPaste, and press `Ctrl/Cmd+V`. Unless the editor or another text field has focus, the clipboard becomes a new paste in the sidebar. `Ctrl/Cmd+Shift+V` adds the clipboard to the open paste instead. `Ctrl/Cmd+N` starts an empty paste, and `F1` lists every shortcut.
+In the GUI, the quickest way to keep something is to paste it: copy text anywhere, switch to LocalPaste, and press `Ctrl/Cmd+V`. The clipboard becomes a new paste in the sidebar, even if you were editing a paste before you switched, unless the title, search, or another text field has focus. `Ctrl/Cmd+Shift+V` adds the clipboard to the open paste instead. `Ctrl/Cmd+N` starts an empty paste, and `F1` lists every shortcut.
 
 Default GUI/server builds use Magika; see [detection build options](docs/language-detection.md#feature-topology) if ONNX Runtime is unavailable on your platform.
 

@@ -84,6 +84,7 @@ impl LocalPasteApp {
                         action,
                         RuntimeShortcutAction::PlainPaste
                             | RuntimeShortcutAction::PasteIntoEditor
+                            | RuntimeShortcutAction::DeleteSelected
                             | RuntimeShortcutAction::Save
                     )
                 });
@@ -91,9 +92,15 @@ impl LocalPasteApp {
                 self.pending_picker_open = None;
                 retaining = false;
             }
+            // The delete-selected chords also edit text (`Cmd+Backspace` deletes to
+            // line start). The opening editor owns them, so they never delete its paste.
             let editor_event = matches!(
                 action,
-                Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteIntoEditor)
+                Some(
+                    RuntimeShortcutAction::PlainPaste
+                        | RuntimeShortcutAction::PasteIntoEditor
+                        | RuntimeShortcutAction::DeleteSelected
+                )
             ) || (action.is_none()
                 && !commands_from_events(std::slice::from_ref(event), true).is_empty());
             // Native activation remains current immediately; keep its ordered

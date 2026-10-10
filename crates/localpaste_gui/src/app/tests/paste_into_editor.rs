@@ -48,7 +48,8 @@ fn command_shift_v_uses_caret_only_in_focused_editor_and_appends_elsewhere() {
                     &ctx,
                     vec![egui::Event::WindowFocused(true)],
                 );
-                assert!(!harness.app.virtual_editor_state.has_focus);
+                // Focus returns, but the first paste after the switch still appends.
+                assert!(harness.app.virtual_editor_state.has_focus);
             }
             "search" => {
                 harness.app.search_focus_requested = true;

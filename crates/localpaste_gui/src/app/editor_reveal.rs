@@ -1,6 +1,6 @@
 //! Explicit caret reveal requests and observed viewport geometry.
 
-use super::{last_window_focus, LocalPasteApp, VirtualInputCommand, VIRTUAL_EDITOR_ID};
+use super::{LocalPasteApp, VirtualInputCommand};
 use eframe::egui;
 
 /// How the next rendered frame should reveal the caret, independent of focus.
@@ -61,32 +61,6 @@ impl CursorReveal {
 }
 
 impl LocalPasteApp {
-    /// Drop editor ownership on native deactivation without disturbing the selection.
-    pub(super) fn blur_deactivated_editor(&mut self, ctx: &egui::Context) {
-        let deactivated = ctx.input(|input| {
-            input
-                .events
-                .iter()
-                .any(|event| matches!(event, egui::Event::WindowFocused(false)))
-        });
-        if deactivated {
-            // Deactivation can swallow the button release (no button-up after
-            // Alt+Tab mid-drag), leaving egui's primary button reported down.
-            // End the gesture here; this frame's render already applied any
-            // release it did receive.
-            self.virtual_drag_active = false;
-            self.virtual_pointer_press_modifiers = None;
-        }
-        if last_window_focus(ctx) == Some(false) {
-            if self.cancel_virtual_ime_preedit_if_active(std::time::Instant::now()) {
-                self.mark_dirty();
-            }
-            self.virtual_editor_state.has_focus = false;
-            self.focus_editor_next = false;
-            ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
-        }
-    }
-
     /// Navigation remains a reveal request even when the caret is already at a boundary.
     pub(super) fn request_navigation_reveal(&mut self, command: &VirtualInputCommand) {
         use VirtualInputCommand::*;
