@@ -41,8 +41,9 @@ const MONTHS: &[&str] = &[
 ///
 /// # Returns
 /// Whether the sample opens with a run of level-prefixed lines, consists mostly
-/// of timestamped lines, or is a Rust panic, crash output (a Python traceback
-/// or a fatal signal or exit report), Java stack trace, or rustc diagnostic.
+/// of timestamped lines, or is a leading Rust panic, crash output (a Python
+/// traceback or Rust panic anywhere, or a fatal signal or exit report), Java
+/// stack trace, or rustc diagnostic.
 pub(crate) fn looks_like_runtime_log(content: &str) -> bool {
     let sample = super::sample_prefix(content);
     looks_like_multiline_log(sample)
@@ -381,13 +382,14 @@ fn syslog_timestamp_end(bytes: &[u8], at: usize) -> Option<usize> {
 ///
 /// # Returns
 /// Whether the runtime's thread and source-location prefix appears first or
-/// follows only a recognized Cargo build/run preamble.
+/// follows only a recognized Cargo build/run preamble. A panic elsewhere is
+/// recognized as crash output ([`looks_like_crash_output`]).
 fn looks_like_rust_panic(content: &str) -> bool {
     for line in content.lines().take(64).map(str::trim) {
         if line.is_empty() {
             continue;
         }
-        if line.starts_with("thread '") && line.contains("' panicked at ") {
+        if is_panic_header(line) {
             return true;
         }
         if !is_cargo_run_preamble(line) {
@@ -397,18 +399,23 @@ fn looks_like_rust_panic(content: &str) -> bool {
     false
 }
 
-/// Recognize output that ends with a process failing: a Python traceback block
-/// or a line reporting a fatal signal or exit status, with no commentary or
-/// source around it.
+/// Recognize the `thread 'main' panicked at src/main.rs:4:5:` line that opens a Rust panic.
+fn is_panic_header(line: &str) -> bool {
+    line.starts_with("thread '") && line.contains("' panicked at ")
+}
+
+/// Recognize output that ends with a process failing: a Python traceback
+/// block, a Rust panic block, or a line reporting a fatal signal or exit
+/// status, with no commentary or source around it.
 ///
-/// The traceback may start anywhere, after training output, a `$ ` command, or
-/// other program lines, and exit or signal reports may follow it. Every other
-/// line must be output rather than a note about it (see [`is_commentary`]), so
-/// a bug report that quotes a traceback stays a document, and must not be a
-/// Python definition or import line
-/// ([`crate::detection::looks_like_python_source`]), so a function whose
-/// docstring holds a doctest traceback stays source. Frame lines inside the
-/// block, such as `import torch`, are part of the traceback.
+/// The block may start anywhere, after training output, timestamped or
+/// level-prefixed log lines, a `$ ` command, or other program lines, and exit
+/// or signal reports may follow it. Every other line must be output rather
+/// than a note about it (see [`is_commentary`]), so a bug report that quotes a
+/// traceback or panic stays a document, and must not be source (see
+/// [`is_source_line`]), so a function whose docstring holds a doctest
+/// traceback, or a Rust program followed by the panic it prints, stays source.
+/// Lines inside a block, such as a frame's `import torch`, belong to it.
 ///
 /// # Returns
 /// Whether the sample holds a crash anchor and no commentary or source, including quoted rows.
@@ -423,17 +430,44 @@ pub(crate) fn looks_like_crash_output(content: &str) -> bool {
         .filter(|line| !line.is_empty())
         .map(|line| line.strip_prefix("> ").unwrap_or(line).trim_start())
         .collect();
-    let traceback = traceback_block(&lines);
-    if traceback.is_none() && !lines.iter().any(|line| is_termination_line(line)) {
+    let blocks = [traceback_block(&lines), panic_block(&lines)];
+    if blocks.iter().all(Option::is_none) && !lines.iter().any(|line| is_termination_line(line)) {
         return false;
     }
     lines.iter().enumerate().all(|(index, line)| {
-        traceback
-            .as_ref()
-            .is_some_and(|block| block.contains(&index))
+        blocks.iter().flatten().any(|block| block.contains(&index))
             || is_termination_line(line)
-            || !(is_commentary(line) || crate::detection::looks_like_python_source(line))
+            || !(is_commentary(line) || is_source_line(line))
     })
+}
+
+/// Recognize a source line next to crash output: a Python definition or import
+/// line ([`crate::detection::looks_like_python_source`]) or a Rust item
+/// definition such as `fn main() {` or `impl Server {`.
+fn is_source_line(line: &str) -> bool {
+    crate::detection::looks_like_python_source(line)
+        || super::definitions::extract_definition_handle_from_line(line, Some("rust")).is_some()
+}
+
+/// Line span of a Rust panic: from the first `thread '...' panicked at ...`
+/// header through the message line after a header that ends in `:`, and
+/// through the last `note: `, `stack backtrace:`, or Cargo
+/// `error: process didn't exit successfully` line after the header. Backtrace
+/// frames and multi-line messages fall inside the span. A header with none of
+/// these after it is a quoted line rather than a block.
+fn panic_block(lines: &[&str]) -> Option<std::ops::RangeInclusive<usize>> {
+    let header = lines.iter().position(|line| is_panic_header(line))?;
+    // Rust 1.73 and later print the message on the line after the header.
+    let message = header + usize::from(lines[header].ends_with(':') && header + 1 < lines.len());
+    let end = lines[header + 1..]
+        .iter()
+        .rposition(|line| {
+            line.starts_with("note: ")
+                || *line == "stack backtrace:"
+                || line.starts_with("error: process didn't exit successfully")
+        })
+        .map_or(message, |offset| message.max(header + 1 + offset));
+    (end > header).then_some(header..=end)
 }
 
 /// Line span from the first `Traceback (most recent call last):` header to the

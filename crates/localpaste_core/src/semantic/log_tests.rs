@@ -237,6 +237,59 @@ fn crash_output_is_a_log_wherever_the_traceback_starts() {
     }
 }
 
+/// A service log whose last lines are a Rust panic and its backtrace.
+pub(super) const PANIC_AFTER_SERVICE_LOG: &str =
+    "2026-10-09T14:02:11.384Z  INFO checkout::api: POST /v1/orders 201 in 41ms
+2026-10-09T14:02:11.902Z  WARN checkout::payments: provider latency 2.8s exceeds budget (1.5s)
+2026-10-09T14:02:12.117Z ERROR checkout::payments: charge failed: connection reset by peer
+thread 'tokio-runtime-worker' panicked at src/payments/client.rs:212:38:
+called `Option::unwrap()` on a `None` value
+stack backtrace:
+   0: rust_begin_unwind
+   1: core::panicking::panic_fmt
+   2: core::panicking::panic
+   3: core::option::unwrap_failed
+   4: checkout::payments::client::Client::capture
+             at ./src/payments/client.rs:212:38
+   5: checkout::api::orders::create::{{closure}}
+             at ./src/api/orders.rs:87:22
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.";
+
+#[test]
+fn rust_panic_output_is_a_log_wherever_the_panic_starts() {
+    let outputs = [
+        PANIC_AFTER_SERVICE_LOG,
+        // Program output before the panic and Cargo's exit report after it.
+        "Listening on 0.0.0.0:8080\nthread 'main' panicked at src/main.rs:12:5:\ncalled `Result::unwrap()` on an `Err` value: AddrInUse\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nerror: process didn't exit successfully: `target/debug/server` (exit status: 101)",
+        // A failing `cargo test` run.
+        "running 1 test\ntest tests::adds ... FAILED\n\nfailures:\n\n---- tests::adds stdout ----\nthread 'tests::adds' panicked at src/lib.rs:10:9:\nassertion `left == right` failed\n  left: 4\n right: 5\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n\nfailures:\n    tests::adds\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        // Rust before 1.73 printed the message inside the header.
+        "starting worker pool\nthread 'worker-1' panicked at 'queue closed', src/worker.rs:40:9\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        // A panic that leads the paste is a log as before.
+        "thread 'main' panicked at src/main.rs:4:5:\nconfig file missing\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+    ];
+    assert_derived_kinds(
+        &outputs,
+        &[
+            None,
+            Some("text"),
+            Some("yaml"),
+            Some("markdown"),
+            Some("rust"),
+        ],
+        PasteKind::Log,
+    );
+    for content in outputs.iter().flat_map(|content| with_crlf(content)) {
+        assert!(super::logs::looks_like_runtime_log(&content), "{content}");
+        assert_eq!(
+            detect_language(&content).as_deref(),
+            Some("log"),
+            "{content}"
+        );
+        assert_eq!(stored_kind(&content), PasteKind::Log, "{content}");
+    }
+}
+
 #[test]
 fn notes_about_crashes_stay_documents() {
     let notes = [
@@ -249,6 +302,7 @@ fn notes_about_crashes_stay_documents() {
         "Traceback (most recent call last):\n  File \"app.py\", line 3, in <module>\n    main()\nValueError: boom\nThis happens every time the batch size exceeds the limit.",
         "The worker crashed right after loading the config:\n\n    Traceback (most recent call last):\n      File \"worker.py\", line 12, in <module>\n        main()\n    KeyError: 'queue'\n\nAdding a default queue name fixed it.",
         "## Crash on startup\n\nThe worker crashed right after loading the config:\n\n    Traceback (most recent call last):\n      File \"worker.py\", line 12, in <module>\n        main()\n    KeyError: 'queue'\n\nAdding a default queue name fixed it.",
+        "Our checkout service crashed in production last night:\n\nthread 'tokio-runtime-worker' panicked at src/payments/client.rs:212:38:\ncalled `Option::unwrap()` on a `None` value\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\nIt looks like the provider returned no charge id. Can we handle that case?",
     ];
     assert_derived_kinds(&notes, &[None, Some("text")], PasteKind::Document);
     assert!(notes
@@ -291,5 +345,17 @@ fn source_around_a_traceback_stays_code() {
             assert_eq!(derived.kind, PasteKind::Code, "{body}");
             assert_eq!(derived.handle.as_deref(), Some(handle), "{body}");
         }
+    }
+    // Rust source around a whole panic block: a program followed by the
+    // output it prints, and a test that compares stderr with that output.
+    let rust_sources = [
+        "fn main() {\n    let port = 8080;\n    panic!(\"port {port} is taken\");\n}\nthread 'main' panicked at src/main.rs:3:5:\nport 8080 is taken\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace",
+        "const EXPECTED: &str = \"\\\nthread 'main' panicked at src/main.rs:3:5:\nport 8080 is taken\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\";\n\n#[test]\nfn taken_port_panics_with_its_number() {\n    let output = run_server(&[\"--port\", \"8080\"]);\n    assert_eq!(String::from_utf8_lossy(&output.stderr), EXPECTED);\n}",
+    ];
+    assert_derived_kinds(&rust_sources, &[Some("rust")], PasteKind::Code);
+    for body in rust_sources.iter().flat_map(|body| with_crlf(body)) {
+        assert!(!super::logs::looks_like_runtime_log(&body), "{body}");
+        assert_ne!(detect_language(&body).as_deref(), Some("log"), "{body}");
+        assert_ne!(stored_kind(&body), PasteKind::Log, "{body}");
     }
 }
