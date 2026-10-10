@@ -85,17 +85,20 @@ impl LocalPasteApp {
             .show_modal(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Compare current paste against:");
-                    if self.version_ui.diff_query_focus_requested
-                        && super::focus_visible_query(ui, egui::Id::new(DIFF_QUERY_INPUT_ID))
-                    {
-                        self.version_ui.diff_query_focus_requested = false;
-                    }
-                    ui.add(
+                    let focus_requested = self.version_ui.diff_query_focus_requested
+                        && super::focus_visible_query(ui, egui::Id::new(DIFF_QUERY_INPUT_ID));
+                    let response = ui.add(
                         egui::TextEdit::singleline(&mut self.version_ui.diff_query)
                             .id(egui::Id::new(DIFF_QUERY_INPUT_ID))
                             .desired_width(f32::INFINITY)
                             .muted_hint("name, id, tag, language"),
                     );
+                    if focus_requested {
+                        // A reopened window is visible on the toolbar click's release,
+                        // and egui surrenders the pre-requested focus to that click.
+                        response.request_focus();
+                        self.version_ui.diff_query_focus_requested = false;
+                    }
                 });
                 ui.add_space(8.0);
 

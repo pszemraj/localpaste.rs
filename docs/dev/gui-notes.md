@@ -190,7 +190,7 @@ Startup reopens the paste that was open when the app last closed, along with the
 - Command palette exposes `Compare with another paste` (Diff) and `Version history` (History) when a paste is selected; the queries `diff` and `history` find them.
 - Opening either window closes discovery surfaces and prevents command-palette and paste-picker opens. Escape closes the version window.
 - Diff and History open at 1180x760 and 1080x760 points but never exceed the app window: they stay 12 points inside the viewport at the default and minimum window sizes, shrink if the app window shrinks while they are open, and scroll their lists and previews instead of clipping.
-- Opening Diff focuses its candidate query once; later focus changes remain under user control. Floating-window query focus waits for a visible render pass and retains its one-shot request through egui's sizing pass, so accessibility focus always refers to a node in the published tree.
+- Every Diff open focuses its compare query, including a reopen by toolbar click, where the window is visible on the click's release and the request is renewed after the query exists so egui cannot surrender it to that click; later focus changes within an open remain under user control. Floating-window query focus waits for a visible render pass and retains its one-shot request through egui's sizing pass, so accessibility focus always refers to a node in the published tree.
 - Diff is detached from main editor state:
   - left side uses the active snapshot (`active_snapshot`) so unsaved edits are included,
   - loading a comparison target does not change current selection or paste locks.

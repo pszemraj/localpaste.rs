@@ -492,6 +492,50 @@ fn diff_open_focuses_query_once_for_toolbar_and_palette() {
     }
 }
 
+#[test]
+fn diff_focuses_its_query_on_every_toolbar_open() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let query = egui::Id::new(DIFF_QUERY_INPUT_ID);
+    for open in 1..=3 {
+        let output = run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+        let diff_button = rendered_label_center(&output, "Diff");
+        for pressed in [true, false] {
+            assert_accessible_focus(&run_discovery_frame_once(
+                &mut harness.app,
+                &ctx,
+                primary_pointer_events(diff_button, pressed),
+            ));
+        }
+        for _ in 0..3 {
+            assert_accessible_focus(&run_discovery_frame_once(
+                &mut harness.app,
+                &ctx,
+                Vec::new(),
+            ));
+        }
+        assert!(harness.app.version_ui.diff_modal_open, "open {open}");
+        assert!(
+            ctx.memory(|memory| memory.has_focus(query)),
+            "open {open} should focus the compare query"
+        );
+        run_discovery_frame_once(
+            &mut harness.app,
+            &ctx,
+            vec![egui::Event::Text("beta".into())],
+        );
+        assert_eq!(harness.app.version_ui.diff_query, "beta", "open {open}");
+
+        run_discovery_frame_once(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(!harness.app.version_ui.diff_modal_open, "open {open}");
+    }
+}
+
 /// Assert that each accessibility update's focus is reachable from its published root.
 ///
 /// # Panics
