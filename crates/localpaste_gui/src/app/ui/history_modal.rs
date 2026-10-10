@@ -4,7 +4,7 @@ use super::super::*;
 use super::ViewportFitExt as _;
 use crate::app::editor::EditorLineIndex;
 use crate::app::text_coords::prefix_by_chars;
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Local, TimeZone, Utc};
 use eframe::egui::{self, RichText};
 use localpaste_core::models::paste::VersionMeta;
 
@@ -37,9 +37,10 @@ fn format_history_size(len: usize) -> String {
     }
 }
 
-fn format_history_relative_time(now: DateTime<Utc>, created_at: DateTime<Utc>) -> String {
+/// Relative age such as `3 min ago`, or `None` once a version is a week old.
+fn history_relative_age(now: DateTime<Utc>, created_at: DateTime<Utc>) -> Option<String> {
     let elapsed_secs = now.signed_duration_since(created_at).num_seconds().max(0);
-    if elapsed_secs < 60 {
+    Some(if elapsed_secs < 60 {
         "just now".to_string()
     } else if elapsed_secs < 60 * 60 {
         format!("{} min ago", elapsed_secs / 60)
@@ -48,10 +49,48 @@ fn format_history_relative_time(now: DateTime<Utc>, created_at: DateTime<Utc>) -
     } else if elapsed_secs < 7 * 24 * 60 * 60 {
         format!("{} d ago", elapsed_secs / (24 * 60 * 60))
     } else {
+        return None;
+    })
+}
+
+fn format_history_relative_time(now: DateTime<Utc>, created_at: DateTime<Utc>) -> String {
+    history_relative_age(now, created_at).unwrap_or_else(|| {
         created_at
             .with_timezone(&Local)
             .format("%Y-%m-%d")
             .to_string()
+    })
+}
+
+/// Formats a save time in `timezone` for reading, such as `Oct 10, 2026, 6:12 PM`.
+fn format_history_timestamp<Tz>(created_at: DateTime<Utc>, timezone: &Tz) -> String
+where
+    Tz: TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
+    created_at
+        .with_timezone(timezone)
+        .format("%b %-d, %Y, %-I:%M %p")
+        .to_string()
+}
+
+/// Captions a stored snapshot with its age, matching its version row, its save time, and its size.
+///
+/// The age is left out once the version is a week old, where its row shows a date instead.
+fn format_history_snapshot_caption<Tz>(
+    now: DateTime<Utc>,
+    meta: &VersionMeta,
+    timezone: &Tz,
+) -> String
+where
+    Tz: TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
+    let saved_at = format_history_timestamp(meta.created_at, timezone);
+    let size = format_history_size(meta.len);
+    match history_relative_age(now, meta.created_at) {
+        Some(age) => format!("Saved {age} · {saved_at} · {size}"),
+        None => format!("Saved {saved_at} · {size}"),
     }
 }
 
@@ -320,7 +359,10 @@ impl LocalPasteApp {
                                         self.version_ui.history_selected_index == row_index;
                                     let label = format_history_row_label(history_label_now, meta);
                                     let response = super::list_row(ui, selected_row, &label, "")
-                                        .on_hover_text(meta.created_at.to_rfc3339());
+                                        .on_hover_text(format_history_timestamp(
+                                            meta.created_at,
+                                            &Local,
+                                        ));
                                     if response.clicked() {
                                         pending_selected_index = Some(row_index);
                                     }
@@ -333,10 +375,10 @@ impl LocalPasteApp {
                         if viewing_historical {
                             if let Some(meta) = self.selected_history_meta() {
                                 right.label(
-                                    RichText::new(format!(
-                                        "Version {} at {}",
-                                        meta.version_id_ms,
-                                        meta.created_at.to_rfc3339()
+                                    RichText::new(format_history_snapshot_caption(
+                                        history_label_now,
+                                        meta,
+                                        &Local,
                                     ))
                                     .small()
                                     .color(COLOR_TEXT_SECONDARY),
@@ -517,11 +559,11 @@ impl LocalPasteApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_history_relative_time, format_history_row_label, history_index_after_arrow_key,
-        history_preview_render_mode, history_snapshot_action_state, HistoryActionHelper,
-        HistoryPreviewRenderMode, MAX_INLINE_HISTORY_TEXTEDIT_BYTES,
+        format_history_relative_time, format_history_row_label, format_history_snapshot_caption,
+        history_index_after_arrow_key, history_preview_render_mode, history_snapshot_action_state,
+        HistoryActionHelper, HistoryPreviewRenderMode, MAX_INLINE_HISTORY_TEXTEDIT_BYTES,
     };
-    use chrono::{Duration, TimeZone, Utc};
+    use chrono::{Duration, FixedOffset, TimeZone, Utc};
     use eframe::egui;
     use localpaste_core::models::paste::VersionMeta;
 
@@ -590,6 +632,31 @@ mod tests {
         assert_eq!(
             format_history_row_label(now, &meta),
             "14 min ago | 1.2 KB | rust"
+        );
+    }
+
+    #[test]
+    fn history_snapshot_caption_reads_like_its_row_in_local_time() {
+        let eastern = FixedOffset::west_opt(4 * 60 * 60).unwrap();
+        let saved = Utc.with_ymd_and_hms(2026, 10, 10, 22, 12, 11).unwrap();
+        let meta = |created_at| VersionMeta {
+            version_id_ms: 1_791_670_331_998,
+            created_at,
+            content_hash: "hash".to_string(),
+            len: 705,
+            language: Some("rust".to_string()),
+            language_is_manual: false,
+        };
+
+        assert_eq!(
+            format_history_snapshot_caption(saved + Duration::minutes(3), &meta(saved), &eastern),
+            "Saved 3 min ago · Oct 10, 2026, 6:12 PM · 705 B"
+        );
+        let midnight = Utc.with_ymd_and_hms(2026, 10, 1, 4, 5, 0).unwrap();
+        assert_eq!(
+            format_history_snapshot_caption(saved, &meta(midnight), &eastern),
+            "Saved Oct 1, 2026, 12:05 AM · 705 B",
+            "week-old versions drop the age, as their rows show a date"
         );
     }
 

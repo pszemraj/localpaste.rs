@@ -552,3 +552,32 @@ fn history_rows_hover_neutral_and_keep_the_selection_fill() {
         "hover must not replace the selection fill: {fills:?}"
     );
 }
+
+#[test]
+fn history_snapshot_caption_shows_a_readable_save_time() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    open_history_with_versions(&mut harness.app);
+    let (output, _) = hover_history_row(&mut harness.app, &ctx, "22 B");
+    let captions = output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.job.text.starts_with("Saved ") => {
+                Some(text.galley.job.text.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let [caption] = captions.as_slice() else {
+        panic!("expected one snapshot caption, found {captions:?}");
+    };
+    assert!(
+        caption.starts_with("Saved just now · ") && caption.ends_with(" · 11 B"),
+        "the caption should match its row's age and size: {caption}"
+    );
+    assert!(
+        !caption.contains("Version") && !caption.contains('T') && !caption.contains("+00:00"),
+        "the caption must not show the raw id or an RFC 3339 stamp: {caption}"
+    );
+}

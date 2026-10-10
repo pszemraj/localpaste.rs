@@ -194,7 +194,7 @@ Startup reopens the paste that was open when the app last closed, along with the
   - loading a comparison target does not change current selection or paste locks.
 - History is detached and read-only:
   - `Current working copy` is index `0` and previews the live editor contents (captioned `Current editor contents`, saved or not),
-  - stored snapshots are normally older-only entries,
+  - stored snapshots are normally older-only entries; each row reads like `3 min ago | 705 B | rust` (a date once the version is a week old) and shows its local save time on hover, and the selected snapshot is captioned with the same age, its local save time, and its size, such as `Saved 3 min ago · Oct 10, 2026, 6:12 PM · 705 B`,
   - reset restores the selected snapshot and archives the outgoing head as a recoverable snapshot.
   - dirty save-and-reset saves local edits before reset so the just-saved outgoing head is recoverable.
 - History, Diff, and reset-confirm windows fence background mutations:
