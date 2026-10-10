@@ -192,6 +192,50 @@ fn command_shift_v_after_switching_pastes_appends_whether_or_not_loaded() {
 }
 
 #[test]
+fn command_shift_v_during_a_switch_deferred_by_a_save_appends_to_the_chosen_paste() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("beta", "Beta", None, 9));
+    harness.app.pastes = harness.app.all_pastes.clone();
+    run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+    harness.app.reset_virtual_editor("alpha edited");
+    harness.app.mark_dirty();
+    assert!(harness.app.select_paste("beta".into()));
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
+    drain_cmds(&harness);
+
+    press_paste_into_editor(&mut harness, &ctx, "clip");
+
+    assert_eq!(
+        harness.app.active_snapshot(),
+        "alpha edited",
+        "the outgoing paste must not receive the text"
+    );
+    assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
+    let mut saved = Paste::new("alpha edited".into(), "Alpha".into());
+    saved.id = "alpha".into();
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+    assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+    let mut beta = Paste::new("beta body".into(), "Beta".into());
+    beta.id = "beta".into();
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: beta,
+        selection_epoch: harness.app.active_buffer_epoch,
+    });
+    run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+
+    assert_eq!(harness.app.active_snapshot(), "beta body\nclip");
+    assert!(harness.app.pending_editor_paste.is_none());
+    assert!(harness.app.virtual_editor_state.has_focus);
+}
+
+#[test]
 fn command_shift_v_pending_append_is_dropped_when_selection_moves_elsewhere() {
     let (mut harness, _events) = make_app_with_event_tx();
     let ctx = egui::Context::default();

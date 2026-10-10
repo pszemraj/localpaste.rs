@@ -187,10 +187,11 @@ impl LocalPasteApp {
     /// Appends clipboard text to the end of the open paste.
     ///
     /// Routing only calls this when the editor lacks focus; a focused editor
-    /// receives `Ctrl/Cmd+Shift+V` as an ordinary paste at its caret. With no
-    /// loaded paste, the text waits for the loading selection or, failing
-    /// that, the top sidebar paste. An empty list leaves nothing to append
-    /// to, so the text becomes a new paste.
+    /// receives `Ctrl/Cmd+Shift+V` as an ordinary paste at its caret. A switch
+    /// waiting on the outgoing paste's save, or a selection still loading,
+    /// receives the text once its paste loads; with no selection at all, the
+    /// top sidebar paste does. An empty list leaves nothing to append to, so
+    /// the text becomes a new paste.
     ///
     /// # Arguments
     /// - `ctx`: Context used to apply the editor edit and request focus.
@@ -199,15 +200,21 @@ impl LocalPasteApp {
         if text.is_empty() {
             return;
         }
+        // A switch deferred behind a save already belongs to the paste the user
+        // chose; appending to the outgoing paste would re-dirty it and stall the switch.
         let target = self
-            .selected_id
+            .pending_selection_id
             .clone()
+            .or_else(|| self.selected_id.clone())
             .or_else(|| self.pastes.first().map(|paste| paste.id.clone()));
         let Some(id) = target else {
             self.create_new_paste_with_content(text);
             return;
         };
-        if self.selected_id.as_deref() != Some(id.as_str()) && !self.select_paste(id.clone()) {
+        if self.selected_id.as_deref() != Some(id.as_str())
+            && self.pending_selection_id.as_deref() != Some(id.as_str())
+            && !self.select_paste(id.clone())
+        {
             return;
         }
         match self.pending_editor_paste.as_mut() {
