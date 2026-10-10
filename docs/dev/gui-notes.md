@@ -190,6 +190,7 @@ Startup reopens the paste that was open when the app last closed, along with the
 - Command palette exposes `Compare with another paste` (Diff) and `Version history` (History) when a paste is selected; the queries `diff` and `history` find them.
 - Opening either window closes discovery surfaces and prevents command-palette and paste-picker opens. Escape closes the version window.
 - Diff and History open at 1180x760 and 1080x760 points but never exceed the app window: they stay 12 points inside the viewport at the default and minimum window sizes, shrink if the app window shrinks while they are open, and scroll their lists and previews instead of clipping.
+- Each window's lists and previews fill its height, so its size and position never depend on what it shows: Diff opens at its final rect and keeps it when a candidate is picked or the comparison changes, History keeps it while versions and snapshots load, and both reopen where they closed. Resizing a window by its edge resizes the panes with it.
 - Every Diff open focuses its compare query, including a reopen by toolbar click, where the window is visible on the click's release and the request is renewed after the query exists so egui cannot surrender it to that click; later focus changes within an open remain under user control. Floating-window query focus waits for a visible render pass and retains its one-shot request through egui's sizing pass, so accessibility focus always refers to a node in the published tree.
 - Diff is detached from main editor state:
   - left side uses the active snapshot (`active_snapshot`) so unsaved edits are included,
@@ -320,6 +321,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
     - While GUI is open on a paste, verify external API mutation attempts against same paste are lock-gated (423 behavior per lock model).
 17. Version workflow sanity:
     - Open `Diff`, select another paste, and verify current unsaved edits appear on the left side.
+    - Open `Diff` from the toolbar, pick a candidate, pick a different one, then close and reopen it: the window opens at full height and never moves or resizes. Open `History` and select an older version: same.
     - Open `History`, navigate with `Older/Newer`, duplicate a historical snapshot, and verify a new paste is created.
     - With Documents active, open a Code paste from the picker, then History or Diff. Move or resize the window to expose a sidebar row, click it, then press Escape. The refused click must leave the Code paste open.
     - Trigger reset-to-version and verify current paste updates to the selected snapshot.

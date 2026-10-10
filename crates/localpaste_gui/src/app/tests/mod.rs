@@ -535,6 +535,7 @@ mod time_filters;
 mod version_async_status;
 mod version_modal_caching;
 mod version_overlay_exclusivity;
+mod version_window_geometry;
 mod virtual_editor_behaviors;
 mod virtual_editor_focus;
 mod virtual_editor_focus_shortcuts;

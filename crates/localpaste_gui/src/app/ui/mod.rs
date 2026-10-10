@@ -41,6 +41,11 @@ pub(in crate::app) trait ViewportFitExt: Sized {
     /// difference. The window is also kept [`WINDOW_EDGE_MARGIN`] clear of the
     /// viewport edges, including when dragged.
     ///
+    /// egui shrinks a window to its content, so this size holds only while the
+    /// content fills the window, for example with a non-shrinking scroll area
+    /// in every column. Content that shrinks makes the window resize, and move
+    /// when the edge constraint applies, whenever what it shows changes.
+    ///
     /// # Arguments
     /// - `ctx`: Context providing the live viewport and window chrome.
     /// - `preferred`: Content-area size to use when the viewport is large enough.

@@ -12,8 +12,6 @@ use std::sync::Arc;
 pub(crate) const MAX_INLINE_DIFF_BYTES: usize = MAX_DIFF_INPUT_BYTES;
 /// Maximum diff row count cached/rendered inline before preview is summarized.
 pub(crate) const MAX_INLINE_DIFF_LINES: usize = 20_000;
-/// Height cap shared by the candidate list and the line diff so the panes line up.
-const DIFF_PANE_MAX_HEIGHT: f32 = 640.0;
 
 /// Cached inline diff preview state for the detached diff modal.
 ///
@@ -110,9 +108,11 @@ impl LocalPasteApp {
                     left.label(RichText::new("Candidates").small().color(COLOR_TEXT_MUTED));
                     left.add_space(4.0);
 
+                    // The candidate list fills the window's remaining height, so the
+                    // window keeps its given size whether or not a comparison is shown.
                     egui::ScrollArea::vertical()
                         .id_salt("diff_candidates")
-                        .max_height(DIFF_PANE_MAX_HEIGHT)
+                        .auto_shrink([false, false])
                         .show(left, |ui| {
                             for item in self.diff_candidates() {
                                 let selected_row = self.version_ui.diff_target_id.as_deref()
@@ -205,7 +205,6 @@ impl LocalPasteApp {
                                         right.text_style_height(&egui::TextStyle::Monospace).max(1.0);
                                     egui::ScrollArea::vertical()
                                         .id_salt("diff_preview")
-                                        .max_height(DIFF_PANE_MAX_HEIGHT)
                                         .auto_shrink([false, false])
                                         .show_rows(right, row_height, diff_lines.len(), |ui, range| {
                                             ui.set_min_width(ui.available_width());

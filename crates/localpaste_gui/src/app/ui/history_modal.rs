@@ -9,7 +9,6 @@ use eframe::egui::{self, RichText};
 use localpaste_core::models::paste::VersionMeta;
 
 const MAX_INLINE_HISTORY_TEXTEDIT_BYTES: usize = 256 * 1024;
-const HISTORY_PREVIEW_MAX_HEIGHT: f32 = 560.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HistoryPreviewRenderMode {
@@ -180,7 +179,6 @@ fn render_large_history_preview(ui: &mut egui::Ui, text: &str, lines: &EditorLin
 
     egui::ScrollArea::vertical()
         .id_salt("history_snapshot_preview")
-        .max_height(HISTORY_PREVIEW_MAX_HEIGHT)
         .auto_shrink([false, false])
         .show_rows(ui, row_height, line_count, |ui, range| {
             ui.set_min_width(ui.available_width());
@@ -220,7 +218,6 @@ fn render_large_history_preview(ui: &mut egui::Ui, text: &str, lines: &EditorLin
 fn render_inline_history_preview(ui: &mut egui::Ui, text: &mut String) {
     egui::ScrollArea::vertical()
         .id_salt("history_snapshot_preview")
-        .max_height(HISTORY_PREVIEW_MAX_HEIGHT)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.add(
@@ -335,9 +332,11 @@ impl LocalPasteApp {
 
                     left.label(RichText::new("Versions").small().color(COLOR_TEXT_MUTED));
                     left.add_space(4.0);
+                    // The version list fills the window's remaining height, so the window
+                    // keeps its given size while versions and snapshots load.
                     egui::ScrollArea::vertical()
                         .id_salt("history_versions_list")
-                        .max_height(620.0)
+                        .auto_shrink([false, false])
                         .show(left, |ui| {
                             let current_selected = self.version_ui.history_selected_index == 0;
                             if super::list_row(ui, current_selected, "Current working copy", "")
