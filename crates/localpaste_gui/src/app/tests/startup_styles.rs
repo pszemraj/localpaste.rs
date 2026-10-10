@@ -203,3 +203,51 @@ fn empty_editor_centers_its_message_over_muted_shortcut_hints() {
     };
     assert_eq!(new_paste, expected);
 }
+
+#[test]
+fn palette_hints_show_the_primary_chord_on_each_platform() {
+    for (platform, primary) in [
+        (super::virtual_editor::PlatformFlavor::Mac, "Cmd+K"),
+        (super::virtual_editor::PlatformFlavor::Other, "Ctrl+K"),
+    ] {
+        with_platform(platform, || {
+            let mut harness = make_app();
+            let ctx = egui::Context::default();
+            harness.app.selected_id = None;
+            harness.app.selected_paste = None;
+            let input = || egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100.0, 800.0),
+                )),
+                ..Default::default()
+            };
+            let _ = run_full_update_with_input(&mut harness.app, &ctx, input());
+            let output = run_full_update_with_input(&mut harness.app, &ctx, input());
+            let description = text_bounds(&output, "Command palette");
+            let keys = text_bounds(&output, primary);
+            assert!(
+                (description.center().y - keys.center().y).abs() < 1.0,
+                "{primary} labels the Command palette hint"
+            );
+        });
+    }
+
+    // Shortcut help lists the primary chord before the Shift+P alias.
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.shortcut_help_open = true;
+    let mut output = run_full_update_with_input(&mut harness.app, &ctx, Default::default());
+    for _ in 0..3 {
+        output = run_full_update_with_input(&mut harness.app, &ctx, Default::default());
+    }
+    let (primary, alias) = if cfg!(target_os = "macos") {
+        ("Cmd+K", "Cmd+Shift+P")
+    } else {
+        ("Ctrl+K", "Ctrl+Shift+P")
+    };
+    assert!(
+        text_bounds(&output, primary).top() < text_bounds(&output, alias).top(),
+        "{primary} should be listed above {alias}"
+    );
+}

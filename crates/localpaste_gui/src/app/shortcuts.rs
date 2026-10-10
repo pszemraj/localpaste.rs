@@ -11,7 +11,9 @@ pub(crate) enum RuntimeShortcutAction {
     Save,
     DeleteSelected,
     FocusSearch,
+    /// The palette's primary chord, `Ctrl/Cmd+K`, which hints and help show.
     ToggleCommandPalette,
+    /// The palette's `Ctrl/Cmd+Shift+P` alias.
     ToggleCommandPaletteLegacy,
     TogglePastePicker,
     ToggleProperties,
@@ -127,17 +129,17 @@ pub(crate) const RUNTIME_SHORTCUTS: &[RuntimeShortcut] = &[
     },
     RuntimeShortcut {
         action: RuntimeShortcutAction::ToggleCommandPalette,
-        chord: ShortcutChord::CommandShift(egui::Key::P),
+        chord: ShortcutChord::PlainCommand(egui::Key::K),
         help: ShortcutHelpEntry {
-            keys: "Ctrl/Cmd+Shift+P",
+            keys: "Ctrl/Cmd+K",
             description: "Toggle command palette",
         },
     },
     RuntimeShortcut {
         action: RuntimeShortcutAction::ToggleCommandPaletteLegacy,
-        chord: ShortcutChord::PlainCommand(egui::Key::K),
+        chord: ShortcutChord::CommandShift(egui::Key::P),
         help: ShortcutHelpEntry {
-            keys: "Ctrl/Cmd+K",
+            keys: "Ctrl/Cmd+Shift+P",
             description: "Toggle command palette",
         },
     },
@@ -247,17 +249,19 @@ pub(crate) fn runtime_shortcut_action(event: &egui::Event) -> Option<RuntimeShor
 
 /// Looks up the display label for a registered runtime shortcut action.
 ///
+/// The label is spelled for the platform whose chords dispatch matches.
+///
 /// # Returns
 /// Human-readable shortcut key label for the action.
 ///
 /// # Panics
 /// Panics if a [`RuntimeShortcutAction`] variant is not present in [`RUNTIME_SHORTCUTS`],
-/// or if its label names no chord for the build platform.
+/// or if its label names no chord for the active platform.
 pub(crate) fn runtime_shortcut_label(action: RuntimeShortcutAction) -> String {
     RUNTIME_SHORTCUTS
         .iter()
         .find(|shortcut| shortcut.action == action)
-        .and_then(|shortcut| platform_shortcut_keys(shortcut.help.keys, cfg!(target_os = "macos")))
+        .and_then(|shortcut| platform_shortcut_keys(shortcut.help.keys, uses_mac_shortcuts()))
         .expect("runtime shortcut action must be registered for this platform")
 }
 
@@ -572,13 +576,13 @@ mod tests {
                 RuntimeShortcutAction::FocusSearch,
             ),
             (
-                egui::Key::P,
-                command_shift_modifiers(),
+                egui::Key::K,
+                command_modifiers(),
                 RuntimeShortcutAction::ToggleCommandPalette,
             ),
             (
-                egui::Key::K,
-                command_modifiers(),
+                egui::Key::P,
+                command_shift_modifiers(),
                 RuntimeShortcutAction::ToggleCommandPaletteLegacy,
             ),
             (
