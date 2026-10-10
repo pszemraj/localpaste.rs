@@ -1,6 +1,7 @@
 //! Detached diff modal rendering.
 
 use super::super::*;
+use super::ViewportFitExt as _;
 use crate::app::text_coords::prefix_by_chars;
 use eframe::egui::{self, RichText};
 use localpaste_core::diff::DiffResponse;
@@ -80,8 +81,7 @@ impl LocalPasteApp {
 
         egui::Window::new("Diff")
             .open(&mut keep_open)
-            .default_width(1180.0)
-            .default_height(760.0)
+            .fit_to_viewport(ctx, egui::vec2(1180.0, 760.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Compare current paste against:");

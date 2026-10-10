@@ -1,6 +1,7 @@
 //! Detached version-history modal rendering.
 
 use super::super::*;
+use super::ViewportFitExt as _;
 use crate::app::editor::EditorLineIndex;
 use crate::app::text_coords::prefix_by_chars;
 use chrono::{DateTime, Local, Utc};
@@ -254,8 +255,7 @@ impl LocalPasteApp {
         with_muted_modal_chrome(ctx, || {
             egui::Window::new("History")
                 .open(&mut keep_open)
-                .default_width(1080.0)
-                .default_height(760.0)
+                .fit_to_viewport(ctx, egui::vec2(1080.0, 760.0))
                 .show(ctx, |ui| {
                     let reset_transition_active = self.reset_transition_active();
                     let can_go_newer = self.version_ui.history_selected_index > 0;

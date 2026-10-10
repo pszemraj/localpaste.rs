@@ -484,6 +484,7 @@ mod highlight_behaviors;
 mod highlight_repaint;
 mod history_reset;
 mod keyboard_navigation_audit;
+mod modal_viewport_fit;
 mod paste_into_editor;
 mod persistence;
 mod picker_copy;

@@ -23,6 +23,50 @@ pub(in crate::app) fn focus_visible_query(ui: &egui::Ui, id: egui::Id) -> bool {
     true
 }
 
+/// Gap kept between a viewport-fitted floating window and the viewport edges.
+const WINDOW_EDGE_MARGIN: f32 = 12.0;
+/// Smallest content area a viewport-fitted window shrinks to.
+const WINDOW_MIN_CONTENT: egui::Vec2 = egui::vec2(320.0, 200.0);
+
+/// Sizes a large floating window to its preferred size or the viewport, whichever is smaller.
+pub(in crate::app) trait ViewportFitExt: Sized {
+    /// Sizes the window to `preferred` when the viewport has room and to the viewport otherwise.
+    ///
+    /// egui caps a window at the full viewport but ignores its own frame and title
+    /// bar, and it remembers the size across frames. A preferred size taller or
+    /// wider than the app window, or one remembered from before the app window
+    /// shrank, therefore pushes the title bar's close button past the edge. A
+    /// `max_size` recomputed from the live viewport on every call shrinks the
+    /// remembered size too; scroll areas and truncating labels absorb the
+    /// difference. The window is also kept [`WINDOW_EDGE_MARGIN`] clear of the
+    /// viewport edges, including when dragged.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context providing the live viewport and window chrome.
+    /// - `preferred`: Content-area size to use when the viewport is large enough.
+    ///
+    /// # Returns
+    /// The window with its default and maximum content size set.
+    fn fit_to_viewport(self, ctx: &egui::Context, preferred: egui::Vec2) -> Self;
+}
+
+impl ViewportFitExt for egui::Window<'_> {
+    fn fit_to_viewport(self, ctx: &egui::Context, preferred: egui::Vec2) -> Self {
+        let style = ctx.style();
+        let frame = egui::Frame::window(&style);
+        // The title bar is at least `interact_size.y` tall and sits above the
+        // content area, separated from it by a rule one stroke wide.
+        let title_bar =
+            style.spacing.interact_size.y + frame.inner_margin.sum().y + frame.stroke.width;
+        let chrome = frame.total_margin().sum() + egui::vec2(0.0, title_bar);
+        let bounds = ctx.content_rect().shrink(WINDOW_EDGE_MARGIN);
+        let max_content = (bounds.size() - chrome).max(WINDOW_MIN_CONTENT);
+        self.constrain_to(bounds)
+            .default_size(preferred.min(max_content))
+            .max_size(max_content)
+    }
+}
+
 /// Softens pointer feedback for list rows so hover never reads as selection.
 ///
 /// The theme's orange hover fill suits toolbar buttons, but on a list row it
