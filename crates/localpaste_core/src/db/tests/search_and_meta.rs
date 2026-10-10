@@ -752,65 +752,97 @@ fn database_new_rebuilds_v3_document_classification() {
 }
 
 #[test]
-fn database_from_shared_rebuilds_markerless_current_meta_rows() {
-    let (db, _temp) = setup_test_db();
-    let paste = Paste::new(
-        "cargo test --package trainer\n".to_string(),
-        "shared-meta".to_string(),
-    );
-    let paste_id = paste.id.clone();
-    db.pastes.create(&paste).expect("create");
+fn database_from_shared_respects_meta_schema_marker_states() {
+    let cases = [
+        ("missing", None, true),
+        ("malformed", Some(vec![0xff]), true),
+        (
+            "older",
+            Some(bincode::serialize(&(CURRENT_PASTES_META_SCHEMA_VERSION - 1)).expect("serialize")),
+            true,
+        ),
+        (
+            "current",
+            Some(bincode::serialize(&CURRENT_PASTES_META_SCHEMA_VERSION).expect("serialize")),
+            false,
+        ),
+    ];
+    for (case, marker, should_rebuild) in cases {
+        let (db, _temp) = setup_test_db();
+        let paste = Paste::new(
+            "cargo test --package trainer\n".to_string(),
+            "shared-meta".to_string(),
+        );
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).expect("create");
 
-    let mut current_meta = PasteMeta::from(&paste);
-    current_meta.derived = crate::semantic::DerivedMeta {
-        kind: crate::semantic::PasteKind::Other,
-        handle: Some("stale-shared-handle".to_string()),
-        terms: vec!["stale-shared-term".to_string()],
-    };
-    let encoded = bincode::serialize(&current_meta).expect("serialize");
-    let write_txn = db.db.begin_write().expect("begin write");
-    {
-        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
-        let mut meta_state = write_txn
-            .open_table(PASTES_META_STATE)
-            .expect("open meta state");
-        metas
-            .insert(paste_id.as_str(), encoded.as_slice())
-            .expect("overwrite current meta");
-        let _ = meta_state
-            .remove(META_SCHEMA_VERSION_KEY)
-            .expect("remove schema marker");
+        let mut current_meta = PasteMeta::from(&paste);
+        let canonical_derived = current_meta.derived.clone();
+        assert_eq!(canonical_derived.kind, crate::semantic::PasteKind::Code);
+        assert_eq!(canonical_derived.handle.as_deref(), Some("cargo test"));
+        current_meta.derived = crate::semantic::DerivedMeta {
+            kind: crate::semantic::PasteKind::Other,
+            handle: Some("stale-shared-handle".to_string()),
+            terms: vec!["stale-shared-term".to_string()],
+        };
+        let expected_derived = if should_rebuild {
+            canonical_derived
+        } else {
+            current_meta.derived.clone()
+        };
+        let encoded = bincode::serialize(&current_meta).expect("serialize");
+        let write_txn = db.db.begin_write().expect("begin write");
+        {
+            let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
+            let mut meta_state = write_txn
+                .open_table(PASTES_META_STATE)
+                .expect("open meta state");
+            metas
+                .insert(paste_id.as_str(), encoded.as_slice())
+                .expect("overwrite current meta");
+            if let Some(marker) = marker {
+                meta_state
+                    .insert(META_SCHEMA_VERSION_KEY, marker.as_slice())
+                    .expect("set schema marker");
+            } else {
+                let _ = meta_state
+                    .remove(META_SCHEMA_VERSION_KEY)
+                    .expect("remove schema marker");
+            }
+        }
+        write_txn.commit().expect("commit");
+
+        let reopened = Database::from_shared(db.db.clone()).expect("from_shared");
+        for attempt in 0..2 {
+            if attempt > 0 {
+                reopened
+                    .pastes
+                    .ensure_meta_index_current()
+                    .expect("ensure current");
+            }
+            let meta = reopened
+                .pastes
+                .list_meta(10, None)
+                .expect("list")
+                .into_iter()
+                .find(|meta| meta.id == paste_id)
+                .expect("meta row");
+            assert_eq!(meta.derived, expected_derived, "marker state: {case}");
+
+            let read_txn = reopened.db.begin_read().expect("begin read");
+            let meta_state = read_txn
+                .open_table(PASTES_META_STATE)
+                .expect("open meta state");
+            let stored_version = meta_state
+                .get(META_SCHEMA_VERSION_KEY)
+                .expect("schema lookup")
+                .expect("schema row");
+            let stored_version: u64 =
+                bincode::deserialize(stored_version.value()).expect("decode schema version");
+            assert_eq!(
+                stored_version, CURRENT_PASTES_META_SCHEMA_VERSION,
+                "marker state: {case}"
+            );
+        }
     }
-    write_txn.commit().expect("commit");
-
-    let reopened = Database::from_shared(db.db.clone()).expect("from_shared");
-    let rebuilt_meta = reopened
-        .pastes
-        .list_meta(10, None)
-        .expect("list")
-        .into_iter()
-        .find(|meta| meta.id == paste_id)
-        .expect("meta row");
-    assert_eq!(rebuilt_meta.derived.kind, crate::semantic::PasteKind::Code);
-    assert_eq!(rebuilt_meta.derived.handle.as_deref(), Some("cargo test"));
-    assert!(
-        !rebuilt_meta
-            .derived
-            .terms
-            .iter()
-            .any(|term| term == "stale-shared-term"),
-        "from_shared must rebuild marker-less metadata before exposing shared-handle search state"
-    );
-
-    let read_txn = reopened.db.begin_read().expect("begin read");
-    let meta_state = read_txn
-        .open_table(PASTES_META_STATE)
-        .expect("open meta state");
-    let stored_version = meta_state
-        .get(META_SCHEMA_VERSION_KEY)
-        .expect("schema lookup")
-        .expect("schema row");
-    let stored_version: u64 =
-        bincode::deserialize(stored_version.value()).expect("decode schema version");
-    assert_eq!(stored_version, CURRENT_PASTES_META_SCHEMA_VERSION);
 }

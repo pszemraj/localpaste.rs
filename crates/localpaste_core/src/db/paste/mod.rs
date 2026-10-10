@@ -170,12 +170,8 @@ impl PasteDb {
     pub fn ensure_meta_index_current(&self) -> Result<(), AppError> {
         {
             let read_txn = self.db.begin_read()?;
-            let meta_state = read_txn.open_table(PASTES_META_STATE)?;
-            if let Some(value) = meta_state.get(META_SCHEMA_VERSION_KEY)? {
-                let decoded_version = bincode::deserialize::<u64>(value.value()).ok();
-                if decoded_version == Some(CURRENT_PASTES_META_SCHEMA_VERSION) {
-                    return Ok(());
-                }
+            if super::meta_index_schema_current(&read_txn)? {
+                return Ok(());
             }
         }
         self.rebuild_meta_index()
