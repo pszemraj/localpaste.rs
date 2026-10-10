@@ -3,6 +3,7 @@
 use super::{derive, PasteKind};
 use crate::detection::detect_language;
 use crate::models::paste::{Paste, PasteMeta};
+use crate::test_support::assert_derived_kinds;
 
 fn with_crlf(content: &str) -> [String; 2] {
     [content.to_owned(), content.replace('\n', "\r\n")]
@@ -203,7 +204,7 @@ fn tool_output_is_recognized_by_its_line_format() {
 
 #[test]
 fn crash_output_is_a_log_wherever_the_traceback_starts() {
-    for content in [
+    let crashes = [
         "Epoch 1/10\nloss: 0.53\nTraceback (most recent call last):\n  File \"train.py\", line 3, in <module>\n    main()\nRuntimeError: CUDA out of memory.",
         "Traceback (most recent call last):\n  File \"app.py\", line 3, in <module>\n    main()\nValueError: boom\n\nProcess finished with exit code 1",
         "$ python train.py\nTraceback (most recent call last):\n  File \"train.py\", line 3, in <module>\n    main()\nRuntimeError: CUDA out of memory.",
@@ -217,28 +218,22 @@ fn crash_output_is_a_log_wherever_the_traceback_starts() {
         "make: *** [Makefile:5: run] Segmentation fault (core dumped)",
         "Epoch 3/10\nKilled",
         "$ cargo run\nexit status 101",
-    ] {
-        for content in with_crlf(content) {
-            for language in [None, Some("text"), Some("python"), Some("shell")] {
-                assert_eq!(
-                    derive(&content, language).kind,
-                    PasteKind::Log,
-                    "{content}: {language:?}"
-                );
-            }
-            assert_eq!(
-                detect_language(&content).as_deref(),
-                Some("log"),
-                "{content}"
-            );
-            assert_eq!(stored_kind(&content), PasteKind::Log, "{content}");
-        }
+    ];
+    assert_derived_kinds(
+        &crashes,
+        &[None, Some("text"), Some("python"), Some("shell")],
+        PasteKind::Log,
+    );
+    for content in crashes.iter().flat_map(|content| with_crlf(content)) {
+        let paste = Paste::new(content.clone(), "crash".into());
+        assert_eq!(paste.language.as_deref(), Some("log"), "{content}");
+        assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Log);
     }
 }
 
 #[test]
 fn notes_about_crashes_stay_documents() {
-    for content in [
+    let notes = [
         "The traceback showed a segmentation fault in the parser, so we rolled back.",
         "Note to self: check for a segmentation fault before the release.",
         "Killed the old worker and restarted the queue.",
@@ -246,21 +241,11 @@ fn notes_about_crashes_stay_documents() {
         "Getting this error when I run train.py:\n\nTraceback (most recent call last):\n  File \"train.py\", line 3, in <module>\n    main()\nRuntimeError: CUDA out of memory.\n\nAny idea how to fix it?",
         "We hit a segfault again today.\nSegmentation fault (core dumped)\nAny ideas?",
         "Traceback (most recent call last):\n  File \"app.py\", line 3, in <module>\n    main()\nValueError: boom\nThis happens every time the batch size exceeds the limit.",
-    ] {
-        for content in with_crlf(content) {
-            assert!(!super::logs::looks_like_runtime_log(&content), "{content}");
-            assert_ne!(
-                detect_language(&content).as_deref(),
-                Some("log"),
-                "{content}"
-            );
-            for language in [None, Some("text")] {
-                assert_eq!(
-                    derive(&content, language).kind,
-                    PasteKind::Document,
-                    "{content}: {language:?}"
-                );
-            }
-        }
-    }
+    ];
+    assert_derived_kinds(&notes, &[None, Some("text")], PasteKind::Document);
+    assert!(notes
+        .iter()
+        .flat_map(|note| with_crlf(note))
+        .all(|note| !super::logs::looks_like_runtime_log(&note)
+            && detect_language(&note).as_deref() != Some("log")));
 }

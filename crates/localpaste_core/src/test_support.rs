@@ -102,3 +102,31 @@ pub(crate) fn assert_folder_counts_match_canonical(db: &Database) {
         canonical_counts.keys().collect::<Vec<_>>()
     );
 }
+
+/// Assert the derived kind of each body, with LF and with CRLF line endings,
+/// under each stored language label.
+///
+/// # Arguments
+/// - `contents`: Paste bodies written with LF line endings.
+/// - `languages`: Stored language labels to derive each body under.
+/// - `kind`: The kind every derivation must produce.
+///
+/// # Panics
+/// Panics with the body and label when a derived kind differs from `kind`.
+pub(crate) fn assert_derived_kinds(
+    contents: &[&str],
+    languages: &[Option<&str>],
+    kind: crate::semantic::PasteKind,
+) {
+    for content in contents {
+        for content in [content.to_string(), content.replace('\n', "\r\n")] {
+            for language in languages {
+                assert_eq!(
+                    crate::semantic::derive(&content, *language).kind,
+                    kind,
+                    "{content:?}: {language:?}"
+                );
+            }
+        }
+    }
+}

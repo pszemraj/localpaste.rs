@@ -3,6 +3,7 @@
 use super::commands::{extract_command_handle, looks_like_shell_command_sequence};
 use super::{derive, PasteKind};
 use crate::models::paste::{Paste, PasteMeta};
+use crate::test_support::assert_derived_kinds;
 
 fn with_crlf(content: &str) -> [String; 2] {
     [content.to_owned(), content.replace('\n', "\r\n")]
@@ -270,7 +271,7 @@ fn scripts_with_status_messages_ranges_and_control_flow_stay_commands() {
 
 #[test]
 fn sentences_with_echo_or_control_words_stay_documents() {
-    for content in [
+    let notes = [
         "echo I think the deploy went fine",
         "echo chamber is what twitter's become",
         "cd app\necho chamber is a common expression",
@@ -281,19 +282,12 @@ fn sentences_with_echo_or_control_words_stay_documents() {
         "git pull\nThen tell the team the release notes are ready.",
         // Documented trade-off: unprompted output with a sentence reads as a note.
         "git status\nOn branch main\nnothing to commit, working tree clean",
-    ] {
-        for content in with_crlf(content) {
-            assert_eq!(extract_command_handle(&content), None, "{content}");
-            assert!(!looks_like_shell_command_sequence(&content), "{content}");
-            for language in [None, Some("text")] {
-                assert_eq!(
-                    derive(&content, language).kind,
-                    PasteKind::Document,
-                    "{content}: {language:?}"
-                );
-            }
-        }
+    ];
+    for note in notes.iter().flat_map(|note| with_crlf(note)) {
+        assert_eq!(extract_command_handle(&note), None, "{note}");
+        assert!(!looks_like_shell_command_sequence(&note), "{note}");
     }
+    assert_derived_kinds(&notes, &[None, Some("text")], PasteKind::Document);
 }
 
 #[test]
