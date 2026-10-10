@@ -177,12 +177,12 @@ Virtual-editor highlight behavior is async and staged to avoid mid-burst visual 
 
 Flow:
 
-1. UI sends a highlight request keyed by paste/context (`paste_id`, `revision`, `text_len`, `language_hint`, `theme_key`).
+1. UI sends a highlight request keyed by buffer lifetime and paste/context (`buffer_epoch`, `paste_id`, `revision`, `text_len`, `language_hint`, `theme_key`).
 2. Worker coalesces queued requests and computes either:
    - full render (`HighlightRender`), or
    - changed-range patch (`HighlightPatch`) when the UI base snapshot matches the worker cache base.
    Edit hints carry UTF-8 byte positions from the editor buffer; the worker counts preceding LF bytes off the UI thread to find the parser line. This avoids mixing Rope's CR/Unicode line indices with syntax-parser LF lines. A single-edit pass checks every touched line before reusing a matching tail; unchanged interior lines do not end a multiline edit. Other edits use hash alignment, retaining original line indices so deleting a line cannot reuse a suffix with the deleted line's parser state.
-3. UI merges matching patches into staged/current highlight state.
+3. UI rejects replies from a replaced buffer before changing pending or staged state, including when the same paste reloads with the same revision and length. Matching patches merge into staged/current highlight state.
 4. Staged highlight applies:
    - immediately only when there is no current render,
    - otherwise only after idle threshold.
