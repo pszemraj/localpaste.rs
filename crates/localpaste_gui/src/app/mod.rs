@@ -124,6 +124,9 @@ pub(crate) struct LocalPasteApp {
     sidebar_revealed_id: Option<String>,
     /// Filters that produced the current `pastes` rows; `None` until rows are first built.
     sidebar_rows_filter: Option<SidebarRowsFilter>,
+    /// When `pastes` was last rebuilt; sidebar cluster gaps measure ages against it, so they
+    /// change only when the rows are rebuilt, never from one frame to the next.
+    sidebar_rows_built_at: chrono::DateTime<chrono::Utc>,
     /// Rows filter the sidebar last revealed for; a different `sidebar_rows_filter` reveals once.
     sidebar_revealed_filter: Option<SidebarRowsFilter>,
     pending_picker_open: Option<PendingPickerOpen>,

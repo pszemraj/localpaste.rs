@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod clusters;
+
 /// Smart-filter chip labels, grouped by the row each renders on.
 const FILTER_ROWS: [&[&str]; 2] = [
     &["All", "Today", "This Week", "Recent (30d)"],
