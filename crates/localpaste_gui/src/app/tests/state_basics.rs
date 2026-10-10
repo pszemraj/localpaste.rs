@@ -813,6 +813,10 @@ fn regaining_window_focus_refreshes_the_list_after_a_debounce() {
             .filter(|cmd| matches!(cmd, CoreCmd::ListPastes { .. }))
             .count()
     };
+    // A refresh stamped ahead of the clock counts as just now for every frame
+    // below, however long building the harness or rendering a frame takes.
+    let just_refreshed = || Instant::now() + Duration::from_secs(3600);
+    harness.app.last_refresh_at = just_refreshed();
     run_full_update(&mut harness.app, &ctx, vec![]);
     let _ = list_refreshes(&harness);
 
@@ -837,8 +841,14 @@ fn regaining_window_focus_refreshes_the_list_after_a_debounce() {
         egui::Event::WindowFocused(false),
         egui::Event::WindowFocused(true),
     ];
+    let before_refresh = Instant::now();
     run_full_update(&mut harness.app, &ctx, flap.clone());
     assert_eq!(list_refreshes(&harness), 1);
+    assert!(
+        harness.app.last_refresh_at >= before_refresh,
+        "the refresh restarts the debounce"
+    );
+    harness.app.last_refresh_at = just_refreshed();
     run_full_update(&mut harness.app, &ctx, flap);
     assert_eq!(list_refreshes(&harness), 0, "debounced");
 }

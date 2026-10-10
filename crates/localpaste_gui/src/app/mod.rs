@@ -814,7 +814,8 @@ impl eframe::App for LocalPasteApp {
         self.maybe_dispatch_palette_search();
         self.maybe_dispatch_search();
         self.maybe_autosave();
-        let since_refresh = self.last_refresh_at.elapsed();
+        // Saturates if the stamp is ahead of the clock instead of panicking.
+        let since_refresh = Instant::now().saturating_duration_since(self.last_refresh_at);
         let regained_focus = last_window_focus(ctx) == Some(true);
         if (since_refresh >= EXTERNAL_REFRESH_INTERVAL
             || (regained_focus && since_refresh >= FOCUS_REFRESH_DEBOUNCE))
