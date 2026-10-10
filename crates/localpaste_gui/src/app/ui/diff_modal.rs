@@ -11,7 +11,8 @@ use std::sync::Arc;
 pub(crate) const MAX_INLINE_DIFF_BYTES: usize = MAX_DIFF_INPUT_BYTES;
 /// Maximum diff row count cached/rendered inline before preview is summarized.
 pub(crate) const MAX_INLINE_DIFF_LINES: usize = 20_000;
-const DIFF_MODAL_HEIGHT: f32 = 360.0;
+/// Height cap shared by the candidate list and the line diff so the panes line up.
+const DIFF_PANE_MAX_HEIGHT: f32 = 640.0;
 
 /// Cached inline diff preview state for the detached diff modal.
 ///
@@ -108,7 +109,7 @@ impl LocalPasteApp {
 
                     egui::ScrollArea::vertical()
                         .id_salt("diff_candidates")
-                        .max_height(640.0)
+                        .max_height(DIFF_PANE_MAX_HEIGHT)
                         .show(left, |ui| {
                             for item in self.diff_candidates() {
                                 let selected_row = self.version_ui.diff_target_id.as_deref()
@@ -202,7 +203,7 @@ impl LocalPasteApp {
                                         right.text_style_height(&egui::TextStyle::Monospace).max(1.0);
                                     egui::ScrollArea::vertical()
                                         .id_salt("diff_preview")
-                                        .max_height(DIFF_MODAL_HEIGHT)
+                                        .max_height(DIFF_PANE_MAX_HEIGHT)
                                         .auto_shrink([false, false])
                                         .show_rows(right, row_height, diff_lines.len(), |ui, range| {
                                             ui.set_min_width(ui.available_width());
@@ -215,8 +216,8 @@ impl LocalPasteApp {
                                                 };
                                                 let render_line =
                                                     prefix_by_chars(line, MAX_RENDER_CHARS_PER_LINE);
-                                                ui.add_sized(
-                                                    [ui.available_width(), row_height],
+                                                // `add_sized` would center each line and lose its indentation.
+                                                ui.add(
                                                     egui::Label::new(
                                                         RichText::new(render_line)
                                                             .monospace()

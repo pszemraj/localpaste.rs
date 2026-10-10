@@ -147,25 +147,32 @@ fn render_large_history_preview(ui: &mut egui::Ui, text: &str, lines: &EditorLin
             for line_idx in range {
                 let line = lines.line_without_newline(text, line_idx);
                 let render_line = prefix_by_chars(line, MAX_RENDER_CHARS_PER_LINE);
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [((line_digits + 2) as f32) * row_height * 0.7, row_height],
-                        egui::Label::new(
-                            RichText::new(format!(
-                                "{:>width$}",
-                                line_idx.saturating_add(1),
-                                width = line_digits
-                            ))
-                            .monospace()
-                            .color(COLOR_TEXT_MUTED),
-                        )
-                        .truncate(),
-                    );
-                    ui.add_sized(
-                        [ui.available_width(), row_height],
-                        egui::Label::new(RichText::new(render_line).monospace()).truncate(),
-                    );
-                });
+                // Each row takes exactly `row_height`, the pitch `show_rows` scrolls by,
+                // so the last lines stay reachable.
+                let (row_rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), row_height),
+                    egui::Sense::hover(),
+                );
+                let mut row = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(row_rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                row.add_sized(
+                    [((line_digits + 2) as f32) * row_height * 0.7, row_height],
+                    egui::Label::new(
+                        RichText::new(format!(
+                            "{:>width$}",
+                            line_idx.saturating_add(1),
+                            width = line_digits
+                        ))
+                        .monospace()
+                        .color(COLOR_TEXT_MUTED),
+                    )
+                    .truncate(),
+                );
+                // `add_sized` would center each line and lose its indentation.
+                row.add(egui::Label::new(RichText::new(render_line).monospace()).truncate());
             }
         });
 }
