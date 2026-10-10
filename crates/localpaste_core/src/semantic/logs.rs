@@ -59,6 +59,13 @@ pub(crate) fn looks_like_runtime_log(content: &str) -> bool {
 /// introduce ordinary prose; colon-delimited lowercase levels remain supported
 /// unless several of them open the body without any machine token, which is a
 /// glossary, to-do list, or mapping rather than output.
+///
+/// # Arguments
+/// - `sample`: Bounded semantic sample whose first non-empty line is parsed.
+/// - `language`: Canonical stored language; a `tsv` label keeps tabbed rows as data.
+///
+/// # Returns
+/// The first line's header facts, or `None` when the body is not log-led.
 pub(super) fn leading_log_header(sample: &str, language: &str) -> Option<ParsedLogHeader> {
     let first_line = sample
         .lines()
@@ -228,7 +235,10 @@ fn leading_header_run(sample: &str) -> HeaderRun {
 /// Lowercase levels are also ordinary words (`debug the crash`, `info: desk
 /// hours`), so a run of only lowercase levels needs a yarn banner or progress
 /// step, or a machine token such as a path or version in some message.
-pub(super) fn looks_like_multiline_log(sample: &str) -> bool {
+///
+/// # Returns
+/// Whether the leading header run has two lines and is strong or corroborated.
+fn looks_like_multiline_log(sample: &str) -> bool {
     let run = leading_header_run(sample);
     run.headers >= 2 && (run.strong || run.corroborated)
 }
@@ -355,7 +365,7 @@ fn syslog_timestamp_end(bytes: &[u8], at: usize) -> Option<usize> {
 /// # Returns
 /// Whether the runtime's thread and source-location prefix appears first or
 /// follows only a recognized Cargo build/run preamble.
-pub(crate) fn looks_like_rust_panic(content: &str) -> bool {
+fn looks_like_rust_panic(content: &str) -> bool {
     for line in content.lines().take(64).map(str::trim) {
         if line.is_empty() {
             continue;

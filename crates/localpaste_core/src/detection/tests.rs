@@ -7,7 +7,7 @@ use super::looks_like_flat_config_yaml;
 use super::looks_like_yaml;
 use super::refine_magika_label;
 use crate::semantic::commands::looks_like_shell_command_sequence;
-use crate::semantic::logs::looks_like_rust_panic;
+use crate::semantic::logs::looks_like_runtime_log;
 
 #[test]
 fn review_regression_commented_python_and_unlabeled_fences() {
@@ -762,7 +762,7 @@ fn json_lines_keep_format_identity_through_detection_and_export() {
 #[test]
 fn panic_detection_requires_a_leading_runtime_header() {
     let panic = "thread 'main' panicked at src/main.rs:12:5";
-    assert!(looks_like_rust_panic(&format!("\n  {panic}\n")));
+    assert!(looks_like_runtime_log(&format!("\n  {panic}\n")));
     assert_eq!(detect_language(panic).as_deref(), Some("log"));
     for content in [
         format!(
@@ -771,7 +771,7 @@ fn panic_detection_requires_a_leading_runtime_header() {
         format!("$cargo run\n{panic}\n"),
         format!("$ cargo run --quiet\n{panic}\n"),
     ] {
-        assert!(looks_like_rust_panic(&content), "{content}");
+        assert!(looks_like_runtime_log(&content), "{content}");
         assert_eq!(detect_language(&content).as_deref(), Some("log"));
         assert_eq!(
             crate::semantic::derive(&content, Some("text")).kind,
@@ -792,7 +792,7 @@ fn panic_detection_requires_a_leading_runtime_header() {
             "rust",
         ),
     ] {
-        assert!(!looks_like_rust_panic(&content));
+        assert!(!looks_like_runtime_log(&content));
         assert_eq!(detect_language(&content).as_deref(), Some(language));
         assert_eq!(
             crate::semantic::derive(&content, Some(language)).kind,
@@ -808,7 +808,7 @@ fn panic_detection_requires_a_leading_runtime_header() {
         format!("Running errands before lunch\n{panic}\n"),
         format!("Compiling notes for the meeting\n{panic}\n"),
     ] {
-        assert!(!looks_like_rust_panic(&prose), "{prose}");
+        assert!(!looks_like_runtime_log(&prose), "{prose}");
     }
 }
 
