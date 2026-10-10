@@ -268,3 +268,106 @@ fn delete_selected_chord_waits_while_a_popup_is_open() {
         }
     });
 }
+
+/// A keyboard shortcut that opens a surface with its own text field.
+#[derive(Clone, Copy, Debug)]
+enum Surface {
+    Palette,
+    Picker,
+    Help,
+    SidebarSearch,
+}
+
+impl Surface {
+    /// The surface's opening key and modifiers.
+    fn chord(self) -> (egui::Key, egui::Modifiers) {
+        let command = primary_command_modifiers();
+        match self {
+            Self::Palette => (egui::Key::K, command),
+            Self::Picker => (
+                egui::Key::K,
+                egui::Modifiers {
+                    shift: true,
+                    ..command
+                },
+            ),
+            Self::Help => (egui::Key::F1, egui::Modifiers::NONE),
+            Self::SidebarSearch => (egui::Key::F, command),
+        }
+    }
+
+    /// The text the surface's field holds.
+    fn query(self, app: &LocalPasteApp) -> &str {
+        match self {
+            Self::Palette => &app.command_palette_query,
+            Self::Picker => &app.paste_picker_query,
+            Self::Help => &app.shortcut_help_query,
+            Self::SidebarSearch => &app.search_query,
+        }
+    }
+}
+
+#[test]
+fn a_surface_opened_over_a_language_popup_takes_the_typing() {
+    for surface in [
+        Surface::Palette,
+        Surface::Picker,
+        Surface::Help,
+        Surface::SidebarSearch,
+    ] {
+        for combo in [LanguageCombo::Toolbar, LanguageCombo::Drawer] {
+            let mut harness = make_app();
+            let app = &mut harness.app;
+            let ctx = egui::Context::default();
+            let _ = open_combo_showing(app, &ctx, combo, "Auto");
+
+            let (key, modifiers) = surface.chord();
+            let _ = run_full_update_with_input(
+                app,
+                &ctx,
+                egui::RawInput {
+                    events: vec![key_event(key, modifiers)],
+                    modifiers,
+                    ..input_at(LANGUAGE_COMBO_FRAME_WIDTH)
+                },
+            );
+            let _ = render_at(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH);
+            assert!(
+                !egui::Popup::is_any_open(&ctx),
+                "{surface:?} closes the {combo:?} popup"
+            );
+
+            let _ = type_keys(app, &ctx, "py", TYPEAHEAD_PAUSE);
+            assert_eq!(surface.query(app), "py", "{surface:?} over {combo:?}");
+            assert_eq!(
+                app.edit_language, None,
+                "{surface:?} typing reached the {combo:?} language"
+            );
+            assert!(!app.edit_language_is_manual, "{surface:?} over {combo:?}");
+            assert!(!app.metadata_dirty, "{surface:?} over {combo:?}");
+        }
+    }
+}
+
+#[test]
+fn a_keyboard_opened_language_popup_keeps_its_type_ahead() {
+    let mut harness = make_app();
+    let app = &mut harness.app;
+    let ctx = egui::Context::default();
+    click_field(app, &ctx, TITLE_INPUT_ID);
+    let _ = press_key(app, &ctx, egui::Key::Tab);
+    let combo = ctx
+        .memory(|memory| memory.focused())
+        .expect("Tab focuses the language combo");
+    let _ = press_key(app, &ctx, egui::Key::Space);
+    assert!(
+        egui::ComboBox::is_open(&ctx, combo),
+        "Space opens the popup"
+    );
+
+    // The focused combo button leaves typing to its popup.
+    let _ = type_keys(app, &ctx, "py", TYPEAHEAD_PAUSE);
+    assert!(egui::ComboBox::is_open(&ctx, combo));
+    assert_eq!(app.edit_language.as_deref(), Some("python"));
+    assert_eq!(app.edit_name, "Alpha");
+}

@@ -246,6 +246,16 @@ enum LanguagePopupEvent {
     Cancelled,
 }
 
+/// Whether a text field or the editor holds keyboard focus, and so owns typing.
+///
+/// A focused combo button or popup option does not count: those leave typing
+/// to the open popup.
+fn text_input_focused(ctx: &egui::Context) -> bool {
+    ctx.memory(|memory| memory.focused()).is_some_and(|id| {
+        id == egui::Id::new(VIRTUAL_EDITOR_ID) || egui::TextEdit::load_state(ctx, id).is_some()
+    })
+}
+
 /// Renders a language combo box with open-only type-ahead selection.
 ///
 /// While the popup is open, typing selects an option as described on
@@ -253,7 +263,10 @@ enum LanguagePopupEvent {
 /// is visible. Enter closes the popup and keeps the choice. Escape closes it
 /// and reports [`LanguagePopupEvent::Cancelled`] so the caller can restore the
 /// choice from when it opened. Both keys are consumed, so no later handler in
-/// the frame also acts on them.
+/// the frame also acts on them. When a text field or the editor takes focus,
+/// such as the query of a palette opened by its shortcut, the popup closes and
+/// keeps the choice like a click outside, so that input receives the typing,
+/// Enter, and Escape instead.
 ///
 /// # Arguments
 /// - `ui`: Parent UI receiving the combo box.
@@ -270,7 +283,9 @@ fn render_language_choice_combo(
     language_choice: &mut String,
 ) -> Option<LanguagePopupEvent> {
     let combo_id = language_combo_id(ui, combo_id_salt);
-    let popup_open = egui::ComboBox::is_open(ui.ctx(), combo_id);
+    let was_open = egui::ComboBox::is_open(ui.ctx(), combo_id);
+    let yielded = was_open && text_input_focused(ui.ctx());
+    let popup_open = was_open && !yielded;
     let (cancel, accept) = if popup_open {
         ui.input_mut(|input| {
             (
@@ -292,7 +307,7 @@ fn render_language_choice_combo(
         combo = combo.width(width);
     }
     combo.show_ui(ui, |ui| {
-        if cancel || accept {
+        if cancel || accept || yielded {
             ui.close();
         }
         for (value, label) in language_options() {
@@ -304,7 +319,7 @@ fn render_language_choice_combo(
     });
     if cancel {
         Some(LanguagePopupEvent::Cancelled)
-    } else if !popup_open && egui::ComboBox::is_open(ui.ctx(), combo_id) {
+    } else if !was_open && egui::ComboBox::is_open(ui.ctx(), combo_id) {
         Some(LanguagePopupEvent::Opened)
     } else {
         None
