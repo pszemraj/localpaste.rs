@@ -35,7 +35,14 @@ func usage() -> Never {
           nav_probe_macos_driver check-accessibility [--prompt]
           nav_probe_macos_driver exists --pid PID
           nav_probe_macos_driver activate --pid PID
-          nav_probe_macos_driver key --pid PID --key-code CODE [--modifier NAME ...] [--modifiers CSV]
+          nav_probe_macos_driver frontmost --pid PID
+          nav_probe_macos_driver key --pid PID --key-code CODE [--modifier NAME ...] [--modifiers CSV] [--key-delay-ms MS]
+          nav_probe_macos_driver type --pid PID --text TEXT
+          nav_probe_macos_driver snapshot --pid PID
+          nav_probe_macos_driver click --pid PID --label LABEL [--role AXTextField]
+          nav_probe_macos_driver clipboard-save --path PRIVATE_FILE
+          nav_probe_macos_driver clipboard-set|clipboard-check --text TEXT
+          nav_probe_macos_driver clipboard-restore --path PRIVATE_FILE --text EXPECTED_CURRENT_TEXT
         """
     )
     exit(2)
@@ -173,16 +180,16 @@ func flagSet(_ modifiers: [ModifierSpec]) -> CGEventFlags {
     }
 }
 
-func postKey(source: CGEventSource, keyCode: CGKeyCode, keyDown: Bool, flags: CGEventFlags) throws {
+func postKey(source: CGEventSource, keyCode: CGKeyCode, keyDown: Bool, flags: CGEventFlags, delayMs: Int = 20) throws {
     guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown) else {
         throw DriverError(description: "failed to create CGEvent for key code \(keyCode)")
     }
     event.flags = flags
     event.post(tap: .cghidEventTap)
-    usleep(20_000)
+    usleep(useconds_t(delayMs * 1000))
 }
 
-func postChord(pid: pid_t, keyCode: CGKeyCode, modifiers: [ModifierSpec]) throws {
+func postChord(pid: pid_t, keyCode: CGKeyCode, modifiers: [ModifierSpec], delayMs: Int = 20) throws {
     try requireAccessibility()
     try activate(pid: pid)
 
@@ -193,16 +200,16 @@ func postChord(pid: pid_t, keyCode: CGKeyCode, modifiers: [ModifierSpec]) throws
     var currentFlags = CGEventFlags(rawValue: 0)
     for modifier in modifiers {
         currentFlags = CGEventFlags(rawValue: currentFlags.rawValue | modifier.flag.rawValue)
-        try postKey(source: source, keyCode: modifier.keyCode, keyDown: true, flags: currentFlags)
+        try postKey(source: source, keyCode: modifier.keyCode, keyDown: true, flags: currentFlags, delayMs: delayMs)
     }
 
     let fullFlags = flagSet(modifiers)
-    try postKey(source: source, keyCode: keyCode, keyDown: true, flags: fullFlags)
-    try postKey(source: source, keyCode: keyCode, keyDown: false, flags: fullFlags)
+    try postKey(source: source, keyCode: keyCode, keyDown: true, flags: fullFlags, delayMs: delayMs)
+    try postKey(source: source, keyCode: keyCode, keyDown: false, flags: fullFlags, delayMs: delayMs)
 
     for modifier in modifiers.reversed() {
-        try postKey(source: source, keyCode: modifier.keyCode, keyDown: false, flags: currentFlags)
         currentFlags = CGEventFlags(rawValue: currentFlags.rawValue & ~modifier.flag.rawValue)
+        try postKey(source: source, keyCode: modifier.keyCode, keyDown: false, flags: currentFlags, delayMs: delayMs)
     }
 }
 
@@ -211,6 +218,11 @@ struct ParsedArgs {
     var pid: pid_t?
     var keyCode: CGKeyCode?
     var modifiers: [String] = []
+    var delayMs = 20
+    var text = ""
+    var path = ""
+    var label = ""
+    var role = "AXTextField"
 }
 
 func parseArgs(_ args: [String]) throws -> ParsedArgs {
@@ -250,6 +262,23 @@ func parseArgs(_ args: [String]) throws -> ParsedArgs {
                     .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
                     .filter { !$0.isEmpty }
             )
+            index += 2
+        case "--key-delay-ms", "--text", "--path", "--label", "--role":
+            guard index + 1 < args.count else {
+                throw DriverError(description: "\(arg) requires a value")
+            }
+            let value = args[index + 1]
+            switch arg {
+            case "--key-delay-ms":
+                parsed.delayMs = try parseInt(value, label: arg)
+                guard (0...1000).contains(parsed.delayMs) else {
+                    throw DriverError(description: "--key-delay-ms must be between 0 and 1000")
+                }
+            case "--text": parsed.text = value
+            case "--path": parsed.path = value
+            case "--label": parsed.label = value
+            default: parsed.role = value
+            }
             index += 2
         case "-h", "--help":
             usage()
@@ -292,6 +321,110 @@ func requireKeyCode(_ parsed: ParsedArgs) throws -> CGKeyCode {
     return keyCode
 }
 
+// Keep all representations private, including non-text clipboard items.
+struct ClipboardRepresentation: Codable, Equatable {
+    let type: String
+    let data: Data
+}
+typealias ClipboardSnapshot = [[ClipboardRepresentation]]
+
+func clipboardSnapshot() -> ClipboardSnapshot {
+    (NSPasteboard.general.pasteboardItems ?? []).map { item in
+        item.types.compactMap { type in
+            item.data(forType: type).map { ClipboardRepresentation(type: type.rawValue, data: $0) }
+        }
+    }
+}
+
+func clipboardFile(_ parsed: ParsedArgs) throws -> URL {
+    guard !parsed.path.isEmpty else { throw DriverError(description: "--path is required") }
+    return URL(fileURLWithPath: parsed.path)
+}
+
+func axValue(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
+    return value
+}
+
+func axElements(_ pid: pid_t) -> [AXUIElement] {
+    var elements: [AXUIElement] = []
+    func visit(_ element: AXUIElement, depth: Int) {
+        guard depth < 40, elements.count < 4000 else { return }
+        elements.append(element)
+        for child in axValue(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
+            visit(child, depth: depth + 1)
+        }
+    }
+    let app = AXUIElementCreateApplication(pid)
+    for window in axValue(app, kAXWindowsAttribute) as? [AXUIElement] ?? [] {
+        if (axValue(window, kAXTitleAttribute) as? String) == "LocalPaste.rs" {
+            visit(window, depth: 0)
+        }
+    }
+    return elements
+}
+
+func snapshotAX(_ pid: pid_t) throws {
+    try requireAccessibility()
+    let rows: [[String: Any]] = axElements(pid).map { element in
+        var row: [String: Any] = [:]
+        for (name, attribute) in [("role", kAXRoleAttribute), ("title", kAXTitleAttribute),
+                                  ("value", kAXValueAttribute), ("description", kAXDescriptionAttribute)] {
+            if let value = axValue(element, attribute) as? String { row[name] = value }
+        }
+        row["focused"] = (axValue(element, kAXFocusedAttribute) as? Bool) ?? false
+        return row
+    }
+    let data = try JSONSerialization.data(withJSONObject: rows, options: [.sortedKeys])
+    print(String(decoding: data, as: UTF8.self))
+}
+
+func clickAX(_ pid: pid_t, label: String, role: String) throws {
+    try requireAccessibility()
+    try activate(pid: pid)
+    let matches = axElements(pid).filter { element in
+        (axValue(element, kAXRoleAttribute) as? String) == role &&
+        [kAXTitleAttribute, kAXValueAttribute, kAXDescriptionAttribute].contains { attribute in
+            (axValue(element, attribute) as? String) == label
+        }
+    }
+    guard matches.count == 1, let element = matches.first,
+          let positionValue = axValue(element, kAXPositionAttribute),
+          let sizeValue = axValue(element, kAXSizeAttribute) else {
+        throw DriverError(description: "expected one \(role) labeled \(label); found \(matches.count)")
+    }
+    var position = CGPoint.zero
+    var size = CGSize.zero
+    AXValueGetValue(positionValue as! AXValue, .cgPoint, &position)
+    AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+    let point = CGPoint(x: position.x + size.width / 2, y: position.y + size.height / 2)
+    for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+        guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else {
+            throw DriverError(description: "failed to create click")
+        }
+        event.post(tap: .cghidEventTap)
+        usleep(20_000)
+    }
+}
+
+func typeText(_ pid: pid_t, text: String) throws {
+    try requireAccessibility()
+    try activate(pid: pid)
+    for character in text {
+        let units = Array(String(character).utf16)
+        for down in [true, false] {
+            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down) else {
+                throw DriverError(description: "failed to create text event")
+            }
+            event.flags = []
+            event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: units)
+            event.post(tap: .cghidEventTap)
+        }
+        usleep(5_000)
+    }
+}
+
 let argv = Array(CommandLine.arguments.dropFirst())
 guard let command = argv.first else {
     usage()
@@ -311,12 +444,54 @@ do {
         _ = try runningApplication(pid: try requirePid(parsed))
     case "activate":
         try activate(pid: try requirePid(parsed))
+    case "frontmost":
+        guard frontmostApplicationPid() == (try requirePid(parsed)) else {
+            throw DriverError(description: "unexpected foreground application")
+        }
     case "key":
         try postChord(
             pid: try requirePid(parsed),
             keyCode: try requireKeyCode(parsed),
-            modifiers: try normalizeModifiers(parsed.modifiers)
+            modifiers: try normalizeModifiers(parsed.modifiers),
+            delayMs: parsed.delayMs
         )
+    case "type": try typeText(try requirePid(parsed), text: parsed.text)
+    case "snapshot": try snapshotAX(try requirePid(parsed))
+    case "click": try clickAX(try requirePid(parsed), label: parsed.label, role: parsed.role)
+    case "clipboard-save":
+        let url = try clipboardFile(parsed)
+        try JSONEncoder().encode(clipboardSnapshot()).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    case "clipboard-set":
+        NSPasteboard.general.clearContents()
+        guard NSPasteboard.general.setString(parsed.text, forType: .string) else {
+            throw DriverError(description: "failed to set clipboard")
+        }
+    case "clipboard-check":
+        guard NSPasteboard.general.string(forType: .string) == parsed.text else {
+            throw DriverError(description: "clipboard does not match the synthetic fixture")
+        }
+    case "clipboard-restore":
+        // Never replace clipboard activity that occurred outside the test.
+        guard NSPasteboard.general.string(forType: .string) == parsed.text else {
+            throw DriverError(description: "clipboard changed outside the test; original backup retained")
+        }
+        let url = try clipboardFile(parsed)
+        let saved = try JSONDecoder().decode(ClipboardSnapshot.self, from: Data(contentsOf: url))
+        let items = saved.map { representations -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for entry in representations {
+                item.setData(entry.data, forType: NSPasteboard.PasteboardType(entry.type))
+            }
+            return item
+        }
+        NSPasteboard.general.clearContents()
+        if !items.isEmpty { NSPasteboard.general.writeObjects(items) }
+        guard clipboardSnapshot() == saved else {
+            throw DriverError(description: "clipboard restoration verification failed")
+        }
+        try FileManager.default.removeItem(at: url)
+        print("clipboard_restored=true")
     case "-h", "--help":
         usage()
     default:
