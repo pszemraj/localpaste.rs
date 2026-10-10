@@ -6,6 +6,7 @@
 //! move to a second row instead of overlapping the metadata.
 
 use super::super::*;
+use super::properties_drawer::MetadataTextField;
 use crate::app::util::parse_tags_csv;
 use eframe::egui;
 
@@ -200,28 +201,23 @@ impl LocalPasteApp {
         width: f32,
         requests: &mut ToolbarRequests,
     ) {
-        let name_response = ui.add(
-            egui::TextEdit::singleline(&mut self.edit_name)
-                .id(egui::Id::new(TITLE_INPUT_ID))
-                .font(egui::TextStyle::Button)
-                .desired_width(width)
-                .margin(TITLE_MARGIN)
-                .muted_hint("Untitled paste"),
+        let (name_response, cancelled) = self.render_metadata_text_field(
+            ui,
+            egui::Id::new(TITLE_INPUT_ID),
+            MetadataTextField::Name,
+            |edit| {
+                edit.font(egui::TextStyle::Button)
+                    .desired_width(width)
+                    .margin(TITLE_MARGIN)
+                    .muted_hint("Untitled paste")
+            },
         );
-        if name_response.changed() {
-            self.metadata_dirty = true;
-        }
-        if name_response.lost_focus() && self.metadata_dirty {
+        // Escape also takes focus away, but it cancels the rename instead of applying it.
+        if name_response.lost_focus() && self.metadata_dirty && !cancelled {
             requests.apply_metadata = true;
         }
         if name_response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
             requests.apply_metadata = true;
-        }
-        if name_response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
-            if let Some(paste) = self.selected_paste.as_ref() {
-                self.edit_name = paste.name.clone();
-                self.refresh_metadata_dirty();
-            }
         }
     }
 

@@ -322,6 +322,24 @@ struct LanguageDraft {
     is_manual: bool,
 }
 
+/// A metadata draft string edited in a single-line text field.
+#[derive(Clone, Copy)]
+pub(super) enum MetadataTextField {
+    /// `edit_name`, edited by the toolbar title and the drawer's Name field.
+    Name,
+    /// `edit_tags` as comma-separated text, edited by the drawer's Tags field.
+    Tags,
+}
+
+/// A metadata text field's draft when the field gained focus, kept so Escape can restore it.
+#[derive(Clone, Default)]
+struct FieldDraft {
+    /// Paste the draft belongs to; a draft captured before another paste loaded is not restored.
+    paste_id: Option<String>,
+    /// The field's text when it gained focus.
+    value: String,
+}
+
 impl LocalPasteApp {
     /// Recomputes `metadata_dirty` from whether the metadata draft differs from the loaded paste.
     pub(super) fn refresh_metadata_dirty(&mut self) {
@@ -331,6 +349,78 @@ impl LocalPasteApp {
                 || self.edit_language_is_manual != paste.language_is_manual
                 || self.edit_tags != paste.tags.join(", ");
         }
+    }
+
+    /// The draft string `field` edits.
+    fn metadata_text_mut(&mut self, field: MetadataTextField) -> &mut String {
+        match field {
+            MetadataTextField::Name => &mut self.edit_name,
+            MetadataTextField::Tags => &mut self.edit_tags,
+        }
+    }
+
+    /// The loaded paste's value of `field`, in the form the draft holds it.
+    fn saved_metadata_text(&self, field: MetadataTextField) -> Option<String> {
+        let paste = self.selected_paste.as_ref()?;
+        Some(match field {
+            MetadataTextField::Name => paste.name.clone(),
+            MetadataTextField::Tags => paste.tags.join(", "),
+        })
+    }
+
+    /// Renders a single-line text field bound to a metadata draft string.
+    ///
+    /// Typing dirties metadata. Escape cancels the edit made since the field
+    /// gained focus: the draft returns to its text from that moment, or to the
+    /// loaded paste's value when another paste has loaded since, and
+    /// `metadata_dirty` is recomputed against the loaded paste, so edits made
+    /// elsewhere stay staged. egui releases focus on Escape before widgets
+    /// render, so the field detects the key by having held focus last frame and
+    /// consumes it.
+    ///
+    /// # Arguments
+    /// - `ui`: Parent UI receiving the field.
+    /// - `id`: Widget id of the text field.
+    /// - `field`: Draft string the field edits.
+    /// - `style`: Applies the field's width, font, and placeholder.
+    ///
+    /// # Returns
+    /// The field's response, and whether Escape cancelled its edit this frame.
+    pub(super) fn render_metadata_text_field(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: egui::Id,
+        field: MetadataTextField,
+        style: impl for<'t> FnOnce(egui::TextEdit<'t>) -> egui::TextEdit<'t>,
+    ) -> (egui::Response, bool) {
+        let draft_id = id.with("focus_draft");
+        let cancelled = ui.memory(|memory| memory.had_focus_last_frame(id))
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        if cancelled {
+            let restored = ui
+                .data_mut(|data| data.remove_temp::<FieldDraft>(draft_id))
+                .filter(|draft| draft.paste_id == self.selected_id)
+                .map(|draft| draft.value)
+                .or_else(|| self.saved_metadata_text(field));
+            if let Some(value) = restored {
+                *self.metadata_text_mut(field) = value;
+                self.refresh_metadata_dirty();
+            }
+        }
+        let response = ui.add(style(
+            egui::TextEdit::singleline(self.metadata_text_mut(field)).id(id),
+        ));
+        if response.gained_focus() {
+            let draft = FieldDraft {
+                paste_id: self.selected_id.clone(),
+                value: self.metadata_text_mut(field).clone(),
+            };
+            ui.data_mut(|data| data.insert_temp(draft_id, draft));
+        }
+        if response.changed() {
+            self.metadata_dirty = true;
+        }
+        (response, cancelled)
     }
 
     /// Renders a language combo bound to the metadata draft.
@@ -430,16 +520,12 @@ impl LocalPasteApp {
 
                 ui.add_enabled_ui(!background_mutation_blocked, |ui| {
                     ui.label(RichText::new("Name").small().color(COLOR_TEXT_MUTED));
-                    if ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.edit_name)
-                                .id(egui::Id::new(PROPERTIES_NAME_INPUT_ID))
-                                .desired_width(f32::INFINITY),
-                        )
-                        .changed()
-                    {
-                        self.metadata_dirty = true;
-                    }
+                    self.render_metadata_text_field(
+                        ui,
+                        egui::Id::new(PROPERTIES_NAME_INPUT_ID),
+                        MetadataTextField::Name,
+                        |edit| edit.desired_width(f32::INFINITY),
+                    );
 
                     ui.add_space(6.0);
                     ui.label(RichText::new("Language").small().color(COLOR_TEXT_MUTED));
@@ -447,17 +533,15 @@ impl LocalPasteApp {
 
                     ui.add_space(6.0);
                     ui.label(RichText::new("Tags").small().color(COLOR_TEXT_MUTED));
-                    if ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.edit_tags)
-                                .id(egui::Id::new(PROPERTIES_TAGS_INPUT_ID))
-                                .desired_width(f32::INFINITY)
-                                .muted_hint("comma,separated,tags"),
-                        )
-                        .changed()
-                    {
-                        self.metadata_dirty = true;
-                    }
+                    self.render_metadata_text_field(
+                        ui,
+                        egui::Id::new(PROPERTIES_TAGS_INPUT_ID),
+                        MetadataTextField::Tags,
+                        |edit| {
+                            edit.desired_width(f32::INFINITY)
+                                .muted_hint("comma,separated,tags")
+                        },
+                    );
                 });
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {

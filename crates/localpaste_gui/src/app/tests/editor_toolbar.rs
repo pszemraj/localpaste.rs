@@ -3,6 +3,8 @@
 use super::super::ui::editor_toolbar::MORE_MENU_LABEL;
 use super::*;
 
+mod keyboard;
+
 const ROW_ACTIONS: [&str; 6] = ["Copy", "Find", "Diff", "History", MORE_MENU_LABEL, "Delete"];
 const MENU_ACTIONS: [&str; 4] = ["Copy Link", "Duplicate", "Export", "Properties"];
 
@@ -263,7 +265,7 @@ fn type_keys(
 }
 
 /// Where each language combo renders its selected text while auto-detect is active.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum LanguageCombo {
     Toolbar,
     Drawer,
