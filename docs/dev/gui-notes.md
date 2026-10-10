@@ -135,6 +135,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - An editor-owned drag continues selection and autoscroll outside the viewport or window; foreground overlays retain their pointer ownership. Dragging the scrollbar preserves the editor selection.
 - Loading another paste resets the previous viewport to the first line before applying any search-match reveal, including when the previous paste was scrolled to its end.
 - Virtual-editor paste follows the post-paste cursor: when a multiline paste extends past the current viewport, the editor scrolls so the inserted tail/caret is visible instead of leaving the paste off-screen.
+- In a Markdown-labelled paste, pasting one HTTP(S) URL over selected text creates `[selected text](URL)` in one undoable edit. URL recognition uses the current language choice, including `md`; other languages, empty selections, and non-URL clipboard text retain ordinary paste behavior.
 - App-level shortcut dispatch, command-palette hints, and keyboard shortcut help share the runtime shortcut registry. Dispatch preserves native event order, including repeated chords. The shortcut help intentionally excludes command-palette query terms such as `diff` and `history`; those remain command-palette discoverability, not keyboard shortcuts.
 - Help lists app bindings and selected editor combinations. Basic navigation and standard select/copy/cut/undo/redo instructions are omitted.
 - F1 help uses a stable, scrollable layout with aligned native-platform key labels. Search omits empty sections, reports no matches, and returns to the first result when edited. Clear keeps search focus; Escape, F1, and Close return focus to the input that opened help. Opening a different discovery surface transfers focus to that surface instead.
@@ -244,6 +245,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
 8. Clipboard/editing baseline:
    - `Ctrl/Cmd+C`, `Ctrl/Cmd+X`, `Ctrl/Cmd+V`, `Ctrl/Cmd+Z`, `Ctrl/Cmd+Y` behave correctly in virtual editor mode.
    - Paste a 20-30 line block near the bottom of the visible editor; expected: the inserted tail/caret scrolls into view.
+   - Set the language to Markdown, select a phrase, and paste `https://example.com/docs`: expected `[phrase](https://example.com/docs)`, with the caret after the link. Undo restores the phrase and its selection; Redo restores the link. Save and restart to confirm persistence. Repeat with a non-URL or a plain-text paste and confirm ordinary replacement; a URL pasted without selection remains literal.
    - `Ctrl/Cmd+V` outside editor focus creates a new paste from clipboard.
    - `Ctrl/Cmd+Shift+V` requests a new paste when native modifiers survive; the known backend modifier-loss case is tracked in [#35](https://github.com/pszemraj/localpaste.rs/issues/35). The command palette's Paste as New action remains available.
    - Start Paste as New, open help with `F1`, close it with `Escape`, then paste fresh text with `Ctrl/Cmd+V`. The fresh paste reaches the editor; an older canceled clipboard reply must not overwrite or prepend it.

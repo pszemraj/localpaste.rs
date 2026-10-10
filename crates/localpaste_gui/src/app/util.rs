@@ -60,6 +60,46 @@ pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) ->
     format!("{fence}{lang}\n{content}\n{fence}")
 }
 
+/// Formats selected text as a Markdown link when the clipboard holds one web URL.
+///
+/// # Arguments
+/// - `label`: Selected editor text to retain as the link label.
+/// - `clipboard`: Clipboard text containing a single HTTP(S) URL.
+///
+/// # Returns
+/// A link retaining the original URL spelling, or `None` for ordinary pasted text.
+pub(super) fn format_markdown_link(label: &str, clipboard: &str) -> Option<String> {
+    let destination = clipboard.trim();
+    if destination
+        .chars()
+        .any(|ch| ch.is_whitespace() || ch.is_control())
+    {
+        return None;
+    }
+    let (scheme, _) = destination.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    url::Url::parse(destination).ok()?.host_str()?;
+    let mut link = String::from("[");
+    for ch in label.chars() {
+        if matches!(ch, '\\' | '[' | ']') {
+            link.push('\\');
+        }
+        link.push(ch);
+    }
+    link.push_str("](");
+    for ch in destination.chars() {
+        // CommonMark decodes escapes and entities in link destinations.
+        if matches!(ch, '\\' | '(' | ')' | '<' | '>' | '&') {
+            link.push('\\');
+        }
+        link.push(ch);
+    }
+    link.push(')');
+    Some(link)
+}
+
 /// Parses comma-separated tags, trimming whitespace and removing case-insensitive duplicates.
 ///
 /// # Returns

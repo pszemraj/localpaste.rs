@@ -54,6 +54,156 @@ fn review_regression_line_break_deletion_joins_lines_atomically() {
 mod interactions;
 
 #[test]
+fn markdown_url_paste_wraps_selection_and_is_one_reversible_edit() {
+    for language in ["markdown", "MD"] {
+        for reverse in [false, true] {
+            for (label, clipboard, replacement) in [
+                (
+                    "docs",
+                    "https://example.test/docs",
+                    "[docs](https://example.test/docs)",
+                ),
+                (
+                    "café 🦀",
+                    "http://localhost:3055/a",
+                    "[café 🦀](http://localhost:3055/a)",
+                ),
+                (
+                    "**docs**",
+                    " \r\nHTTPS://EXAMPLE.test/%2f\r\n",
+                    "[**docs**](HTTPS://EXAMPLE.test/%2f)",
+                ),
+                (
+                    "[docs] \\ path",
+                    "https://example.test/a(b)?x=&copy;",
+                    r"[\[docs\] \\ path](https://example.test/a\(b\)?x=\&copy;)",
+                ),
+                (
+                    "line one\nline two",
+                    "https://example.test",
+                    "[line one\nline two](https://example.test)",
+                ),
+            ] {
+                let mut harness = make_app();
+                let ctx = egui::Context::default();
+                let before = format!("prefix {label} suffix");
+                harness.app.reset_virtual_editor(&before);
+                harness.app.edit_language = Some(language.into());
+                let start = "prefix ".chars().count();
+                let end = start + label.chars().count();
+                let (cursor, anchor) = if reverse { (start, end) } else { (end, start) };
+                harness.app.virtual_editor_state.restore_selection(
+                    cursor,
+                    Some(anchor),
+                    before.chars().count(),
+                );
+                let result = harness
+                    .app
+                    .apply_virtual_commands(&ctx, &[VirtualInputCommand::Paste(clipboard.into())]);
+                let after = format!("prefix {replacement} suffix");
+                assert!(result.changed && result.pasted);
+                assert_eq!(harness.app.active_snapshot(), after);
+                assert_eq!(
+                    harness.app.virtual_editor_state.cursor(),
+                    start + replacement.chars().count()
+                );
+                assert!(harness.app.virtual_editor_state.selection_range().is_none());
+                harness
+                    .app
+                    .apply_virtual_commands(&ctx, &[VirtualInputCommand::Undo]);
+                assert_eq!(harness.app.active_snapshot(), before);
+                assert_eq!(harness.app.virtual_editor_state.cursor(), cursor);
+                assert_eq!(harness.app.virtual_editor_state.anchor(), Some(anchor));
+                assert_eq!(harness.app.virtual_editor_history.perf_stats().undo_len, 0);
+                harness
+                    .app
+                    .apply_virtual_commands(&ctx, &[VirtualInputCommand::Redo]);
+                assert_eq!(harness.app.active_snapshot(), after);
+                assert!(harness.app.virtual_editor_state.selection_range().is_none());
+            }
+        }
+    }
+}
+
+#[test]
+fn markdown_url_paste_leaves_other_paste_cases_literal() {
+    for (language, selected, clipboard) in [
+        (None, true, "https://example.test"),
+        (Some("rust"), true, "https://example.test"),
+        (Some("text"), true, "https://example.test"),
+        (Some("markdown"), false, "https://example.test"),
+        (Some("markdown"), true, "ordinary pasted text"),
+        (Some("markdown"), true, "https://one.test\nhttps://two.test"),
+        (Some("markdown"), true, "https://"),
+        (Some("markdown"), true, "https:example.test"),
+        (Some("markdown"), true, "https://[invalid]"),
+        (Some("markdown"), true, "https://example.test/a b"),
+        (Some("markdown"), true, "mailto:user@example.test"),
+    ] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        harness.app.reset_virtual_editor("prefix selected suffix");
+        harness.app.edit_language = language.map(str::to_owned);
+        // A pending language change, rather than the last persisted label, controls editing.
+        harness.app.selected_paste.as_mut().unwrap().language = Some("markdown".into());
+        harness
+            .app
+            .virtual_editor_state
+            .restore_selection(15, selected.then_some(7), 22);
+        harness
+            .app
+            .apply_virtual_commands(&ctx, &[VirtualInputCommand::Paste(clipboard.into())]);
+        let prefix = if selected {
+            "prefix "
+        } else {
+            "prefix selected"
+        };
+        assert_eq!(
+            harness.app.active_snapshot(),
+            format!("{prefix}{clipboard} suffix")
+        );
+    }
+}
+
+#[test]
+fn native_markdown_url_paste_uses_editor_ownership_and_reveals_the_link() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.reset_virtual_editor("read docs here");
+    harness.app.edit_language = Some("markdown".into());
+    harness.app.focus_editor_next = true;
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    harness
+        .app
+        .virtual_editor_state
+        .restore_selection(9, Some(5), 14);
+    run_full_update_with_input(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            modifiers: primary_command_modifiers(),
+            events: vec![egui::Event::Paste("https://example.test/docs".into())],
+            ..Default::default()
+        },
+    );
+    render_editor_frames(&mut harness.app, &ctx, 1000.0);
+    assert_eq!(
+        harness.app.active_snapshot(),
+        "read [docs](https://example.test/docs) here"
+    );
+    assert_caret_visible(&harness.app);
+    assert!(harness.app.virtual_editor_state.has_focus);
+    assert_ne!(
+        harness.app.active_snapshot(),
+        harness.app.selected_paste.as_ref().unwrap().content
+    );
+    assert!(!harness
+        .cmd_rx
+        .try_iter()
+        .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })));
+}
+
+#[test]
 fn missing_named_editor_style_renders_with_resolved_fallback_font() {
     let mut harness = make_app();
     let ctx = egui::Context::default();

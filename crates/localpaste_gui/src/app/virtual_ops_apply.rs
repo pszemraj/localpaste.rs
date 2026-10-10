@@ -220,12 +220,37 @@ impl LocalPasteApp {
                 VirtualInputCommand::Paste(text) => {
                     result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
                     let cursor = self.virtual_editor_state.cursor();
+                    let anchor = self.virtual_editor_state.anchor();
                     let range = self
                         .virtual_editor_state
                         .selection_range()
                         .unwrap_or(cursor..cursor);
-                    result.changed |=
-                        self.replace_virtual_range(range, text, EditIntent::Paste, true, now);
+                    let link = (!range.is_empty()
+                        && localpaste_core::models::paste::normalize_language_filter(
+                            self.edit_language.as_deref(),
+                        )
+                        .is_some_and(|language| language == "markdown"))
+                    .then(|| {
+                        super::util::format_markdown_link(
+                            &self.virtual_editor_buffer.slice_chars(range.clone()),
+                            text,
+                        )
+                    })
+                    .flatten();
+                    result.changed |= self.replace_virtual_range(
+                        range,
+                        link.as_deref().unwrap_or(text),
+                        EditIntent::Paste,
+                        true,
+                        now,
+                    );
+                    if link.is_some() {
+                        self.virtual_editor_history.finish_selection_edit(
+                            anchor,
+                            None,
+                            self.virtual_editor_state.cursor(),
+                        );
+                    }
                     if !text.is_empty() {
                         result.pasted = true;
                     }
