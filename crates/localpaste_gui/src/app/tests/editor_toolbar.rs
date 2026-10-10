@@ -23,15 +23,9 @@ fn render_at(app: &mut LocalPasteApp, ctx: &egui::Context, width: f32) -> egui::
 
 /// Rendered rect of an exact text label right of the 300-point sidebar.
 fn editor_text_rect(output: &egui::FullOutput, label: &str) -> Option<egui::Rect> {
-    output
-        .shapes
-        .iter()
-        .find_map(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) if text.galley.job.text == label && text.pos.x > 300.0 => {
-                Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
-            }
-            _ => None,
-        })
+    label_rects(output, label, |pos| pos.x > 300.0)
+        .into_iter()
+        .next()
 }
 
 fn click(
@@ -227,16 +221,7 @@ fn more_menu_holds_the_secondary_actions() {
 
 /// Rects of every rendered `label` text right of the sidebar, left to right.
 fn editor_text_rects(output: &egui::FullOutput, label: &str) -> Vec<egui::Rect> {
-    let mut rects = output
-        .shapes
-        .iter()
-        .filter_map(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) if text.galley.job.text == label && text.pos.x > 300.0 => {
-                Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let mut rects = label_rects(output, label, |pos| pos.x > 300.0);
     rects.sort_by(|a, b| a.left().total_cmp(&b.left()));
     rects
 }

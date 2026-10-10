@@ -60,16 +60,7 @@ fn sidebar_input() -> egui::RawInput {
 
 /// Returns the rendered rect of each exact text label inside the sidebar column.
 fn sidebar_text_rects(output: &egui::FullOutput, label: &str) -> Vec<egui::Rect> {
-    output
-        .shapes
-        .iter()
-        .filter_map(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) if text.galley.job.text == label && text.pos.x < 300.0 => {
-                Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
-            }
-            _ => None,
-        })
-        .collect()
+    label_rects(output, label, |pos| pos.x < 300.0)
 }
 
 /// Whether an exact label is painted fully inside its clip rect in the sidebar column.

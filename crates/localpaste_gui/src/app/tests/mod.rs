@@ -318,6 +318,24 @@ fn rendered_label_center(output: &egui::FullOutput, label: &str) -> egui::Pos2 {
         .unwrap_or_else(|| panic!("missing rendered label {label}"))
 }
 
+/// Rendered rects of an exact text label in paint order, keeping those whose position passes `keep`.
+fn label_rects(
+    output: &egui::FullOutput,
+    label: &str,
+    keep: impl Fn(egui::Pos2) -> bool,
+) -> Vec<egui::Rect> {
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.job.text == label && keep(text.pos) => {
+                Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// Fills of every rectangle drawn behind `point`.
 fn fills_behind(output: &egui::FullOutput, point: egui::Pos2) -> Vec<egui::Color32> {
     output
