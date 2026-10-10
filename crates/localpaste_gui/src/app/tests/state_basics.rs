@@ -419,6 +419,37 @@ fn history_modal_closes_on_escape() {
 }
 
 #[test]
+fn history_working_copy_caption_is_accurate_for_saved_and_dirty_pastes() {
+    for status in [SaveStatus::Saved, SaveStatus::Dirty] {
+        let mut harness = make_app();
+        harness.app.open_history_modal();
+        assert!(harness.app.version_ui.history_modal_open);
+        harness.app.save_status = status;
+        assert_eq!(harness.app.version_ui.history_selected_index, 0);
+
+        let ctx = eframe::egui::Context::default();
+        let _ = run_full_update_with_input(&mut harness.app, &ctx, Default::default());
+        let output = run_full_update_with_input(&mut harness.app, &ctx, Default::default());
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                eframe::egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            texts.contains(&"Current editor contents"),
+            "{status:?}: caption missing from {texts:?}"
+        );
+        assert!(
+            !texts.contains(&"Current unsaved editor view"),
+            "{status:?}: the working copy is not necessarily unsaved"
+        );
+    }
+}
+
+#[test]
 fn history_modal_headless_render_handles_long_inline_snapshot_band() {
     let mut harness = make_app();
     let long_snapshot = (0..180)

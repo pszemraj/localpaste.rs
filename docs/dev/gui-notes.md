@@ -190,7 +190,7 @@ Startup reopens the paste that was open when the app last closed, along with the
   - left side uses the active snapshot (`active_snapshot`) so unsaved edits are included,
   - loading a comparison target does not change current selection or paste locks.
 - History is detached and read-only:
-  - `Current working copy` is index `0`,
+  - `Current working copy` is index `0` and previews the live editor contents (captioned `Current editor contents`, saved or not),
   - stored snapshots are normally older-only entries,
   - reset restores the selected snapshot and archives the outgoing head as a recoverable snapshot.
   - dirty save-and-reset saves local edits before reset so the just-saved outgoing head is recoverable.

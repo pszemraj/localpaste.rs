@@ -346,7 +346,7 @@ impl LocalPasteApp {
                             }
                         } else {
                             right.label(
-                                RichText::new("Current unsaved editor view")
+                                RichText::new("Current editor contents")
                                     .small()
                                     .color(COLOR_TEXT_SECONDARY),
                             );
