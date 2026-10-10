@@ -22,6 +22,9 @@ fn timestamp_led_lines_are_logs() {
         "2026-10-10 06:00:01.123 INFO starting scheduler\n2026-10-10 06:00:02.456 ERROR scheduler crashed",
         "2026-10-10 06:00:01,123 - app - INFO - Starting\n2026-10-10 06:00:02,456 - app - ERROR - Failed to connect",
         "2026-10-10 06:00:01 starting scheduler\n2026-10-10 06:00:02 loaded 12 jobs",
+        // Python logging and log4j print milliseconds after a comma.
+        "2026-10-10 06:00:01,423 INFO msg",
+        "[2026-10-10 06:00:01,423] INFO starting scheduler\n[2026-10-10 06:00:02,117] ERROR scheduler crashed",
         "[2026-10-10 06:00:01] INFO starting scheduler\n[2026-10-10 06:00:02] ERROR scheduler crashed",
         "2026-10-10 06:00:01 [INFO] starting scheduler\n2026-10-10 06:00:02 [ERROR] scheduler crashed",
         "2026-10-10 06:00:01  INFO  starting scheduler\n2026-10-10 06:00:02 ERROR  scheduler crashed",
@@ -60,6 +63,11 @@ fn delimited_records_and_dated_prose_are_not_timestamp_logs() {
         "2026-10-10T06:00:01Z,worker-3,12\n2026-10-10T06:00:02Z,worker-1,9",
         "timestamp,worker,latency_ms\n2026-10-10 06:00:01,worker-3,12\n2026-10-10 06:00:02,worker-1,9",
         "2026-10-10 06:00:01\tworker-3\t12\n2026-10-10 06:00:02\tworker-1\t9",
+        // A numeric second column is a field, not comma milliseconds.
+        "ts,count\n2026-10-10 06:00:01,42\n2026-10-10 06:00:02,17",
+        "ts,count\n2026-10-10 06:00:01,423\n2026-10-10 06:00:02,117",
+        "2026-10-10 06:00:01,42\n2026-10-10 06:00:02,17",
+        "2026-10-10 06:00:01,423,ok\n2026-10-10 06:00:02,117,retry",
         "date,amount,description\n2026-10-01,12.50,coffee beans\n2026-10-02,40.00,groceries",
         "2026-10-10 06:00 meeting with Sam about the roadmap was moved to Friday.",
         "On 2026-10-10 at 06:00:00 the deploy started, and by 06:30 everything was green.",
@@ -69,9 +77,18 @@ fn delimited_records_and_dated_prose_are_not_timestamp_logs() {
     ] {
         for content in with_crlf(content) {
             assert_ne!(derive(&content, None).kind, PasteKind::Log, "{content}");
+            assert_ne!(derive(&content, Some("csv")).kind, PasteKind::Log, "{content}");
             assert_ne!(detect_language(&content).as_deref(), Some("log"), "{content}");
             assert_ne!(stored_kind(&content), PasteKind::Log, "{content}");
         }
+    }
+    let table = "ts,count\n2026-10-10 06:00:01,42\n2026-10-10 06:00:02,17";
+    for language in [None, Some("csv")] {
+        assert_eq!(
+            derive(table, language).kind,
+            PasteKind::Other,
+            "{language:?}"
+        );
     }
 }
 

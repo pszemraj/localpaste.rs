@@ -285,7 +285,9 @@ fn looks_like_timestamped_log(sample: &str) -> bool {
 /// timestamp, including fractions, a zone, and an enclosing `[`/`]`.
 ///
 /// A comma, tab, or other delimiter right after the timestamp marks a record
-/// field rather than a log message, so delimited data never matches.
+/// field rather than a log message, so delimited data never matches. The one
+/// exception is the comma that introduces Python's and log4j's milliseconds
+/// (`06:00:01,423 INFO`), recognized by its three digits and the message after it.
 fn timestamp_prefix_len(line: &str) -> Option<usize> {
     let bytes = line.as_bytes();
     let start = usize::from(bytes.first() == Some(&b'['));
@@ -325,12 +327,17 @@ fn iso_timestamp_end(bytes: &[u8], at: usize) -> Option<usize> {
     let at = digits(bytes, at, 2)?;
     let at = byte(bytes, at, b"T ")?;
     let mut at = clock_end(bytes, at)?;
-    if matches!(bytes.get(at), Some(b'.' | b','))
-        && bytes.get(at + 1).is_some_and(u8::is_ascii_digit)
-    {
+    if bytes.get(at) == Some(&b'.') && bytes.get(at + 1).is_some_and(u8::is_ascii_digit) {
         at += 1;
         while bytes.get(at).is_some_and(u8::is_ascii_digit) {
             at += 1;
+        }
+    } else if let Some(end) = byte(bytes, at, b",").and_then(|at| digits(bytes, at, 3)) {
+        // Python logging and log4j print milliseconds after a comma: exactly
+        // three digits, then the message or a closing bracket. Any other
+        // comma, including `,42` or `,423` ending a line, is a record field.
+        if matches!(bytes.get(end), Some(b' ' | b']')) {
+            return Some(end);
         }
     }
     if bytes.get(at) == Some(&b'Z') {
