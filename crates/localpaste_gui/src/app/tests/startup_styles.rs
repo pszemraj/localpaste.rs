@@ -126,3 +126,80 @@ fn placeholders_render_muted_while_widget_text_keeps_body_color() {
         );
     }
 }
+
+/// Screen bounds of an exact text label; centered galleys extend left of their anchor.
+fn text_bounds(output: &egui::FullOutput, text: &str) -> egui::Rect {
+    output
+        .shapes
+        .iter()
+        .find_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(shape) if shape.galley.job.text == text => {
+                Some(shape.galley.rect.translate(shape.pos.to_vec2()))
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing rendered text {text:?}"))
+}
+
+#[test]
+fn empty_editor_centers_its_message_over_muted_shortcut_hints() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.selected_id = None;
+    harness.app.selected_paste = None;
+    let input = || egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1100.0, 800.0),
+        )),
+        ..Default::default()
+    };
+    let _ = run_full_update_with_input(&mut harness.app, &ctx, input());
+    let output = run_full_update_with_input(&mut harness.app, &ctx, input());
+
+    let message = "Select a paste from the sidebar.";
+    assert_eq!(
+        rendered_text_colors(&output, message),
+        vec![COLOR_TEXT_SECONDARY]
+    );
+    let center = text_bounds(&output, message).center();
+    // The editor spans the 300-point sidebar's right edge to the window edge.
+    assert!((center.x - 700.0).abs() < 2.0, "message x {}", center.x);
+    assert!((center.y - 400.0).abs() < 120.0, "message y {}", center.y);
+
+    let mut last_y = center.y;
+    for (description, action) in [
+        ("New paste", RuntimeShortcutAction::NewPaste),
+        ("Paste as new paste", RuntimeShortcutAction::PlainPaste),
+        ("Open a paste", RuntimeShortcutAction::TogglePastePicker),
+        (
+            "Command palette",
+            RuntimeShortcutAction::ToggleCommandPalette,
+        ),
+        (
+            "Keyboard shortcuts",
+            RuntimeShortcutAction::ToggleShortcutHelp,
+        ),
+    ] {
+        let keys = shortcuts::runtime_shortcut_label(action);
+        for text in [description, keys.as_str()] {
+            assert_eq!(rendered_text_colors(&output, text), vec![COLOR_TEXT_MUTED]);
+        }
+        let description = text_bounds(&output, description);
+        let keys = text_bounds(&output, &keys);
+        assert!(
+            description.right() < keys.left(),
+            "keys sit right of {description:?}"
+        );
+        assert!((description.center().y - keys.center().y).abs() < 1.0);
+        assert!(keys.center().y > last_y, "hint lines run top to bottom");
+        last_y = keys.center().y;
+    }
+    let new_paste = shortcuts::runtime_shortcut_label(RuntimeShortcutAction::NewPaste);
+    let expected = if cfg!(target_os = "macos") {
+        "Cmd+N"
+    } else {
+        "Ctrl+N"
+    };
+    assert_eq!(new_paste, expected);
+}

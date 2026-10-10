@@ -1,5 +1,6 @@
 //! Central editor panel rendering for the virtual editor.
 
+use super::super::shortcuts::runtime_shortcut_label;
 use super::super::*;
 use super::editor_panel_virtual::VirtualEditorRenderOptions;
 use eframe::egui;
@@ -220,8 +221,59 @@ impl LocalPasteApp {
             } else if self.selected_id.is_some() {
                 ui.label(RichText::new("Loading paste...").color(COLOR_TEXT_MUTED));
             } else {
-                ui.label(RichText::new("Select a paste from the sidebar.").color(COLOR_TEXT_MUTED));
+                render_empty_editor_state(ui);
             }
         });
+    }
+}
+
+/// Shortcut hints under the empty editor message, in display order.
+const EMPTY_STATE_HINTS: [(&str, RuntimeShortcutAction); 5] = [
+    ("New paste", RuntimeShortcutAction::NewPaste),
+    ("Paste as new paste", RuntimeShortcutAction::PlainPaste),
+    ("Open a paste", RuntimeShortcutAction::TogglePastePicker),
+    (
+        "Command palette",
+        RuntimeShortcutAction::ToggleCommandPalette,
+    ),
+    (
+        "Keyboard shortcuts",
+        RuntimeShortcutAction::ToggleShortcutHelp,
+    ),
+];
+/// Width of the hint block; descriptions sit left and keys right within it.
+const EMPTY_STATE_WIDTH: f32 = 280.0;
+
+/// Renders the centered placeholder shown when no paste is selected.
+///
+/// Labels are real widgets so the message stays in the accessibility tree.
+/// Key labels come from the runtime shortcut registry, so they read `Cmd` on
+/// macOS and `Ctrl` elsewhere.
+fn render_empty_editor_state(ui: &mut egui::Ui) {
+    let area = ui.available_rect_before_wrap();
+    ui.allocate_rect(area, egui::Sense::hover());
+    let line_height = ui.spacing().interact_size.y;
+    let title_gap = line_height * 0.75;
+    let width = EMPTY_STATE_WIDTH.min(area.width());
+    let block_height = line_height * (EMPTY_STATE_HINTS.len() + 1) as f32 + title_gap;
+    let mut line = egui::Rect::from_center_size(
+        egui::pos2(
+            area.center().x,
+            area.center().y - (block_height - line_height) / 2.0,
+        ),
+        egui::vec2(width, line_height),
+    );
+    let mut child = |rect: egui::Rect, layout: egui::Layout| {
+        ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout))
+    };
+    child(line, egui::Layout::top_down(egui::Align::Center))
+        .label(RichText::new("Select a paste from the sidebar.").color(COLOR_TEXT_SECONDARY));
+    line = line.translate(egui::vec2(0.0, line_height + title_gap));
+    for (description, action) in EMPTY_STATE_HINTS {
+        child(line, egui::Layout::left_to_right(egui::Align::Center))
+            .label(RichText::new(description).color(COLOR_TEXT_MUTED));
+        child(line, egui::Layout::right_to_left(egui::Align::Center))
+            .label(RichText::new(runtime_shortcut_label(action)).color(COLOR_TEXT_MUTED));
+        line = line.translate(egui::vec2(0.0, line_height));
     }
 }
