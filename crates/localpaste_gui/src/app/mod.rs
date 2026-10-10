@@ -29,7 +29,6 @@ mod virtual_indent;
 mod virtual_ops;
 mod virtual_ops_apply;
 mod window_bounds;
-mod window_focus;
 
 use crate::backend::{
     spawn_backend_with_locks_and_owner, BackendHandle, PasteSummary, SidebarCollection,
@@ -192,8 +191,6 @@ pub(crate) struct LocalPasteApp {
     /// Native events waiting for the discovery focus boundary's next rendered frame.
     deferred_discovery_events: Vec<egui::Event>,
     focus_editor_next: bool,
-    /// Editor keyboard ownership carried across a native window switch.
-    window_switch_focus: window_focus::WindowSwitchFocus,
     style_applied: bool,
     window_shown_once: bool,
     window_checked: bool,
@@ -495,8 +492,6 @@ impl eframe::App for LocalPasteApp {
             self.queue_highlight_reply(reply);
         }
 
-        // Reactivation returns the keyboard before this frame's input is routed.
-        self.restore_reactivated_editor(ctx);
         let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
         let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
         let has_virtual_selection_pre = self.virtual_editor_state.selection_range().is_some();
@@ -634,10 +629,9 @@ impl eframe::App for LocalPasteApp {
                     // A focused editor receives the native paste at its caret.
                     // Elsewhere the payload is appended to the open paste below.
                     // Read ownership live: a same-frame dismissal may return focus.
-                    let editor_focused = (self.focus_editor_next
+                    let editor_focused = self.focus_editor_next
                         || self.virtual_editor_state.has_focus
-                        || ctx.memory(|memory| memory.has_focus(focus_id)))
-                        && !self.paste_capture_pending();
+                        || ctx.memory(|memory| memory.has_focus(focus_id));
                     if self.editor_shortcuts_blocked() {
                         if mutation_shortcut_blocked.is_some() {
                             self.set_mutation_shortcut_blocked_status();
@@ -747,12 +741,8 @@ impl eframe::App for LocalPasteApp {
 
         let virtual_editor_focus_post =
             ctx.memory(|m| m.has_focus(focus_id)) || self.virtual_editor_state.has_focus;
-        // Right after switching back, clipboard pastes route as if nothing had focus.
-        let paste_capture = virtual_editor_focus_post && self.paste_capture_pending();
-        let clipboard_paste =
-            pasted_text.is_some() || plain_paste_shortcut_pressed || paste_into_editor_pressed;
-        let editor_focus_for_plain_paste_post = virtual_editor_focus_post && !paste_capture;
-        let editor_focus_post = editor_focus_for_plain_paste_post;
+        let editor_focus_for_plain_paste_post = virtual_editor_focus_post;
+        let editor_focus_post = virtual_editor_focus_post;
         let wants_keyboard_input_after = ctx.wants_keyboard_input();
         if sidebar_direction != 0 && !virtual_editor_focus_post && !wants_keyboard_input_after {
             if let Some(next_id) = self.sidebar_arrow_target_id(sidebar_direction) {
@@ -773,7 +763,7 @@ impl eframe::App for LocalPasteApp {
         }
         let keyboard_focus_state = Self::keyboard_focus_state(
             editor_focus_for_plain_paste_post,
-            wants_keyboard_input_after && !paste_capture,
+            wants_keyboard_input_after,
         );
         let (plain_request_virtual, plain_request_new) = self.resolve_plain_paste_shortcut_request(
             plain_paste_shortcut_pressed,
@@ -793,13 +783,10 @@ impl eframe::App for LocalPasteApp {
         let _implicit_clipboard_created = self.maybe_route_implicit_global_clipboard_create(
             pasted_text,
             editor_focus_post,
-            ctx.wants_keyboard_input() && !paste_capture,
+            ctx.wants_keyboard_input(),
             false,
         );
         let _ = paste_as_new_consumed;
-        if paste_capture && clipboard_paste {
-            self.finish_paste_capture(ctx, !paste_into_editor_pressed);
-        }
 
         // Finish edits received before native deactivation in their current owner.
         self.blur_deactivated_editor(ctx);

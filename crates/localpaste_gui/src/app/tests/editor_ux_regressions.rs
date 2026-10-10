@@ -619,8 +619,7 @@ fn native_deactivation_preserves_selection_and_releases_editor_ownership() {
         .commands
         .iter()
         .any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text == "ont")));
-    // Reactivation returns the keyboard; the first paste after it still creates a paste.
-    assert!(harness.app.virtual_editor_state.has_focus);
+    assert!(!harness.app.virtual_editor_state.has_focus);
     run_full_update(
         &mut harness.app,
         &ctx,

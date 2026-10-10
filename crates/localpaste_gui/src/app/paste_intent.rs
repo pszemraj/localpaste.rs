@@ -300,20 +300,18 @@ impl LocalPasteApp {
         ctx.request_repaint();
     }
 
-    /// Returns whether a virtual paste command should be skipped because the payload creates a new paste.
+    /// Returns whether a virtual paste command should be skipped due to explicit paste-as-new intent.
     ///
     /// # Arguments
     /// - `command`: Candidate virtual editor command for this frame.
     ///
     /// # Returns
-    /// `true` when a pending explicit paste-as-new intent, or the first paste
-    /// after switching back to the app, should consume the paste event instead.
+    /// `true` when a pending explicit paste-as-new intent should consume the paste event instead.
     pub(super) fn should_skip_virtual_command_for_paste_as_new(
         &self,
         command: &VirtualInputCommand,
     ) -> bool {
-        (self.paste_as_new_pending_frames > 0 || self.paste_capture_pending())
-            && matches!(command, VirtualInputCommand::Paste(_))
+        self.paste_as_new_pending_frames > 0 && matches!(command, VirtualInputCommand::Paste(_))
     }
 
     /// Consumes a pending explicit paste-as-new intent and dispatches create when clipboard text exists.

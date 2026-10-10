@@ -121,3 +121,76 @@ fn focused_text_inputs_keep_command_backspace_and_delete_as_text_editing() {
         });
     }
 }
+
+/// Runs a frame, then empty frames until input deferred around a discovery focus change is rendered.
+fn settle(app: &mut LocalPasteApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+    run_discovery_frame_once(app, ctx, events);
+    for _ in 0..8 {
+        if app.deferred_discovery_events.is_empty() {
+            return;
+        }
+        run_discovery_frame_once(app, ctx, vec![]);
+    }
+    assert!(app.deferred_discovery_events.is_empty());
+}
+
+#[test]
+fn cmd_backspace_while_a_picker_paste_loads_is_held_as_editor_input() {
+    with_platform(PlatformFlavor::Mac, || {
+        let (mut harness, _events) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness
+            .app
+            .all_pastes
+            .insert(0, test_summary("picked", "Picked", None, 7));
+        harness.app.focus_editor_next = true;
+        settle(&mut harness.app, &ctx, vec![]);
+        let picker_chord = command(PlatformFlavor::Mac, true);
+        settle(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::K, picker_chord)],
+        );
+        assert!(harness.app.paste_picker_open);
+        let _ = harness.cmd_rx.try_iter().count();
+
+        settle(
+            &mut harness.app,
+            &ctx,
+            vec![
+                key_event(egui::Key::Enter, egui::Modifiers::NONE),
+                egui::Event::Text("typed ".into()),
+            ],
+        );
+        // A later frame, once the closed picker query no longer holds egui focus.
+        settle(&mut harness.app, &ctx, vec![]);
+        press(
+            &mut harness.app,
+            &ctx,
+            egui::Key::Backspace,
+            command(PlatformFlavor::Mac, false),
+        );
+        let mut cmds = harness.cmd_rx.try_iter().collect::<Vec<_>>();
+        assert_eq!(harness.app.selected_id.as_deref(), Some("picked"));
+        assert!(harness.app.selected_paste.is_none(), "still loading");
+        let mut picked = Paste::new("content".into(), "Picked".into());
+        picked.id = "picked".into();
+        harness.app.apply_event(CoreEvent::PasteLoaded {
+            paste: picked,
+            selection_epoch: harness.app.active_buffer_epoch,
+        });
+        settle(&mut harness.app, &ctx, vec![]);
+        cmds.extend(harness.cmd_rx.try_iter());
+
+        // The held typing and `Cmd+Backspace` replay as one line edit in the loaded paste.
+        assert!(
+            !cmds
+                .iter()
+                .any(|cmd| matches!(cmd, CoreCmd::DeletePaste { .. })),
+            "{cmds:?}"
+        );
+        assert_eq!(harness.app.selected_id.as_deref(), Some("picked"));
+        assert_eq!(harness.app.active_snapshot(), "content");
+        assert!(harness.app.virtual_editor_state.has_focus);
+    });
+}

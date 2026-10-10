@@ -367,14 +367,13 @@ fn queued_dismissal_preserves_paste_before_native_deactivation_and_finishes_blur
         "deferred editor paste must retain its action: {cmds:?}"
     );
     assert!(!harness.app.virtual_editor_state.has_focus);
-    // The dismissal returned the keyboard to the editor, so reactivation does too.
     frame(
         &mut harness.app,
         &ctx,
         vec![egui::Event::WindowFocused(true)],
     );
-    assert!(harness.app.virtual_editor_state.has_focus);
-    assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
+    assert!(!harness.app.virtual_editor_state.has_focus);
+    assert!(!ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
 }
 
 #[test]
