@@ -123,6 +123,37 @@ fn command_shift_v_without_open_paste_appends_to_top_paste_after_load() {
 }
 
 #[test]
+fn command_shift_v_on_load_keeps_the_caret_after_the_text_with_find_open() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    harness.app.selected_id = None;
+    harness.app.selected_paste = None;
+    harness.app.reset_virtual_editor("");
+    harness.app.open_editor_find();
+    harness.app.set_editor_find_query("needle".into());
+    run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+
+    press_paste_into_editor(&mut harness, &ctx, "clip");
+    let mut loaded = Paste::new("needle one\nneedle two".into(), "Alpha".into());
+    loaded.id = "alpha".into();
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: loaded,
+        selection_epoch: harness.app.active_buffer_epoch,
+    });
+    run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+    run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+
+    let expected = "needle one\nneedle two\nclip";
+    assert_eq!(harness.app.active_snapshot(), expected);
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        expected.chars().count()
+    );
+    assert!(harness.app.virtual_editor_state.selection_range().is_none());
+    assert_eq!(harness.app.editor_find.matches.len(), 2);
+}
+
+#[test]
 fn command_shift_v_repeated_before_load_replays_each_payload_in_order() {
     let (mut harness, _events) = make_app_with_event_tx();
     let ctx = egui::Context::default();

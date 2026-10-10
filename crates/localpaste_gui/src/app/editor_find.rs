@@ -266,7 +266,8 @@ impl LocalPasteApp {
         self.rebuild_editor_find_matches(true);
     }
 
-    fn ensure_editor_find_matches_current(&mut self) {
+    /// Rebuilds stale Find matches, selecting the first hit in a newly loaded buffer.
+    pub(super) fn ensure_editor_find_matches_current(&mut self) {
         if !self.editor_find.open || self.editor_find.query.is_empty() {
             return;
         }

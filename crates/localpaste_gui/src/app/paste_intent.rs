@@ -256,6 +256,9 @@ impl LocalPasteApp {
         let Some(pending) = self.pending_editor_paste.take() else {
             return;
         };
+        // An open Find bar selects its first hit in a newly loaded buffer when
+        // it next renders; settle that first so the append's caret placement wins.
+        self.ensure_editor_find_matches_current();
         let mut texts = pending.texts.into_iter();
         let Some(mut text) = texts.next() else {
             return;
