@@ -257,14 +257,14 @@ impl LocalPasteApp {
 
                     ui.horizontal(|ui| {
                         if ui
-                            .add_enabled(can_go_newer, egui::Button::new("← Newer"))
+                            .add_enabled(can_go_newer, egui::Button::new("⏴ Newer"))
                             .clicked()
                         {
                             pending_selected_index =
                                 Some(self.version_ui.history_selected_index.saturating_sub(1));
                         }
                         if ui
-                            .add_enabled(can_go_older, egui::Button::new("Older →"))
+                            .add_enabled(can_go_older, egui::Button::new("Older ⏵"))
                             .clicked()
                         {
                             pending_selected_index =
