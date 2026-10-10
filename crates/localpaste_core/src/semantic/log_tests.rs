@@ -218,6 +218,12 @@ fn crash_output_is_a_log_wherever_the_traceback_starts() {
         "make: *** [Makefile:5: run] Segmentation fault (core dumped)",
         "Epoch 3/10\nKilled",
         "$ cargo run\nexit status 101",
+        // A frame's source line belongs to the traceback, not to source around it.
+        "Traceback (most recent call last):\n  File \"train.py\", line 1, in <module>\n    import torch\nModuleNotFoundError: No module named 'torch'",
+        // `>>> ` is the interpreter's prompt, like `$ `: a session that ends in a
+        // traceback is crash output, and code typed at the prompt is not source.
+        ">>> 1/0\nTraceback (most recent call last):\n  File \"<stdin>\", line 1, in <module>\nZeroDivisionError: division by zero",
+        ">>> import json\n>>> json.loads(\"{\")\nTraceback (most recent call last):\n  File \"<stdin>\", line 1, in <module>\njson.decoder.JSONDecodeError: Expecting value: line 1 column 2 (char 1)",
     ];
     assert_derived_kinds(
         &crashes,
@@ -241,6 +247,8 @@ fn notes_about_crashes_stay_documents() {
         "Getting this error when I run train.py:\n\nTraceback (most recent call last):\n  File \"train.py\", line 3, in <module>\n    main()\nRuntimeError: CUDA out of memory.\n\nAny idea how to fix it?",
         "We hit a segfault again today.\nSegmentation fault (core dumped)\nAny ideas?",
         "Traceback (most recent call last):\n  File \"app.py\", line 3, in <module>\n    main()\nValueError: boom\nThis happens every time the batch size exceeds the limit.",
+        "The worker crashed right after loading the config:\n\n    Traceback (most recent call last):\n      File \"worker.py\", line 12, in <module>\n        main()\n    KeyError: 'queue'\n\nAdding a default queue name fixed it.",
+        "## Crash on startup\n\nThe worker crashed right after loading the config:\n\n    Traceback (most recent call last):\n      File \"worker.py\", line 12, in <module>\n        main()\n    KeyError: 'queue'\n\nAdding a default queue name fixed it.",
     ];
     assert_derived_kinds(&notes, &[None, Some("text")], PasteKind::Document);
     assert!(notes
@@ -248,4 +256,40 @@ fn notes_about_crashes_stay_documents() {
         .flat_map(|note| with_crlf(note))
         .all(|note| !super::logs::looks_like_runtime_log(&note)
             && detect_language(&note).as_deref() != Some("log")));
+    for note in notes.iter().flat_map(|note| with_crlf(note)) {
+        assert_eq!(stored_kind(&note), PasteKind::Document, "{note}");
+    }
+}
+
+#[test]
+fn source_around_a_traceback_stays_code() {
+    let sources = [
+        (
+            "def div(a, b):\n    \"\"\"\n    >>> div(1, 0)\n    Traceback (most recent call last):\n      File \"<stdin>\", line 1, in <module>\n    ZeroDivisionError: division by zero\n    \"\"\"\n    return a / b",
+            "def div",
+        ),
+        (
+            "import textwrap\n\nEXPECTED = \"\"\"\\\nTraceback (most recent call last):\n  File \"app.py\", line 3, in <module>\n    main()\nValueError: boom\n\"\"\"\n\n\ndef test_crash_prints_traceback(capfd):\n    run_app()\n    assert capfd.readouterr().err == EXPECTED",
+            "def test_crash_prints_traceback",
+        ),
+        (
+            "def test_traceback_is_printed(run):\n    result = run(\"app.py\")\n    assert result.stderr == textwrap.dedent(\"\"\"\n        Traceback (most recent call last):\n          File \"app.py\", line 3, in <module>\n            main()\n        ValueError: boom\n    \"\"\").lstrip()",
+            "def test_traceback_is_printed",
+        ),
+    ];
+    let bodies: Vec<&str> = sources.iter().map(|(body, _)| *body).collect();
+    assert_derived_kinds(&bodies, &[Some("python")], PasteKind::Code);
+    for (body, handle) in sources {
+        for body in with_crlf(body) {
+            assert!(!super::logs::looks_like_runtime_log(&body), "{body}");
+            for language in [None, Some("text")] {
+                assert_ne!(derive(&body, language).kind, PasteKind::Log, "{body}");
+            }
+            let paste = Paste::new(body.clone(), "source".into());
+            assert_eq!(paste.language.as_deref(), Some("python"), "{body}");
+            let derived = PasteMeta::from(&paste).derived;
+            assert_eq!(derived.kind, PasteKind::Code, "{body}");
+            assert_eq!(derived.handle.as_deref(), Some(handle), "{body}");
+        }
+    }
 }

@@ -398,16 +398,20 @@ fn looks_like_rust_panic(content: &str) -> bool {
 }
 
 /// Recognize output that ends with a process failing: a Python traceback block
-/// or a line reporting a fatal signal or exit status, with no commentary
-/// around it.
+/// or a line reporting a fatal signal or exit status, with no commentary or
+/// source around it.
 ///
 /// The traceback may start anywhere, after training output, a `$ ` command, or
 /// other program lines, and exit or signal reports may follow it. Every other
 /// line must be output rather than a note about it (see [`is_commentary`]), so
-/// a bug report that quotes a traceback stays a document.
+/// a bug report that quotes a traceback stays a document, and must not be a
+/// Python definition or import line
+/// ([`crate::detection::looks_like_python_source`]), so a function whose
+/// docstring holds a doctest traceback stays source. Frame lines inside the
+/// block, such as `import torch`, are part of the traceback.
 ///
 /// # Returns
-/// Whether the sample holds a crash anchor and no commentary, including quoted rows.
+/// Whether the sample holds a crash anchor and no commentary or source, including quoted rows.
 pub(crate) fn looks_like_crash_output(content: &str) -> bool {
     let sample = crate::text::complete_line_prefix_by_bytes(
         content.trim(),
@@ -428,7 +432,7 @@ pub(crate) fn looks_like_crash_output(content: &str) -> bool {
             .as_ref()
             .is_some_and(|block| block.contains(&index))
             || is_termination_line(line)
-            || !is_commentary(line)
+            || !(is_commentary(line) || crate::detection::looks_like_python_source(line))
     })
 }
 
