@@ -68,6 +68,58 @@ fn press_below_the_last_line_drags_a_live_selection_from_eof() {
 }
 
 #[test]
+fn window_deactivation_mid_drag_ends_the_editor_drag() {
+    let (mut harness, _event_tx) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    let text = "alpha beta gamma delta omega\n".repeat(160);
+    harness.app.reset_virtual_editor(&text);
+    for _ in 0..3 {
+        review_frame(&mut harness.app, &ctx, vec![]);
+    }
+    let viewport = harness.app.virtual_viewport.rect.unwrap();
+    let start = egui::pos2(viewport.left() + 40.0, viewport.center().y);
+    review_frame(&mut harness.app, &ctx, primary_pointer_events(start, true));
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::PointerMoved(start + egui::vec2(80.0, 12.0))],
+    );
+    assert!(harness.app.virtual_drag_active);
+
+    // Alt+Tab mid-drag: the window deactivates and no button release follows.
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::WindowFocused(false)],
+    );
+    assert!(!harness.app.virtual_drag_active);
+    assert!(harness.app.virtual_pointer_press_modifiers.is_none());
+    let selection = harness.app.virtual_editor_state.selection_range();
+    let offset = harness.app.virtual_viewport.offset_y;
+
+    // egui still reports the primary button down; hovering back in must not drag.
+    review_frame(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::WindowFocused(true),
+            egui::Event::PointerMoved(egui::pos2(viewport.center().x, 940.0)),
+        ],
+    );
+    // The first idle frame still repaints for the previous frame's pointer motion.
+    review_frame(&mut harness.app, &ctx, vec![]);
+    let output = review_frame(&mut harness.app, &ctx, vec![]);
+    assert!(ctx.input(|input| input.pointer.primary_down()));
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        selection
+    );
+    assert_eq!(harness.app.virtual_viewport.offset_y, offset);
+    assert!(!harness.app.virtual_drag_active);
+    assert!(!requests_immediate_repaint(&output));
+}
+
+#[test]
 fn held_drag_past_a_reached_document_edge_stops_repainting() {
     for edge in ["start", "end"] {
         let (mut harness, _event_tx) = make_app_with_event_tx();

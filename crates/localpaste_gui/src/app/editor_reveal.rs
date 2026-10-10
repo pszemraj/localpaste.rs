@@ -63,12 +63,22 @@ impl CursorReveal {
 impl LocalPasteApp {
     /// Drop editor ownership on native deactivation without disturbing the selection.
     pub(super) fn blur_deactivated_editor(&mut self, ctx: &egui::Context) {
-        let last_focus = ctx.input(|input| {
-            input.events.iter().rev().find_map(|event| match event {
+        let (last_focus, deactivated) = ctx.input(|input| {
+            let mut focus_events = input.events.iter().filter_map(|event| match event {
                 egui::Event::WindowFocused(focused) => Some(*focused),
                 _ => None,
-            })
+            });
+            let deactivated = focus_events.clone().any(|focused| !focused);
+            (focus_events.next_back(), deactivated)
         });
+        if deactivated {
+            // Deactivation can swallow the button release (no button-up after
+            // Alt+Tab mid-drag), leaving egui's primary button reported down.
+            // End the gesture here; this frame's render already applied any
+            // release it did receive.
+            self.virtual_drag_active = false;
+            self.virtual_pointer_press_modifiers = None;
+        }
         if last_focus == Some(false) {
             if self.cancel_virtual_ime_preedit_if_active(std::time::Instant::now()) {
                 self.mark_dirty();
