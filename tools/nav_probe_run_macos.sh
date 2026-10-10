@@ -13,6 +13,8 @@ after_focus_ms=150
 between_keys_ms=350
 after_scenario_ms=900
 after_close_ms=500
+key_delay_ms=80
+capture=0
 only=()
 
 usage() {
@@ -37,6 +39,9 @@ Options:
   --between-keys-ms MS        Delay between keys inside a scenario
   --after-scenario-ms MS      Delay after keys before closing the app
   --after-close-ms MS         Delay between scenario processes
+  --key-delay-ms MS           Hold/delay for each native key transition (0..1000)
+  --capture                   Wait at each paste result for a Computer screenshot;
+                              resume by creating LOG.with_suffix('.continue')
 
 Environment:
   LOCALPASTE_NAV_PROBE_PYTHON  Python executable to use for JSON parsing; otherwise inherits an active venv/conda env, then falls back to python3/python
@@ -97,6 +102,14 @@ while [[ $# -gt 0 ]]; do
             after_close_ms="${2:?missing --after-close-ms value}"
             shift 2
             ;;
+        --key-delay-ms)
+            key_delay_ms="${2:?missing --key-delay-ms value}"
+            shift 2
+            ;;
+        --capture)
+            capture=1
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
@@ -137,6 +150,11 @@ assert_non_negative_int "--after-focus-ms" "$after_focus_ms"
 assert_non_negative_int "--between-keys-ms" "$between_keys_ms"
 assert_non_negative_int "--after-scenario-ms" "$after_scenario_ms"
 assert_non_negative_int "--after-close-ms" "$after_close_ms"
+assert_non_negative_int "--key-delay-ms" "$key_delay_ms"
+if [[ "$key_delay_ms" -gt 1000 ]]; then
+    echo "--key-delay-ms must be between 0 and 1000" >&2
+    exit 2
+fi
 
 repo="$(pwd -P)"
 
@@ -261,6 +279,7 @@ for scenario in spec.get("scenarios", []):
         "seed_cursor": seed.get("cursor"),
         "seed_len": len(text),
         "keys": macos.get("keys", []),
+        "paste": macos.get("paste"),
     }))
 PY
     else
@@ -287,6 +306,7 @@ for scenario in spec.get("scenarios", []):
         "seed_cursor": seed.get("cursor"),
         "seed_len": len(text),
         "keys": macos.get("keys", []),
+        "paste": macos.get("paste"),
     }))
 PY
     fi
@@ -339,7 +359,7 @@ build_driver() {
 }
 
 build_driver
-if ! "$driver" check-accessibility --prompt >/dev/null; then
+if ! "$driver" check-accessibility >/dev/null; then
     echo "macOS Accessibility permission is required for $driver. Grant it in System Settings, then rerun this script." >&2
     exit 1
 fi
@@ -351,6 +371,21 @@ if [[ ! -x "$exe" ]]; then
     echo "GUI executable not found: $exe. Run with --build or build it first." >&2
     exit 2
 fi
+# The stable review identity permits native Computer inspection of each result.
+bundle="$(assert_repo_path "target/LocalPasteReview.app/Contents" "Review bundle")"
+mkdir -p "$bundle/MacOS"
+cp "$exe" "$bundle/MacOS/LocalPasteReview"
+run_python - "$bundle/Info.plist" <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+Path(sys.argv[1]).write_bytes(plistlib.dumps({
+    "CFBundleExecutable": "LocalPasteReview",
+    "CFBundleIdentifier": "io.github.pszemraj.localpaste.review",
+    "CFBundleName": "LocalPasteReview", "CFBundlePackageType": "APPL",
+    "NSHighResolutionCapable": True,
+}))
+PY
 mkdir -p "$(dirname "$log_path")"
 rm -f "$log_path"
 
@@ -478,7 +513,7 @@ send_macos_key() {
     while IFS= read -r modifier; do
         modifiers+=("$modifier")
     done < <(json_field "$key_json" modifiers || true)
-    local driver_args=(key --pid "$pid" --key-code "$key_code")
+    local driver_args=(key --pid "$pid" --key-code "$key_code" --key-delay-ms "$key_delay_ms")
     local modifier
     if [[ "${#modifiers[@]}" -gt 0 ]]; then
         for modifier in "${modifiers[@]}"; do
@@ -512,15 +547,20 @@ close_app() {
         fi
         sleep 0.1
     done
-    kill -KILL "$pid" >/dev/null 2>&1 || true
-    wait "$pid" || true
+    echo "probe child $pid did not stop after SIGTERM; leaving its DB intact" >&2
+    return 1
 }
 
 current_pid=""
+current_db=""
 cleanup_running_app() {
     if [[ -n "$current_pid" ]]; then
-        close_app "$current_pid"
+        if ! close_app "$current_pid"; then return 1; fi
         current_pid=""
+    fi
+    if [[ -n "$current_db" ]]; then
+        rm -rf "$current_db"
+        current_db=""
     fi
 }
 cleanup_and_exit() {
@@ -535,6 +575,14 @@ trap 'cleanup_and_exit 143' TERM
 
 for scenario_json in "${scenarios[@]}"; do
     scenario_id="$(json_field "$scenario_json" id)"
+    if [[ -n "$(json_field "$scenario_json" paste || true)" ]]; then
+        paste_args=(--scenario "$scenario_id" --spec "$spec_path" --log "$log_path"
+            --exe "$bundle/MacOS/LocalPasteReview" --driver "$driver"
+            --key-delay-ms "$key_delay_ms")
+        if [[ "$capture" -eq 1 ]]; then paste_args+=(--capture); fi
+        run_python tools/nav_probe_paste_macos.py "${paste_args[@]}"
+        continue
+    fi
     seed_text_raw="$(json_text_field "$scenario_json" seed_text)"
     seed_text="${seed_text_raw%__LOCALPASTE_NAV_PROBE_SENTINEL__}"
     seed_len="$(json_field "$scenario_json" seed_len)"
@@ -544,12 +592,21 @@ for scenario_json in "${scenarios[@]}"; do
         keys+=("$key")
     done < <(json_field "$scenario_json" keys)
     safe_scenario="$(safe_name "$scenario_id")"
-    db_path="$(assert_repo_path "target/nav-probe-db-${safe_scenario}-$(date +%s%N)" "DB_PATH")"
-    mkdir -p "$db_path"
+    db_path="$(mktemp -d "$repo/target/nav-probe-db-${safe_scenario}.XXXXXX")"
+    current_db="$db_path"
+    port="$(run_python - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(('127.0.0.1', 0))
+    print(sock.getsockname()[1])
+PY
+)"
 
     echo "nav probe: $scenario_id"
     env_args=(
         "DB_PATH=$db_path"
+        "PORT=$port"
+        "LP_SERVER=http://127.0.0.1:$port"
         "LOCALPASTE_NAV_PROBE_LOG=$log_path"
         "LOCALPASTE_NAV_PROBE_SCENARIO=$scenario_id"
         "LOCALPASTE_NAV_PROBE_SEED_TEXT=$seed_text"
@@ -623,6 +680,8 @@ for scenario_json in "${scenarios[@]}"; do
     ms_sleep "$after_scenario_ms"
     close_app "$pid"
     current_pid=""
+    rm -rf "$current_db"
+    current_db=""
     ms_sleep "$after_close_ms"
 done
 

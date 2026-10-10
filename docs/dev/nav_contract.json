@@ -1118,6 +1118,437 @@
     },
     {"id": "mac_shift_tab_unindents", "platforms": ["macos"], "seed": {"text": "    alpha\nnext\n", "cursor": "0:9"}, "driver": {"macos": {"keys": [{"key_code": 48, "modifiers": ["shift"]}]}}, "expect": {"focus.virtual_editor": true, "editor.caret_visible": true, "cursor.line": 0, "cursor.col": 5, "editor.buffer_len_chars": 11}, "expect_contains": {"applied_commands": "Unindent"}},
     {"id": "mac_indent_selection_undo", "platforms": ["macos"], "seed": {"text": "alpha\nbeta\n", "cursor": "0:0"}, "driver": {"macos": {"keys": [{"key_code": 125, "modifiers": ["command", "shift"]}, {"key_code": 48, "modifiers": []}, {"key_code": 6, "modifiers": ["command"]}]}}, "expect": {"focus.virtual_editor": true, "editor.caret_visible": true, "cursor.line": 2, "cursor.col": 0, "editor.buffer_len_chars": 11, "selection.start": 0, "selection.end": 11}, "expect_contains": {"applied_commands": "Undo"}},
-    {"id": "mac_wrapped_eof_visible", "platforms": ["macos"], "seed": {"text": "wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α \nEND", "cursor": "0:0"}, "driver": {"macos": {"keys": [{"key_code": 125, "modifiers": ["command"]}]}}, "expect": {"focus.virtual_editor": true, "editor.caret_visible": true, "cursor.line": 1, "cursor.col": 3}, "expect_contains": {"applied_commands": "MoveDocEnd"}}
+    {"id": "mac_wrapped_eof_visible", "platforms": ["macos"], "seed": {"text": "wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α wrapped document α \nEND", "cursor": "0:0"}, "driver": {"macos": {"keys": [{"key_code": 125, "modifiers": ["command"]}]}}, "expect": {"focus.virtual_editor": true, "editor.caret_visible": true, "cursor.line": 1, "cursor.col": 3}, "expect_contains": {"applied_commands": "MoveDocEnd"}},
+
+    {
+      "id": "paste_after_app_switch_creates_new",
+      "platforms": [
+        "macos"
+      ],
+      "seed": {
+        "text": "alpha beta\ngamma delta\n"
+      },
+      "driver": {
+        "macos": {
+          "keys": [
+            {
+              "key_code": 9,
+              "modifiers": [
+                "command"
+              ]
+            }
+          ],
+          "paste": {
+            "mode": "new",
+            "target": "editor",
+            "external_copy": true,
+            "clipboard": "paste-probe-clipboard-2609",
+            "selection_chars": 0
+          }
+        }
+      },
+      "expect": {
+        "paste.original_content": "alphaX beta\ngamma delta\n",
+        "paste.original_name": "Paste probe original",
+        "paste.original_tags": [
+          "probe"
+        ],
+        "paste.count": 2,
+        "paste.restart_equal": true,
+        "paste.native_paste_seen": true,
+        "editor.buffer_hash": "bb13dbd232ce137c",
+        "paste.other_contents": [
+          "paste-probe-clipboard-2609"
+        ],
+        "paste.switched_away_seen": true,
+        "paste.switched_back_seen": true
+      }
+    },
+    {
+      "id": "paste_shift_after_app_switch_retains_caret",
+      "platforms": [
+        "macos"
+      ],
+      "seed": {
+        "text": "alpha beta\ngamma delta\n"
+      },
+      "driver": {
+        "macos": {
+          "keys": [
+            {
+              "key_code": 9,
+              "modifiers": [
+                "command",
+                "shift"
+              ]
+            }
+          ],
+          "paste": {
+            "mode": "insert",
+            "target": "editor",
+            "external_copy": true,
+            "clipboard": "paste-probe-clipboard-2609",
+            "selection_chars": 0
+          }
+        }
+      },
+      "expect": {
+        "paste.original_content": "alphaXpaste-probe-clipboard-2609 beta\ngamma delta\n",
+        "paste.original_name": "Paste probe original",
+        "paste.original_tags": [
+          "probe"
+        ],
+        "paste.count": 1,
+        "paste.restart_equal": true,
+        "paste.native_paste_seen": true,
+        "editor.buffer_hash": "209add7a3603e5db",
+        "cursor.char_index": 32,
+        "selection": null,
+        "app.search_query_len": 0,
+        "paste.editor_focused": true,
+        "paste.switched_away_seen": true,
+        "paste.switched_back_seen": true
+      }
+    },
+    {
+      "id": "paste_shift_from_title",
+      "platforms": [
+        "macos"
+      ],
+      "seed": {
+        "text": "alpha beta\ngamma delta\n"
+      },
+      "driver": {
+        "macos": {
+          "keys": [
+            {
+              "key_code": 9,
+              "modifiers": [
+                "command",
+                "shift"
+              ]
+            }
+          ],
+          "paste": {
+            "mode": "insert",
+            "target": "title",
+            "external_copy": false,
+            "clipboard": "paste-probe-clipboard-2609",
+            "selection_chars": 0
+          }
+        }
+      },
+      "expect": {
+        "paste.original_content": "alphaXpaste-probe-clipboard-2609 beta\ngamma delta\n",
+        "paste.original_name": "Paste probe original",
+        "paste.original_tags": [
+          "probe"
+        ],
+        "paste.count": 1,
+        "paste.restart_equal": true,
+        "paste.native_paste_seen": true,
+        "editor.buffer_hash": "209add7a3603e5db",
+        "cursor.char_index": 32,
+        "selection": null,
+        "app.search_query_len": 0,
+        "paste.editor_focused": true
+      }
+    },
+    {
+      "id": "paste_shift_from_sidebar_search",
+      "platforms": [
+        "macos"
+      ],
+      "seed": {
+        "text": "alpha beta\ngamma delta\n"
+      },
+      "driver": {
+        "macos": {
+          "keys": [
+            {
+              "key_code": 9,
+              "modifiers": [
+                "command",
+                "shift"
+              ]
+            }
+          ],
+          "paste": {
+            "mode": "insert",
+            "target": "search",
+            "external_copy": false,
+            "clipboard": "paste-probe-clipboard-2609",
+            "selection_chars": 0
+          }
+        }
+      },
+      "expect": {
+        "paste.original_content": "alphaXpaste-probe-clipboard-2609 beta\ngamma delta\n",
+        "paste.original_name": "Paste probe original",
+        "paste.original_tags": [
+          "probe"
+        ],
+        "paste.count": 1,
+        "paste.restart_equal": true,
+        "paste.native_paste_seen": true,
+        "editor.buffer_hash": "209add7a3603e5db",
+        "cursor.char_index": 32,
+        "selection": null,
+        "app.search_query_len": 0,
+        "paste.editor_focused": true
+      }
+    },
+    {
+      "id": "paste_shift_without_open_appends_last_line",
+      "platforms": [
+        "macos"
+      ],
+      "seed": {
+        "text": "alpha beta\ngamma delta\n"
+      },
+      "driver": {
+        "macos": {
+          "keys": [
+            {
+              "key_code": 9,
+              "modifiers": [
+                "command",
+                "shift"
+              ]
+            }
+          ],
+          "paste": {
+            "mode": "no_open",
+            "target": "editor",
+            "external_copy": false,
+            "clipboard": "paste-probe-clipboard-2609",
+            "selection_chars": 0
+          }
+        }
+      },
+      "expect": {
+        "paste.original_content": "alpha beta\ngamma delta\npaste-probe-clipboard-2609",
+        "paste.original_name": "Paste probe original",
+        "paste.original_tags": [
+          "probe"
+        ],
+        "paste.count": 1,
+        "paste.restart_equal": true,
+        "paste.native_paste_seen": true,
+        "editor.buffer_hash": "681a27241c38d319",
+        "paste.editor_focused": true,
+        "paste.before_selected": null
+      }
+    },
+    {
+      "id": "paste_shift_into_palette",
+      "platforms": [
+        "macos"
+      ],
+      "seed": {
+        "text": "alpha beta\ngamma delta\n"
+      },
+      "driver": {
+        "macos": {
+          "keys": [
+            {
+              "key_code": 9,
+              "modifiers": [
+                "command",
+                "shift"
+              ]
+            }
+          ],
+          "paste": {
+            "mode": "overlay",
+            "target": "palette",
+            "external_copy": false,
+            "clipboard": "paste-probe-clipboard-2609",
+            "selection_chars": 0
+          }
+        }
+      },
+      "expect": {
+        "paste.original_content": "alphaX beta\ngamma delta\n",
+        "paste.original_name": "Paste probe original",
+        "paste.original_tags": [
+          "probe"
+        ],
+        "paste.count": 1,
+        "paste.restart_equal": true,
+        "paste.native_paste_seen": true,
+        "editor.buffer_hash": "58e39fc6853e4eaa",
+        "focus.virtual_editor": false,
+        "paste.query": "paste-probe-clipboard-2609"
+      }
+    },
+    {
+      "id": "paste_shift_into_picker",
+      "platforms": [
+        "macos"
+      ],
+      "seed": {
+        "text": "alpha beta\ngamma delta\n"
+      },
+      "driver": {
+        "macos": {
+          "keys": [
+            {
+              "key_code": 9,
+              "modifiers": [
+                "command",
+                "shift"
+              ]
+            }
+          ],
+          "paste": {
+            "mode": "overlay",
+            "target": "picker",
+            "external_copy": false,
+            "clipboard": "paste-probe-clipboard-2609",
+            "selection_chars": 0
+          }
+        }
+      },
+      "expect": {
+        "paste.original_content": "alphaX beta\ngamma delta\n",
+        "paste.original_name": "Paste probe original",
+        "paste.original_tags": [
+          "probe"
+        ],
+        "paste.count": 1,
+        "paste.restart_equal": true,
+        "paste.native_paste_seen": true,
+        "editor.buffer_hash": "58e39fc6853e4eaa",
+        "focus.virtual_editor": false,
+        "paste.query": "paste-probe-clipboard-2609"
+      }
+    },
+    {
+      "id": "paste_shift_into_help",
+      "platforms": [
+        "macos"
+      ],
+      "seed": {
+        "text": "alpha beta\ngamma delta\n"
+      },
+      "driver": {
+        "macos": {
+          "keys": [
+            {
+              "key_code": 9,
+              "modifiers": [
+                "command",
+                "shift"
+              ]
+            }
+          ],
+          "paste": {
+            "mode": "overlay",
+            "target": "help",
+            "external_copy": false,
+            "clipboard": "paste-probe-clipboard-2609",
+            "selection_chars": 0
+          }
+        }
+      },
+      "expect": {
+        "paste.original_content": "alphaX beta\ngamma delta\n",
+        "paste.original_name": "Paste probe original",
+        "paste.original_tags": [
+          "probe"
+        ],
+        "paste.count": 1,
+        "paste.restart_equal": true,
+        "paste.native_paste_seen": true,
+        "editor.buffer_hash": "58e39fc6853e4eaa",
+        "focus.virtual_editor": false,
+        "paste.query": "paste-probe-clipboard-2609"
+      }
+    },
+    {
+      "id": "paste_markdown_wraps_selected_phrase",
+      "platforms": [
+        "macos"
+      ],
+      "seed": {
+        "text": "phrase tail\n"
+      },
+      "driver": {
+        "macos": {
+          "keys": [
+            {
+              "key_code": 9,
+              "modifiers": [
+                "command"
+              ]
+            }
+          ],
+          "paste": {
+            "mode": "markdown",
+            "target": "editor",
+            "external_copy": false,
+            "clipboard": "https://example.com/docs",
+            "selection_chars": 6
+          }
+        }
+      },
+      "expect": {
+        "paste.original_content": "[phrase](https://example.com/docs) tail\n",
+        "paste.original_name": "Paste probe original",
+        "paste.original_tags": [
+          "probe"
+        ],
+        "paste.count": 1,
+        "paste.restart_equal": true,
+        "paste.native_paste_seen": true,
+        "editor.buffer_hash": "faf9a091a8e4f897",
+        "cursor.char_index": 34,
+        "selection": null,
+        "paste.editor_focused": true
+      }
+    },
+    {
+      "id": "paste_markdown_replaces_link_destination",
+      "platforms": [
+        "macos"
+      ],
+      "seed": {
+        "text": "[phrase](https://example.com/docs) tail\n"
+      },
+      "driver": {
+        "macos": {
+          "keys": [
+            {
+              "key_code": 9,
+              "modifiers": [
+                "command"
+              ]
+            }
+          ],
+          "paste": {
+            "mode": "markdown",
+            "target": "editor",
+            "external_copy": false,
+            "clipboard": "https://example.org/new",
+            "selection_chars": 24
+          }
+        }
+      },
+      "expect": {
+        "paste.original_content": "[phrase](https://example.org/new) tail\n",
+        "paste.original_name": "Paste probe original",
+        "paste.original_tags": [
+          "probe"
+        ],
+        "paste.count": 1,
+        "paste.restart_equal": true,
+        "paste.native_paste_seen": true,
+        "editor.buffer_hash": "359f3c8c6ded6357",
+        "cursor.char_index": 32,
+        "selection": null,
+        "paste.editor_focused": true
+      }
+    }
   ]
 }

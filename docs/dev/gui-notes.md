@@ -74,6 +74,24 @@ tools/nav_probe_run_macos.sh --build --assert --only cmd_up_from_middle --summar
 tools/nav_probe_run_macos.sh --build --assert --summary
 ```
 
+macOS `paste_*` scenarios use persisted fixtures and the `LocalPasteReview` test
+bundle, with a fresh temporary `DB_PATH`, unused port, and explicit `LP_SERVER`.
+The helper types and pastes through native events, reads bodies and metadata
+through the embedded API, and checks them again after restarting the GUI. App
+switch scenarios use `Cmd+Tab` and copy synthetic text from a new Safari window;
+Safari must already be running. Only that window is closed. Every clipboard item
+and representation is privately backed up and restored byte for byte, unless
+outside clipboard activity has superseded the test copy.
+
+Use `--key-delay-ms 80` for a normal held chord or `--key-delay-ms 0` for rapid
+release. `--capture` pauses each paste result for a Computer screenshot: the
+runner writes `LOG.with_suffix('.capture.json')` with the scenario and isolated
+endpoint, and resumes when the controller creates `LOG.with_suffix('.continue')`.
+No human input is needed. Completed paste results are recorded alongside native
+frames in NDJSON, including full synthetic API readback and restart equality.
+An unmet native precondition remains a failed assertion; it is never silently
+replaced by an in-memory test.
+
 Windows automation runs from Windows PowerShell 5.1 or PowerShell 7 and sends navigation chords through low-level `SendInput`; `-UseSendKeys` is a fallback for debugging the driver itself.
 
 ```powershell

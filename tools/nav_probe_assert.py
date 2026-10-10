@@ -27,7 +27,7 @@ WINDOWS_RUNNER_SWITCH_RE = re.compile(r'^\s*"([A-Z0-9_]+)"\s*\{', re.MULTILINE)
 MACOS_ALLOWED_MODIFIERS = {"command", "option", "shift", "control"}
 # Find and help regressions type queries and "x", with Cmd+K, F1, Return, and Escape.
 MACOS_KNOWN_KEY_CODES = {
-    2, 3, 6, 7, 14, 34, 36, 37, 40, 45, 48, 51, 53,
+    2, 3, 6, 7, 9, 14, 34, 36, 37, 40, 45, 48, 51, 53,
     115, 116, 117, 119, 121, 122, 123, 124, 125, 126,
 }
 
@@ -746,6 +746,16 @@ def assert_scenarios(
             failures.append(f"{scenario_id}: no frames for log scenario {log_scenario_id!r}")
             continue
         event_frame, state_frame = selected_frames(matching)
+        if scenario.get("driver", {}).get("macos", {}).get("paste"):
+            results = [frame for frame in matching if frame.get("event") == "nav_probe_paste_result"]
+            if not results:
+                failures.append(f"{scenario_id}: missing completed native paste result and restart check")
+                continue
+            state_frame = results[-1]
+            paste_frames = [frame for frame in matching
+                            if any(event.get("kind") == "paste" for event in frame.get("raw_events", []))]
+            if paste_frames:
+                event_frame = paste_frames[-1]
         if include_summary:
             summary_id = (
                 scenario_id
@@ -753,6 +763,14 @@ def assert_scenarios(
                 else f"{scenario_id} as {log_scenario_id}"
             )
             summaries.append(scenario_summary(summary_id, event_frame, state_frame))
+            if "paste" in state_frame:
+                paste = state_frame["paste"]
+                summaries.append(f"{summary_id}: pastes={paste['count']}, query={paste['query']!r}, "
+                                 f"restart_equal={paste['restart_equal']}, precondition={paste['precondition_failure']!r}")
+        if state_frame.get("paste", {}).get("precondition_failure"):
+            failures.append(f"{scenario_id}: native precondition not reached: "
+                            + state_frame["paste"]["precondition_failure"])
+            continue
         for key, expected in scenario.get("expect", {}).items():
             try:
                 actual = dotted(state_frame, key)
@@ -787,6 +805,32 @@ def assert_scenarios(
         requested = ", ".join(sorted(str(scenario_id) for scenario_id in scenario_filter))
         failures.append(f"no spec scenarios matched selection: {requested}")
     return failures, summaries
+
+
+def self_test_paste_results() -> list[str]:
+    """Require a completed persisted result, including after teardown frames."""
+    scenario = {"id": "paste_test", "platforms": ["macos"],
+                "driver": {"macos": {"paste": {"mode": "insert"}}},
+                "expect": {"paste.count": 1, "paste.restart_equal": True}}
+    spec = {"scenarios": [scenario]}
+    native = {"scenario": "paste_test", "raw_events": []}
+    result = {"scenario": "paste_test", "event": "nav_probe_paste_result",
+              "paste": {"count": 1, "restart_equal": True, "precondition_failure": None}}
+    failures = []
+
+    def check(frames):
+        return assert_scenarios(frames, spec, "macos", set(), {}, False)[0]
+
+    if not check([native]):
+        failures.append("paste self-test: native frames alone must not prove persistence")
+    if check([native, result, native]):
+        failures.append("paste self-test: teardown must not replace the completed result")
+    if not check([dict(result, paste=dict(result["paste"], restart_equal=False))]):
+        failures.append("paste self-test: a restart mismatch must fail")
+    blocked = dict(result, paste=dict(result["paste"], precondition_failure="no native selection state"))
+    if not check([blocked]):
+        failures.append("paste self-test: an unmet native precondition must fail")
+    return failures
 
 
 def main() -> int:
@@ -859,6 +903,7 @@ def main() -> int:
             failures.extend(validate_scenario_aliases(spec, scenario_aliases))
         if args.self_test:
             failures.extend(self_test_manifest_selection(spec))
+            failures.extend(self_test_paste_results())
         if failures:
             print("navigation probe validation failed:", file=sys.stderr)
             for failure in failures:
