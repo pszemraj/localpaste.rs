@@ -136,7 +136,7 @@ fn edge_trimming_keeps_internal_punctuation() {
         "localpaste.rs",
         "p.id",
         "max_paste_bytes",
-        "127.0.0.1",
+        "v1.2.3",
         "my-long-kebab-case-name",
         // Underscores are identifier characters and are not trimmed.
         "__init__",
@@ -170,6 +170,50 @@ fn tokens_that_are_short_after_trimming_are_dropped() {
 
     // `1.` and `10.` trim to digits only, which are never terms.
     assert!(derive("1. 10. 200:", Some("text")).terms.is_empty());
+}
+
+#[test]
+fn terms_need_a_letter_so_dates_times_and_numbers_are_dropped() {
+    let numeric = derive(
+        "deployed 1.2.3 at 2026-10-10 06:00:01 from 127.0.0.1",
+        Some("text"),
+    );
+    assert_eq!(numeric.terms, ["deployed"]);
+    assert_eq!(numeric.handle.as_deref(), Some("deployed"));
+
+    // A letter anywhere keeps a token, so error codes and versions stay terms.
+    let coded = derive("error E0308 in v1.2 on node-04", Some("text"));
+    assert_eq!(coded.terms, ["node-04", "e0308", "v1.2"]);
+
+    // Timestamp and time-column handles lead with words, not a date or time.
+    for (content, language, handle) in [
+        (
+            "2026-10-10 06:00:01 INFO starting scheduler\n2026-10-10 06:00:02 INFO loaded 12 jobs",
+            None,
+            "info starting",
+        ),
+        (
+            "2026-10-10 06:00:01,423 INFO Starting\n2026-10-10 06:00:02,117 ERROR Failed",
+            None,
+            "info starting",
+        ),
+        (
+            "ts,count\n2026-10-10 06:00:01,42\n2026-10-10 06:00:02,17",
+            Some("csv"),
+            "count",
+        ),
+    ] {
+        let derived = derive(content, language);
+        assert!(
+            derived
+                .terms
+                .iter()
+                .all(|term| term.chars().any(char::is_alphabetic)),
+            "{content:?}: {:?}",
+            derived.terms
+        );
+        assert_eq!(derived.handle.as_deref(), Some(handle), "{content:?}");
+    }
 }
 
 #[test]

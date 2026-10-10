@@ -733,10 +733,17 @@ pub(crate) fn trim_term_edges(token: &str) -> &str {
     token.trim_matches(['.', ':', '-'])
 }
 
+/// Whether a normalized token qualifies as a derived term.
+///
+/// A term is 3 to [`MAX_TERM_CHARS`] characters long, holds at least one
+/// letter, and is neither a stopword nor a keyword of `language`. Tokens
+/// without a letter (`2026-10-10`, `06:00:01`, `1.2.3`, `127.0.0.1`) are dates,
+/// times, versions, and addresses that would otherwise lead a timestamped
+/// log's synthesized handle; body search still finds them.
 fn is_search_worthy_token(token: &str, language: &str) -> bool {
     // Tokens may hold any script, so the limits count characters, not bytes.
     let chars = token.chars().count();
-    if !(3..=MAX_TERM_CHARS).contains(&chars) || token.chars().all(char::is_numeric) {
+    if !(3..=MAX_TERM_CHARS).contains(&chars) || !token.chars().any(char::is_alphabetic) {
         return false;
     }
 
