@@ -34,6 +34,18 @@ enum SidebarListItem {
     Row(usize),
 }
 
+/// Returns the id under which the sidebar rows scroll area stores its state.
+///
+/// `ScrollArea::id_salt` wraps its argument in `Id::new` before deriving the
+/// persistent id, so a lookup must wrap the salt the same way. Hashing the raw
+/// salt yields a different id, and the stored scroll offset is never found.
+///
+/// # Arguments
+/// - `ui`: Sidebar UI the rows scroll area is added to.
+fn sidebar_rows_scroll_id(ui: &egui::Ui) -> egui::Id {
+    ui.make_persistent_id(egui::Id::new(SIDEBAR_ROWS_SCROLL_SALT))
+}
+
 fn sidebar_hover_text(paste: &PasteSummary) -> String {
     let mut lines = vec![paste.name.clone()];
     let derived = &paste.derived;
@@ -359,9 +371,8 @@ impl LocalPasteApp {
         let top = first as f32 * stride;
         let bottom = row as f32 * stride + row_height;
         let viewport = ui.available_rect_before_wrap().height();
-        let scroll_id = ui.make_persistent_id(SIDEBAR_ROWS_SCROLL_SALT);
-        let offset =
-            egui::scroll_area::State::load(ui.ctx(), scroll_id).map_or(0.0, |state| state.offset.y);
+        let offset = egui::scroll_area::State::load(ui.ctx(), sidebar_rows_scroll_id(ui))
+            .map_or(0.0, |state| state.offset.y);
         if top < offset {
             Some(top)
         } else if bottom > offset + viewport {
