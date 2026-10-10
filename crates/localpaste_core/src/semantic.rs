@@ -96,6 +96,12 @@ pub fn derive(content: &str, language: Option<&str>) -> DerivedMeta {
         .or_else(|| commands::extract_command_handle(sample))
         .or_else(|| extract_config_handle(sample))
         .or_else(|| extract_url_handle(sample))
+        .or_else(|| match kind {
+            PasteKind::Log => {
+                logs::log_handle(sample, &canonicalize(language.unwrap_or_default().trim()))
+            }
+            _ => None,
+        })
         .or_else(|| synthesize_handle_from_terms(&terms))
         .map(|value| truncate_chars(value.as_str(), MAX_HANDLE_CHARS));
 
@@ -736,14 +742,15 @@ pub(crate) fn trim_term_edges(token: &str) -> &str {
 /// Whether a normalized token qualifies as a derived term.
 ///
 /// A term is 3 to [`MAX_TERM_CHARS`] characters long, holds at least one
-/// letter, and is neither a stopword nor a keyword of `language`. Tokens
-/// without a letter (`2026-10-10`, `06:00:01`, `1.2.3`, `127.0.0.1`) are dates,
-/// times, versions, and addresses that would otherwise lead a timestamped
-/// log's synthesized handle; body search still finds them.
+/// letter that is not an ISO 8601 designator (see [`has_word_letter`]), and is
+/// neither a stopword nor a keyword of `language`. Tokens without such a
+/// letter (`2026-10-10`, `06:00:01`, `2026-10-09t14:02:11.384z`, `1.2.3`,
+/// `127.0.0.1`) are dates, times, versions, and addresses that would otherwise
+/// lead a timestamped log's synthesized handle; body search still finds them.
 fn is_search_worthy_token(token: &str, language: &str) -> bool {
     // Tokens may hold any script, so the limits count characters, not bytes.
     let chars = token.chars().count();
-    if !(3..=MAX_TERM_CHARS).contains(&chars) || !token.chars().any(char::is_alphabetic) {
+    if !(3..=MAX_TERM_CHARS).contains(&chars) || !has_word_letter(token) {
         return false;
     }
 
@@ -764,6 +771,24 @@ fn is_search_worthy_token(token: &str, language: &str) -> bool {
         _ => &[],
     };
     !language_keywords.contains(&token)
+}
+
+/// Whether a lowercased token holds a letter other than an ISO 8601 date and
+/// time designator: the `t` between a date and a time (`2026-10-09t14`) and
+/// the `z` after a UTC time (`14:02:11z`), which are a `t` with a digit on
+/// both sides and a `z` that ends the token after a digit. Identifiers such as
+/// `e0308`, `t3.micro`, and `gzip2` keep their letters.
+fn has_word_letter(token: &str) -> bool {
+    let chars: Vec<char> = token.chars().collect();
+    chars.iter().enumerate().any(|(index, ch)| {
+        let after_digit = index > 0 && chars[index - 1].is_ascii_digit();
+        let designator = match ch {
+            't' => after_digit && chars.get(index + 1).is_some_and(char::is_ascii_digit),
+            'z' => after_digit && index + 1 == chars.len(),
+            _ => false,
+        };
+        ch.is_alphabetic() && !designator
+    })
 }
 
 /// Strip surrounding whitespace, quotes, and backticks from a handle operand.

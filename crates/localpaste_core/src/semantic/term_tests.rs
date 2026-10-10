@@ -217,6 +217,54 @@ fn terms_need_a_letter_so_dates_times_and_numbers_are_dropped() {
 }
 
 #[test]
+fn iso_timestamps_and_dates_are_not_terms() {
+    // ISO 8601's `T` and `Z` designators are not the letter a term needs.
+    for timestamp in [
+        "2026-10-09T14:02:11.384Z",
+        "2026-10-09T14:02:11Z",
+        "2026-10-09T14:02:11-05:00",
+        "2026-10-09T14:02:11+02:00",
+        "20261009T140211Z",
+        "2026-10-09T14",
+        "2026-10-09",
+        "14:02:11.384",
+        "14:02:11.384Z",
+    ] {
+        let derived = derive(&format!("deployed {timestamp} on node-04"), Some("text"));
+        assert_eq!(derived.terms, ["node-04", "deployed"], "{timestamp}");
+    }
+    // Identifiers and locations keep their letters, `t` and `z` included.
+    let coded = derive(
+        "E0308 in v1.2.3 on node-04 at client.rs:212:38 for t3.micro and gzip",
+        Some("text"),
+    );
+    for term in ["e0308", "v1.2.3", "node-04", "client.rs:212:38"] {
+        assert!(
+            coded.terms.iter().any(|found| found == term),
+            "{term}: {:?}",
+            coded.terms
+        );
+    }
+    assert_eq!(
+        derive("t3.micro gzip2", Some("text")).terms,
+        ["t3.micro", "gzip2"]
+    );
+
+    let log = derive(super::log_tests::PANIC_AFTER_SERVICE_LOG, Some("log"));
+    assert!(
+        log.terms.iter().all(|term| !term.starts_with("2026")),
+        "{:?}",
+        log.terms
+    );
+    // A Log's handle names its first leveled event, not a location or timestamp.
+    assert_eq!(log.handle.as_deref(), Some("info checkout::api"));
+    assert_eq!(
+        derive(super::log_tests::PANIC_AFTER_SERVICE_LOG, None).handle,
+        log.handle
+    );
+}
+
+#[test]
 fn command_handles_keep_path_operands_whole_or_cut_them() {
     assert_handles(
         None,

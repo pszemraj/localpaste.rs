@@ -206,6 +206,38 @@ fn has_machine_token(text: &str) -> bool {
         })
 }
 
+/// Handle for a Log: the first two search terms of its first line with an
+/// uppercase or bracketed level, after any timestamp, in reading order, such
+/// as `info checkout::api` for `2026-10-09T14:02:11Z INFO checkout::api: POST`.
+///
+/// The handle names the first record the log holds, as a command handle names
+/// the first command, rather than the terms that repeat most, which in a log
+/// are often a source location or a path component from a backtrace. Only a
+/// level that identifies a log on its own
+/// ([`ParsedLogHeader::strong_single_line`]) marks a record; a lowercase
+/// `error:` line is a tool's diagnostic, such as Cargo's exit report.
+///
+/// # Arguments
+/// - `sample`: Bounded semantic sample of a body classified as a Log.
+/// - `language`: Canonical stored language, whose keywords are not terms.
+///
+/// # Returns
+/// The handle, or `None` when no line has such a level or that line has no terms.
+pub(super) fn log_handle(sample: &str, language: &str) -> Option<String> {
+    let line = sample.lines().map(str::trim_start).find(|line| {
+        let message = timestamp_prefix_len(line)
+            .and_then(|end| line.get(end..))
+            .unwrap_or(line);
+        parse_log_header(message, false).is_some_and(|header| header.strong_single_line)
+    })?;
+    let terms: Vec<String> = super::tokenize(line)
+        .map(super::normalize_term)
+        .filter(|term| super::is_search_worthy_token(term, language))
+        .take(2)
+        .collect();
+    super::synthesize_handle_from_terms(&terms)
+}
+
 /// The run of level-prefixed lines that opens a sample.
 struct HeaderRun {
     headers: usize,
