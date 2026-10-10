@@ -419,3 +419,88 @@ fn shortcut_help_lists_the_palette_alias_on_its_primary_row() {
         );
     }
 }
+
+/// Where help draws its first section title, `App actions`, while it is scrolled into view.
+fn first_section_title(output: &egui::FullOutput) -> Option<egui::Rect> {
+    match label_rects(output, "App actions", |_| true).as_slice() {
+        [] => None,
+        [rect] => Some(*rect),
+        rects => panic!("expected one App actions title, found {rects:?}"),
+    }
+}
+
+#[test]
+fn shortcut_help_reopens_at_the_top_of_its_list() {
+    for (close, restart) in [
+        (egui::Key::Escape, false),
+        (egui::Key::F1, false),
+        (egui::Key::Escape, true),
+    ] {
+        let what = format!("closed with {close:?}, restarted: {restart}");
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        // Half-second steps let egui's smooth wheel scrolling finish between frames.
+        let mut time = 0.0;
+        let mut frame = |app: &mut LocalPasteApp, events: Vec<egui::Event>| {
+            time += 0.5;
+            run_full_update_with_input(
+                app,
+                &ctx,
+                egui::RawInput {
+                    time: Some(time),
+                    ..shortcut_help_input(events)
+                },
+            )
+        };
+        let f1 = || vec![key_event(egui::Key::F1, egui::Modifiers::NONE)];
+
+        frame(&mut harness.app, f1());
+        let mut output = frame(&mut harness.app, Vec::new());
+        for _ in 0..3 {
+            output = frame(&mut harness.app, Vec::new());
+        }
+        let top = first_section_title(&output)
+            .unwrap_or_else(|| panic!("{what}: help should open showing App actions"));
+
+        frame(
+            &mut harness.app,
+            vec![
+                egui::Event::PointerMoved(shortcut_help_viewport().center()),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -400.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        for _ in 0..3 {
+            output = frame(&mut harness.app, Vec::new());
+        }
+        assert!(
+            first_section_title(&output).is_none_or(|title| title.top() < top.top()),
+            "{what}: the wheel should scroll the list down"
+        );
+
+        frame(
+            &mut harness.app,
+            vec![key_event(close, egui::Modifiers::NONE)],
+        );
+        assert!(!harness.app.shortcut_help_open, "{what}");
+        frame(&mut harness.app, Vec::new());
+        if restart {
+            // A restart keeps egui's persisted memory but builds a new app.
+            harness = make_app();
+        }
+
+        frame(&mut harness.app, f1());
+        assert!(harness.app.shortcut_help_open, "{what}");
+        for _ in 0..3 {
+            output = frame(&mut harness.app, Vec::new());
+        }
+        assert_eq!(
+            first_section_title(&output),
+            Some(top),
+            "{what}: reopened help should start at the top of its list"
+        );
+    }
+}

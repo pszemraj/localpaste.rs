@@ -293,6 +293,7 @@ impl LocalPasteApp {
         self.command_palette_open = false;
         self.close_paste_picker();
         self.shortcut_help_focus_requested = true;
+        self.shortcut_help_scroll_to_top = true;
         self.shortcut_help_open = true;
         self.focus_discovery_input(ctx);
     }
@@ -358,7 +359,10 @@ impl LocalPasteApp {
                     .id_salt("shortcut_help_results")
                     .auto_shrink([false, false])
                     .max_height(results_height);
-                if self.shortcut_help_query != previous_query {
+                // egui remembers the offset across closes and restarts, so each
+                // open, like each search edit, starts again at the first section.
+                let opening = std::mem::take(&mut self.shortcut_help_scroll_to_top);
+                if opening || self.shortcut_help_query != previous_query {
                     scroll = scroll.vertical_scroll_offset(0.0);
                 }
                 scroll.show(ui, |ui| {

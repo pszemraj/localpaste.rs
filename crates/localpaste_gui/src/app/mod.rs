@@ -190,6 +190,8 @@ pub(crate) struct LocalPasteApp {
     shortcut_help_open: bool,
     shortcut_help_query: String,
     shortcut_help_focus_requested: bool,
+    /// Set when help opens so its first rendered frame shows the list from the top.
+    shortcut_help_scroll_to_top: bool,
     discovery_return_focus: Option<egui::Id>,
     /// Native events waiting for the discovery focus boundary's next rendered frame.
     deferred_discovery_events: Vec<egui::Event>,
