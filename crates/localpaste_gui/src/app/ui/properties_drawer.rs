@@ -99,49 +99,135 @@ fn render_derived_meta_section(ui: &mut egui::Ui, derived: &DerivedMeta) {
     ui.label(format!("Terms: {}", format_derived_terms(&derived.terms)));
 }
 
-fn language_typeahead_target(letter: char) -> Option<&'static str> {
-    let mut normalized = letter.to_lowercase();
-    let letter = normalized.next()?;
-    if !letter.is_alphabetic() {
-        return None;
+/// Seconds without typing after which a language popup's type-ahead starts over.
+const LANGUAGE_TYPEAHEAD_RESET_SECS: f64 = 1.0;
+
+/// Language selector options in display order as `(value, label)`: `Auto`, then the manual languages.
+fn language_options() -> impl Iterator<Item = (&'static str, &'static str)> {
+    std::iter::once((AUTO_LANGUAGE, "Auto")).chain(
+        localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
+            .iter()
+            .map(|option| (option.value, option.label)),
+    )
+}
+
+/// Type-ahead state of one open language popup, kept in egui temp memory.
+///
+/// Typed characters accumulate until [`LANGUAGE_TYPEAHEAD_RESET_SECS`] pass
+/// without typing. The buffer selects the first option whose label starts with
+/// it, ignoring case. A buffer of one character typed repeatedly instead cycles
+/// through the options starting with that character, wrapping at the end. A
+/// buffer that matches no label keeps the current choice.
+#[derive(Clone, Default)]
+struct LanguageTypeahead {
+    /// Lowercased characters typed since the buffer last started over.
+    buffer: String,
+    /// egui input time of the latest keystroke, in seconds.
+    last_typed: f64,
+}
+
+impl LanguageTypeahead {
+    /// Feeds one typed character and moves `language_choice` to the option it selects.
+    ///
+    /// # Arguments
+    /// - `ch`: Typed character.
+    /// - `now`: egui input time of the keystroke, in seconds.
+    /// - `language_choice`: Selected option value, updated in place.
+    ///
+    /// # Returns
+    /// `true` when `language_choice` changed.
+    fn type_char(&mut self, ch: char, now: f64, language_choice: &mut String) -> bool {
+        if now - self.last_typed >= LANGUAGE_TYPEAHEAD_RESET_SECS {
+            self.buffer.clear();
+        }
+        self.last_typed = now;
+        self.buffer.extend(ch.to_lowercase());
+        match self.target(language_choice) {
+            Some(target) if target != language_choice.as_str() => {
+                *language_choice = target.to_string();
+                true
+            }
+            _ => false,
+        }
     }
-    if letter == 'a' {
-        return Some(AUTO_LANGUAGE);
+
+    /// The option value the buffer selects from `current`, or `None` when nothing matches.
+    fn target(&self, current: &str) -> Option<&'static str> {
+        let first = self.buffer.chars().next()?;
+        let label_starts_with =
+            |label: &str, prefix: &str| label.to_lowercase().starts_with(prefix);
+        let repeated =
+            self.buffer.len() > first.len_utf8() && self.buffer.chars().all(|ch| ch == first);
+        if !repeated {
+            return language_options()
+                .find(|(_, label)| label_starts_with(label, &self.buffer))
+                .map(|(value, _)| value);
+        }
+        let prefix = first.to_string();
+        let cycle = language_options()
+            .filter(|(_, label)| label_starts_with(label, &prefix))
+            .map(|(value, _)| value)
+            .collect::<Vec<_>>();
+        let next = cycle
+            .iter()
+            .position(|value| *value == current)
+            .map_or(0, |index| (index + 1) % cycle.len());
+        cycle.get(next).copied()
     }
-    let prefix = letter.to_string();
-    localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
+}
+
+/// Characters typed this frame that extend a type-ahead buffer.
+///
+/// Whitespace and control characters are dropped. Everything else is kept,
+/// including `#` and `+` so `c#` and `c+` reach C# and C++.
+fn typeahead_chars(events: &[egui::Event]) -> String {
+    events
         .iter()
-        .find(|option| {
-            option
-                .label
-                .to_ascii_lowercase()
-                .starts_with(prefix.as_str())
+        .filter_map(|event| match event {
+            egui::Event::Text(text) => Some(text.as_str()),
+            _ => None,
         })
-        .map(|option| option.value)
+        .flat_map(str::chars)
+        .filter(|ch| !ch.is_whitespace() && !ch.is_control())
+        .collect()
 }
 
-fn apply_language_selector_typeahead(
-    language_choice: &mut String,
+/// Applies this frame's typing to a language popup's type-ahead.
+///
+/// A closed popup ignores typing and drops its buffer, so reopening starts a
+/// new one. Time comes from egui's input clock, which tests control through
+/// `RawInput::time`.
+///
+/// # Arguments
+/// - `ui`: UI that renders the combo box.
+/// - `combo_id`: Widget id of the combo box.
+/// - `popup_open`: Whether the combo's popup is open this frame.
+/// - `language_choice`: Selected option value, updated in place.
+///
+/// # Returns
+/// `true` when the typed characters changed `language_choice`.
+fn apply_language_typeahead(
+    ui: &egui::Ui,
+    combo_id: egui::Id,
     popup_open: bool,
-    typed_letter: Option<char>,
+    language_choice: &mut String,
 ) -> bool {
+    let state_id = combo_id.with("language_typeahead");
     if !popup_open {
+        ui.data_mut(|data| data.remove::<LanguageTypeahead>(state_id));
         return false;
     }
-    let Some(target) = typed_letter.and_then(language_typeahead_target) else {
-        return false;
-    };
-    if language_choice == target {
+    let (typed, now) = ui.input(|input| (typeahead_chars(&input.events), input.time));
+    if typed.is_empty() {
         return false;
     }
-    *language_choice = target.to_string();
-    true
-}
-
-fn typed_letter_from_events(events: &[egui::Event]) -> Option<char> {
-    events.iter().find_map(|event| match event {
-        egui::Event::Text(text) => text.chars().find(|ch| ch.is_alphabetic()),
-        _ => None,
+    ui.data_mut(|data| {
+        let state = data.get_temp_mut_or_default::<LanguageTypeahead>(state_id);
+        let mut changed = false;
+        for ch in typed.chars() {
+            changed |= state.type_char(ch, now, language_choice);
+        }
+        changed
     })
 }
 
@@ -159,10 +245,11 @@ fn language_combo_id(ui: &egui::Ui, combo_id_salt: &str) -> egui::Id {
     ui.make_persistent_id(egui::Id::new(combo_id_salt))
 }
 
-/// Renders a language combo box with open-only letter-jump selection.
+/// Renders a language combo box with open-only type-ahead selection.
 ///
-/// While the popup is open, a typed letter selects the first matching option
-/// and scrolls it to the center of the popup so the jump is visible.
+/// While the popup is open, typing selects an option as described on
+/// [`LanguageTypeahead`] and scrolls it to the center of the popup so the jump
+/// is visible.
 ///
 /// # Arguments
 /// - `ui`: Parent UI receiving the combo box.
@@ -175,9 +262,9 @@ pub(super) fn render_language_choice_combo(
     width: Option<f32>,
     language_choice: &mut String,
 ) {
-    let typed_letter = ui.input(|input| typed_letter_from_events(&input.events));
-    let popup_open = egui::ComboBox::is_open(ui.ctx(), language_combo_id(ui, combo_id_salt));
-    let jumped = apply_language_selector_typeahead(language_choice, popup_open, typed_letter);
+    let combo_id = language_combo_id(ui, combo_id_salt);
+    let popup_open = egui::ComboBox::is_open(ui.ctx(), combo_id);
+    let jumped = apply_language_typeahead(ui, combo_id, popup_open, language_choice);
 
     let auto_label = auto_language_status_label();
     let selected_language_text =
@@ -188,12 +275,7 @@ pub(super) fn render_language_choice_combo(
         combo = combo.width(width);
     }
     combo.show_ui(ui, |ui| {
-        let options = std::iter::once((auto_language_choice_key(), "Auto")).chain(
-            localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
-                .iter()
-                .map(|option| (option.value, option.label)),
-        );
-        for (value, label) in options {
+        for (value, label) in language_options() {
             let response = ui.selectable_value(language_choice, value.to_string(), label);
             if jumped && language_choice.as_str() == value {
                 response.scroll_to_me(Some(egui::Align::Center));
@@ -327,8 +409,8 @@ impl LocalPasteApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_language_choice, apply_language_selector_typeahead, auto_language_status_label,
-        format_derived_terms, language_typeahead_target, typed_letter_from_events, AUTO_LANGUAGE,
+        apply_language_choice, auto_language_status_label, format_derived_terms, language_options,
+        typeahead_chars, LanguageTypeahead, AUTO_LANGUAGE,
     };
     use eframe::egui;
 
@@ -403,42 +485,59 @@ mod tests {
     }
 
     #[test]
-    fn language_typeahead_target_uses_first_matching_option_matrix() {
-        assert_eq!(language_typeahead_target('a'), Some(AUTO_LANGUAGE));
-        assert_eq!(language_typeahead_target('m'), Some("markdown"));
-        assert_eq!(language_typeahead_target('p'), Some("perl"));
-        assert_eq!(language_typeahead_target('L'), Some("latex"));
-        assert_eq!(language_typeahead_target('1'), None);
-        assert_eq!(language_typeahead_target('?'), None);
+    fn only_auto_starts_with_a_so_a_alone_selects_it() {
+        let starting_with_a = language_options()
+            .filter(|(_, label)| label.to_lowercase().starts_with('a'))
+            .map(|(value, _)| value)
+            .collect::<Vec<_>>();
+        assert_eq!(starting_with_a, [AUTO_LANGUAGE]);
     }
 
     #[test]
-    fn apply_language_selector_typeahead_requires_open_popup() {
-        let mut language_choice = "lua".to_string();
-        assert!(!apply_language_selector_typeahead(
-            &mut language_choice,
-            false,
-            Some('m'),
-        ));
-        assert_eq!(language_choice, "lua");
-
-        assert!(apply_language_selector_typeahead(
-            &mut language_choice,
-            true,
-            Some('m'),
-        ));
-        assert_eq!(language_choice, "markdown");
-    }
-
-    #[test]
-    fn typed_letter_from_events_ignores_non_letters_and_uses_first_letter() {
-        let events = vec![
-            egui::Event::Text(" ".to_string()),
-            egui::Event::Text("3".to_string()),
-            egui::Event::Text("m".to_string()),
-            egui::Event::Text("p".to_string()),
+    fn language_typeahead_script_matrix() {
+        // (key, input time, choice afterwards, whether the key changed it)
+        let script = [
+            ('P', 10.0, "perl", true),
+            ('Y', 10.2, "python", true),
+            ('t', 10.4, "python", false),
+            ('z', 10.6, "python", false),
+            ('c', 12.0, "c", true),
+            ('#', 12.1, "cs", true),
+            ('p', 14.0, "perl", true),
+            ('p', 14.1, "text", true),
+            ('p', 14.2, "powershell", true),
+            ('p', 14.3, "python", true),
+            ('p', 14.4, "perl", true),
+            ('a', 16.0, AUTO_LANGUAGE, true),
+            ('a', 16.1, AUTO_LANGUAGE, false),
+            ('1', 18.0, AUTO_LANGUAGE, false),
         ];
-        assert_eq!(typed_letter_from_events(&events), Some('m'));
+        let mut state = LanguageTypeahead::default();
+        let mut choice = "lua".to_string();
+        for (key, time, expected, changed) in script {
+            assert_eq!(
+                state.type_char(key, time, &mut choice),
+                changed,
+                "{key} at {time}"
+            );
+            assert_eq!(choice, expected, "{key} at {time}");
+        }
+    }
+
+    #[test]
+    fn typeahead_chars_drop_whitespace_and_controls() {
+        let events = vec![
+            egui::Event::Text(" c".to_string()),
+            egui::Event::Key {
+                key: egui::Key::P,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::Text("+\t+".to_string()),
+        ];
+        assert_eq!(typeahead_chars(&events), "c++");
     }
 
     #[test]

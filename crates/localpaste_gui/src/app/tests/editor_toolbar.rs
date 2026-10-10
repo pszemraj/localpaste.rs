@@ -183,26 +183,41 @@ fn editor_text_rects(output: &egui::FullOutput, label: &str) -> Vec<egui::Rect> 
     rects
 }
 
-/// Delivers `text` as typed input for one frame, then lets the frame settle.
-fn type_text(
-    app: &mut LocalPasteApp,
-    ctx: &egui::Context,
-    width: f32,
-    text: &str,
-) -> egui::FullOutput {
-    let _ = run_full_update_with_input(
-        app,
-        ctx,
-        egui::RawInput {
-            events: vec![egui::Event::Text(text.to_string())],
-            ..input_at(width)
-        },
-    );
-    render_at(app, ctx, width)
-}
-
 /// Frame width shared by the language combo tests, wide enough to show the Properties drawer.
 const LANGUAGE_COMBO_FRAME_WIDTH: f32 = 1372.0;
+/// Seconds between keystrokes of one type-ahead burst.
+const KEYSTROKE_GAP: f64 = 0.2;
+/// A pause longer than the one-second type-ahead reset, so the next key starts a new buffer.
+const TYPEAHEAD_PAUSE: f64 = 1.5;
+
+/// Types each character of `keys` in its own frame, then lets the frame settle.
+///
+/// The first key arrives `first_gap` seconds after the latest frame and the rest
+/// follow [`KEYSTROKE_GAP`] apart, all on egui's input clock rather than the wall clock.
+fn type_keys(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    keys: &str,
+    first_gap: f64,
+) -> egui::FullOutput {
+    let mut gap = first_gap;
+    let mut output = None;
+    for key in keys.chars() {
+        let time = ctx.input(|input| input.time) + gap;
+        let _ = run_full_update_with_input(
+            app,
+            ctx,
+            egui::RawInput {
+                events: vec![egui::Event::Text(key.to_string())],
+                time: Some(time),
+                ..input_at(LANGUAGE_COMBO_FRAME_WIDTH)
+            },
+        );
+        output = Some(render_at(app, ctx, LANGUAGE_COMBO_FRAME_WIDTH));
+        gap = KEYSTROKE_GAP;
+    }
+    output.expect("at least one key")
+}
 
 /// Where each language combo renders its selected text while auto-detect is active.
 #[derive(Clone, Copy)]
@@ -247,51 +262,132 @@ fn settle_popup_scroll(app: &mut LocalPasteApp, ctx: &egui::Context) -> egui::Fu
     output
 }
 
-/// Opens `combo`, types `m`, and asserts the popup scrolls to the Markdown option.
-fn assert_open_combo_jumps_to_markdown(combo: LanguageCombo) {
-    let mut harness = make_app();
-    let app = &mut harness.app;
-    let ctx = egui::Context::default();
+/// Shows `combo` with auto-detect active, opens its popup, and returns the combo center.
+fn open_language_combo(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    combo: LanguageCombo,
+) -> egui::Pos2 {
     app.properties_drawer_open = matches!(combo, LanguageCombo::Drawer);
-    let combo_center = auto_combo_center(app, &ctx, combo);
+    let combo_center = auto_combo_center(app, ctx, combo);
     assert!(!app.edit_language_is_manual && !app.metadata_dirty);
-
-    let opened = click(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, combo_center);
+    let opened = click(app, ctx, LANGUAGE_COMBO_FRAME_WIDTH, combo_center);
     assert!(
         !popup_option_rects(&opened, "Auto", combo_center).is_empty(),
         "the language popup is open"
     );
+    combo_center
+}
+
+/// Types prefixes into `combo`'s open popup and asserts each lands on its language.
+fn assert_prefix_typing_selects_languages(combo: LanguageCombo) {
+    let mut harness = make_app();
+    let app = &mut harness.app;
+    let ctx = egui::Context::default();
+    let combo_center = open_language_combo(app, &ctx, combo);
     assert!(
-        popup_option_rects(&opened, "Markdown", combo_center).is_empty(),
-        "Markdown starts below the popup's visible rows"
+        popup_option_rects(
+            &render_at(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH),
+            "Python",
+            combo_center
+        )
+        .is_empty(),
+        "Python starts below the popup's visible rows"
     );
 
-    let _ = type_text(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, "m");
+    let _ = type_keys(app, &ctx, "py", TYPEAHEAD_PAUSE);
     assert!(app.edit_language_is_manual);
-    assert_eq!(app.edit_language.as_deref(), Some("markdown"));
+    assert_eq!(app.edit_language.as_deref(), Some("python"));
     assert!(
         app.metadata_dirty,
-        "a letter jump dirties metadata like a click"
+        "a type-ahead jump dirties metadata like a click"
     );
     let settled = settle_popup_scroll(app, &ctx);
     assert!(
-        !popup_option_rects(&settled, "Markdown", combo_center).is_empty(),
-        "the popup scrolled the Markdown option into view"
+        !popup_option_rects(&settled, "Python", combo_center).is_empty(),
+        "the popup scrolled the Python option into view"
     );
 
-    // The popup stays open, so a second letter keeps jumping.
-    let _ = type_text(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, "g");
-    assert_eq!(app.edit_language.as_deref(), Some("go"));
+    // Spelling a name out stays on it instead of walking through other first letters.
+    for (keys, expected) in [
+        ("python", Some("python")),
+        ("ja", Some("java")),
+        ("jav", Some("java")),
+        ("javas", Some("javascript")),
+        ("sh", Some("shell")),
+        ("sq", Some("sql")),
+        ("c#", Some("cs")),
+        ("c+", Some("cpp")),
+        ("pl", Some("text")),
+        // Nothing matches, so the choice stays where it was.
+        ("q", Some("text")),
+        ("plx", Some("text")),
+        ("a", None),
+    ] {
+        let _ = type_keys(app, &ctx, keys, TYPEAHEAD_PAUSE);
+        assert_eq!(app.edit_language.as_deref(), expected, "typed {keys:?}");
+        assert_eq!(
+            app.edit_language_is_manual,
+            expected.is_some(),
+            "typed {keys:?}"
+        );
+    }
 }
 
 #[test]
-fn toolbar_language_combo_jumps_to_typed_letter_while_open() {
-    assert_open_combo_jumps_to_markdown(LanguageCombo::Toolbar);
+fn toolbar_language_popup_type_ahead_matches_typed_prefixes() {
+    assert_prefix_typing_selects_languages(LanguageCombo::Toolbar);
 }
 
 #[test]
-fn drawer_language_combo_jumps_to_typed_letter_while_open() {
-    assert_open_combo_jumps_to_markdown(LanguageCombo::Drawer);
+fn drawer_language_popup_type_ahead_matches_typed_prefixes() {
+    assert_prefix_typing_selects_languages(LanguageCombo::Drawer);
+}
+
+#[test]
+fn repeating_a_letter_cycles_through_the_languages_starting_with_it() {
+    for combo in [LanguageCombo::Toolbar, LanguageCombo::Drawer] {
+        let mut harness = make_app();
+        let app = &mut harness.app;
+        let ctx = egui::Context::default();
+        let _ = open_language_combo(app, &ctx, combo);
+
+        let _ = type_keys(app, &ctx, "p", TYPEAHEAD_PAUSE);
+        assert_eq!(app.edit_language.as_deref(), Some("perl"));
+        for expected in ["text", "powershell", "python", "perl", "text"] {
+            let _ = type_keys(app, &ctx, "p", KEYSTROKE_GAP);
+            assert_eq!(app.edit_language.as_deref(), Some(expected));
+        }
+    }
+}
+
+#[test]
+fn language_type_ahead_buffer_resets_after_a_pause() {
+    let mut harness = make_app();
+    let app = &mut harness.app;
+    let ctx = egui::Context::default();
+    let _ = open_language_combo(app, &ctx, LanguageCombo::Toolbar);
+
+    let _ = type_keys(app, &ctx, "p", TYPEAHEAD_PAUSE);
+    let _ = type_keys(app, &ctx, "y", 0.9);
+    assert_eq!(
+        app.edit_language.as_deref(),
+        Some("python"),
+        "0.9 s keeps the buffer"
+    );
+
+    let _ = type_keys(app, &ctx, "p", TYPEAHEAD_PAUSE);
+    assert_eq!(
+        app.edit_language.as_deref(),
+        Some("perl"),
+        "a fresh `p` starts at Perl"
+    );
+    let _ = type_keys(app, &ctx, "y", TYPEAHEAD_PAUSE);
+    assert_eq!(
+        app.edit_language.as_deref(),
+        Some("yaml"),
+        "a pause starts a new buffer"
+    );
 }
 
 #[test]
@@ -302,26 +398,42 @@ fn typing_with_language_combos_closed_keeps_the_choice() {
     app.properties_drawer_open = true;
     let _ = render_at(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH);
 
-    let _ = type_text(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, "m");
+    let _ = type_keys(app, &ctx, "m", TYPEAHEAD_PAUSE);
     assert!(!app.edit_language_is_manual);
     assert_eq!(app.edit_language, None);
     assert!(!app.metadata_dirty);
 
-    // Closing the popup again ends the letter jump.
     let toolbar_combo = auto_combo_center(app, &ctx, LanguageCombo::Toolbar);
     let _ = click(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, toolbar_combo);
-    let _ = type_text(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, "g");
-    assert_eq!(app.edit_language.as_deref(), Some("go"));
-    let _ = run_full_update_with_input(
-        app,
-        &ctx,
-        egui::RawInput {
-            events: vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
-            ..input_at(LANGUAGE_COMBO_FRAME_WIDTH)
-        },
+    let _ = type_keys(app, &ctx, "p", TYPEAHEAD_PAUSE);
+    assert_eq!(app.edit_language.as_deref(), Some("perl"));
+    let escape = |app: &mut LocalPasteApp| {
+        let _ = run_full_update_with_input(
+            app,
+            &ctx,
+            egui::RawInput {
+                events: vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+                ..input_at(LANGUAGE_COMBO_FRAME_WIDTH)
+            },
+        );
+    };
+    escape(app);
+    let _ = type_keys(app, &ctx, "m", KEYSTROKE_GAP);
+    assert_eq!(
+        app.edit_language.as_deref(),
+        Some("perl"),
+        "a closed popup ignores letters"
     );
-    let _ = type_text(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, "m");
-    assert_eq!(app.edit_language.as_deref(), Some("go"));
+
+    // Reopening within a second still starts a new buffer: `y` alone is YAML, not `py`.
+    let perl_combo = editor_text_rects(&render_at(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH), "Perl")
+        .first()
+        .expect("toolbar combo shows Perl")
+        .center();
+    let _ = click(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, perl_combo);
+    let _ = type_keys(app, &ctx, "y", KEYSTROKE_GAP);
+    assert_eq!(app.edit_language.as_deref(), Some("yaml"));
+    escape(app);
 }
 
 #[test]
@@ -336,7 +448,7 @@ fn language_letter_jump_does_not_type_into_previously_focused_fields() {
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(focused))));
 
         let _ = click(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, combo_center);
-        let _ = type_text(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, "m");
+        let _ = type_keys(app, &ctx, "m", TYPEAHEAD_PAUSE);
         assert_eq!(app.edit_language.as_deref(), Some("markdown"), "{focused}");
         assert_eq!(
             app.edit_name, "Alpha",
