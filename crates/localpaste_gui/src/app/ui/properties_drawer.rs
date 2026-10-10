@@ -17,7 +17,7 @@ const AUTO_LANGUAGE: &str = "__auto__";
 /// - `metadata_dirty`: Dirty marker toggled when the choice changes metadata.
 /// - `language_choice`: Newly selected combo-box value.
 /// - `current_manual_value`: Canonicalized current manual-language option.
-pub(super) fn apply_language_choice(
+fn apply_language_choice(
     edit_language_is_manual: &mut bool,
     edit_language: &mut Option<String>,
     metadata_dirty: &mut bool,
@@ -55,14 +55,6 @@ fn selected_language_choice_text(language_choice: &str, auto_label: &str) -> Str
     localpaste_core::detection::canonical::manual_option_label(language_choice)
         .unwrap_or(language_choice)
         .to_string()
-}
-
-/// Returns the sentinel key used for auto language mode options.
-///
-/// # Returns
-/// Stable option-key string representing auto mode in language selectors.
-pub(super) fn auto_language_choice_key() -> &'static str {
-    AUTO_LANGUAGE
 }
 
 /// Returns the compact label used for the auto language selector state.
@@ -245,25 +237,50 @@ fn language_combo_id(ui: &egui::Ui, combo_id_salt: &str) -> egui::Id {
     ui.make_persistent_id(egui::Id::new(combo_id_salt))
 }
 
+/// A language popup opening or being cancelled during one frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LanguagePopupEvent {
+    /// The popup opened; the current choice is the one a cancel returns to.
+    Opened,
+    /// Escape closed the popup to cancel the choices made while it was open.
+    Cancelled,
+}
+
 /// Renders a language combo box with open-only type-ahead selection.
 ///
 /// While the popup is open, typing selects an option as described on
 /// [`LanguageTypeahead`] and scrolls it to the center of the popup so the jump
-/// is visible.
+/// is visible. Enter closes the popup and keeps the choice. Escape closes it
+/// and reports [`LanguagePopupEvent::Cancelled`] so the caller can restore the
+/// choice from when it opened. Both keys are consumed, so no later handler in
+/// the frame also acts on them.
 ///
 /// # Arguments
 /// - `ui`: Parent UI receiving the combo box.
 /// - `combo_id_salt`: Stable egui id salt for the combo instance.
 /// - `width`: Optional explicit combo width override.
 /// - `language_choice`: Mutable selected option value.
-pub(super) fn render_language_choice_combo(
+///
+/// # Returns
+/// The popup event of this frame, if any.
+fn render_language_choice_combo(
     ui: &mut egui::Ui,
     combo_id_salt: &str,
     width: Option<f32>,
     language_choice: &mut String,
-) {
+) -> Option<LanguagePopupEvent> {
     let combo_id = language_combo_id(ui, combo_id_salt);
     let popup_open = egui::ComboBox::is_open(ui.ctx(), combo_id);
+    let (cancel, accept) = if popup_open {
+        ui.input_mut(|input| {
+            (
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+            )
+        })
+    } else {
+        (false, false)
+    };
     let jumped = apply_language_typeahead(ui, combo_id, popup_open, language_choice);
 
     let auto_label = auto_language_status_label();
@@ -275,6 +292,9 @@ pub(super) fn render_language_choice_combo(
         combo = combo.width(width);
     }
     combo.show_ui(ui, |ui| {
+        if cancel || accept {
+            ui.close();
+        }
         for (value, label) in language_options() {
             let response = ui.selectable_value(language_choice, value.to_string(), label);
             if jumped && language_choice.as_str() == value {
@@ -282,9 +302,99 @@ pub(super) fn render_language_choice_combo(
             }
         }
     });
+    if cancel {
+        Some(LanguagePopupEvent::Cancelled)
+    } else if !popup_open && egui::ComboBox::is_open(ui.ctx(), combo_id) {
+        Some(LanguagePopupEvent::Opened)
+    } else {
+        None
+    }
+}
+
+/// Language draft of one paste, captured when a language popup opens so Escape can restore it.
+#[derive(Clone, Default)]
+struct LanguageDraft {
+    /// Paste the draft belongs to; a cancel after another paste loads restores nothing.
+    paste_id: Option<String>,
+    /// `edit_language` when the popup opened.
+    language: Option<String>,
+    /// `edit_language_is_manual` when the popup opened.
+    is_manual: bool,
 }
 
 impl LocalPasteApp {
+    /// Recomputes `metadata_dirty` from whether the metadata draft differs from the loaded paste.
+    pub(super) fn refresh_metadata_dirty(&mut self) {
+        if let Some(paste) = self.selected_paste.as_ref() {
+            self.metadata_dirty = self.edit_name != paste.name
+                || self.edit_language != paste.language
+                || self.edit_language_is_manual != paste.language_is_manual
+                || self.edit_tags != paste.tags.join(", ");
+        }
+    }
+
+    /// Renders a language combo bound to the metadata draft.
+    ///
+    /// A click or type-ahead in the popup applies its choice to the draft at
+    /// once. Escape restores the draft captured when the popup opened and
+    /// recomputes `metadata_dirty` against the loaded paste, so a cancelled
+    /// choice leaves nothing to save. The captured draft keeps the language
+    /// auto-detection resolved, which re-applying `Auto` would clear.
+    ///
+    /// # Arguments
+    /// - `ui`: Parent UI receiving the combo box.
+    /// - `combo_id_salt`: Stable egui id salt for the combo instance.
+    /// - `width`: Optional explicit combo width override.
+    pub(super) fn render_language_field(
+        &mut self,
+        ui: &mut egui::Ui,
+        combo_id_salt: &str,
+        width: Option<f32>,
+    ) {
+        let draft_id = language_combo_id(ui, combo_id_salt).with("language_draft");
+        let current_manual_value = self
+            .edit_language
+            .as_deref()
+            .map(localpaste_core::detection::canonical::canonicalize)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "text".to_string());
+        let mut language_choice = if self.edit_language_is_manual {
+            current_manual_value.clone()
+        } else {
+            AUTO_LANGUAGE.to_string()
+        };
+        let previous_language_choice = language_choice.clone();
+        match render_language_choice_combo(ui, combo_id_salt, width, &mut language_choice) {
+            Some(LanguagePopupEvent::Opened) => {
+                let draft = LanguageDraft {
+                    paste_id: self.selected_id.clone(),
+                    language: self.edit_language.clone(),
+                    is_manual: self.edit_language_is_manual,
+                };
+                ui.data_mut(|data| data.insert_temp(draft_id, draft));
+            }
+            Some(LanguagePopupEvent::Cancelled) => {
+                let draft = ui.data_mut(|data| data.remove_temp::<LanguageDraft>(draft_id));
+                if let Some(draft) = draft.filter(|draft| draft.paste_id == self.selected_id) {
+                    self.edit_language = draft.language;
+                    self.edit_language_is_manual = draft.is_manual;
+                    self.refresh_metadata_dirty();
+                }
+                return;
+            }
+            None => {}
+        }
+        if language_choice != previous_language_choice {
+            apply_language_choice(
+                &mut self.edit_language_is_manual,
+                &mut self.edit_language,
+                &mut self.metadata_dirty,
+                language_choice.as_str(),
+                current_manual_value.as_str(),
+            );
+        }
+    }
+
     /// Renders the side drawer used for less-frequent metadata edits.
     pub(crate) fn render_properties_drawer(&mut self, ctx: &egui::Context) {
         if !self.properties_drawer_open || self.selected_id.is_none() {
@@ -333,33 +443,7 @@ impl LocalPasteApp {
 
                     ui.add_space(6.0);
                     ui.label(RichText::new("Language").small().color(COLOR_TEXT_MUTED));
-                    let current_manual_value = self
-                        .edit_language
-                        .as_deref()
-                        .map(localpaste_core::detection::canonical::canonicalize)
-                        .filter(|value| !value.is_empty())
-                        .unwrap_or_else(|| "text".to_string());
-                    let mut language_choice = if self.edit_language_is_manual {
-                        current_manual_value.clone()
-                    } else {
-                        AUTO_LANGUAGE.to_string()
-                    };
-                    let previous_language_choice = language_choice.clone();
-                    render_language_choice_combo(
-                        ui,
-                        "drawer_language_select",
-                        None,
-                        &mut language_choice,
-                    );
-                    if language_choice != previous_language_choice {
-                        apply_language_choice(
-                            &mut self.edit_language_is_manual,
-                            &mut self.edit_language,
-                            &mut self.metadata_dirty,
-                            language_choice.as_str(),
-                            current_manual_value.as_str(),
-                        );
-                    }
+                    self.render_language_field(ui, "drawer_language_select", None);
 
                     ui.add_space(6.0);
                     ui.label(RichText::new("Tags").small().color(COLOR_TEXT_MUTED));

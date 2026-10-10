@@ -275,8 +275,18 @@ fn auto_combo_center(
     ctx: &egui::Context,
     combo: LanguageCombo,
 ) -> egui::Pos2 {
+    combo_center(app, ctx, combo, "Auto")
+}
+
+/// Renders the app and returns the center of `combo`'s selected text `label`.
+fn combo_center(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    combo: LanguageCombo,
+    label: &str,
+) -> egui::Pos2 {
     let output = render_at(app, ctx, LANGUAGE_COMBO_FRAME_WIDTH);
-    let rects = editor_text_rects(&output, "Auto");
+    let rects = editor_text_rects(&output, label);
     let rect = match combo {
         LanguageCombo::Toolbar => rects.first(),
         LanguageCombo::Drawer => rects.last(),
@@ -450,17 +460,7 @@ fn typing_with_language_combos_closed_keeps_the_choice() {
     let _ = click(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, toolbar_combo);
     let _ = type_keys(app, &ctx, "p", TYPEAHEAD_PAUSE);
     assert_eq!(app.edit_language.as_deref(), Some("perl"));
-    let escape = |app: &mut LocalPasteApp| {
-        let _ = run_full_update_with_input(
-            app,
-            &ctx,
-            egui::RawInput {
-                events: vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
-                ..input_at(LANGUAGE_COMBO_FRAME_WIDTH)
-            },
-        );
-    };
-    escape(app);
+    let _ = press_key(app, &ctx, egui::Key::Enter);
     let _ = type_keys(app, &ctx, "m", KEYSTROKE_GAP);
     assert_eq!(
         app.edit_language.as_deref(),
@@ -476,7 +476,11 @@ fn typing_with_language_combos_closed_keeps_the_choice() {
     let _ = click(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, perl_combo);
     let _ = type_keys(app, &ctx, "y", KEYSTROKE_GAP);
     assert_eq!(app.edit_language.as_deref(), Some("yaml"));
-    escape(app);
+
+    // Escape returns to the choice this popup opened with, still staged for Apply.
+    let _ = press_key(app, &ctx, egui::Key::Escape);
+    assert_eq!(app.edit_language.as_deref(), Some("perl"));
+    assert!(app.metadata_dirty);
 }
 
 #[test]
@@ -503,4 +507,186 @@ fn language_letter_jump_does_not_type_into_previously_focused_fields() {
             "{focused} must not receive the letter"
         );
     }
+}
+
+/// Delivers one unmodified `key` press, then lets the frame settle.
+fn press_key(app: &mut LocalPasteApp, ctx: &egui::Context, key: egui::Key) -> egui::FullOutput {
+    let _ = run_full_update_with_input(
+        app,
+        ctx,
+        egui::RawInput {
+            events: vec![key_event(key, egui::Modifiers::NONE)],
+            ..input_at(LANGUAGE_COMBO_FRAME_WIDTH)
+        },
+    );
+    render_at(app, ctx, LANGUAGE_COMBO_FRAME_WIDTH)
+}
+
+/// Loads `language` into the selected paste and its metadata draft, as selecting the paste does.
+fn load_language(app: &mut LocalPasteApp, language: Option<&str>, is_manual: bool) {
+    let mut paste = app.selected_paste.clone().expect("selected paste");
+    paste.language = language.map(str::to_string);
+    paste.language_is_manual = is_manual;
+    app.sync_editor_metadata(&paste);
+    app.selected_paste = Some(paste);
+}
+
+/// Shows `combo` with `label` as its selected text, opens its popup, and returns the combo center.
+fn open_combo_showing(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    combo: LanguageCombo,
+    label: &str,
+) -> egui::Pos2 {
+    app.properties_drawer_open = matches!(combo, LanguageCombo::Drawer);
+    let center = combo_center(app, ctx, combo, label);
+    let _ = click(app, ctx, LANGUAGE_COMBO_FRAME_WIDTH, center);
+    assert!(egui::Popup::is_any_open(ctx), "the language popup is open");
+    center
+}
+
+/// Whether any command sent since the last drain saves metadata.
+fn metadata_save_dispatched(cmd_rx: &Receiver<CoreCmd>) -> bool {
+    cmd_rx
+        .try_iter()
+        .any(|cmd| matches!(cmd, CoreCmd::UpdatePasteMeta { .. }))
+}
+
+#[test]
+fn escape_cancels_toolbar_type_ahead_and_leaves_nothing_to_save() {
+    // Auto with nothing detected, Auto with a detected language, and a manual language.
+    for (language, is_manual, label) in [
+        (None, false, "Auto"),
+        (Some("rust"), false, "Auto"),
+        (Some("rust"), true, "Rust"),
+    ] {
+        let mut harness = make_app();
+        harness
+            .app
+            .all_pastes
+            .push(test_summary("beta", "Beta", None, 4));
+        harness.app.pastes = harness.app.all_pastes.clone();
+        let app = &mut harness.app;
+        let ctx = egui::Context::default();
+        load_language(app, language, is_manual);
+        let _ = open_combo_showing(app, &ctx, LanguageCombo::Toolbar, label);
+
+        let _ = type_keys(app, &ctx, "py", TYPEAHEAD_PAUSE);
+        assert_eq!(app.edit_language.as_deref(), Some("python"), "{label}");
+        assert!(app.metadata_dirty, "{label}");
+
+        let output = press_key(app, &ctx, egui::Key::Escape);
+        assert!(!egui::Popup::is_any_open(&ctx), "Escape closes the popup");
+        assert_eq!(app.edit_language.as_deref(), language, "{label}");
+        assert_eq!(app.edit_language_is_manual, is_manual, "{label}");
+        assert!(
+            editor_text_rect(&output, label).is_some(),
+            "the toolbar shows {label} again"
+        );
+        assert!(
+            !app.metadata_dirty,
+            "a cancelled choice leaves nothing to save ({label})"
+        );
+
+        let _ = metadata_save_dispatched(&harness.cmd_rx);
+        assert!(harness.app.select_paste("beta".to_string()));
+        assert!(
+            !metadata_save_dispatched(&harness.cmd_rx),
+            "switching pastes saves no cancelled language ({label})"
+        );
+    }
+}
+
+#[test]
+fn enter_accepts_toolbar_type_ahead_and_closes_the_popup() {
+    let mut harness = make_app();
+    let app = &mut harness.app;
+    let ctx = egui::Context::default();
+    let _ = open_language_combo(app, &ctx, LanguageCombo::Toolbar);
+    let _ = type_keys(app, &ctx, "py", TYPEAHEAD_PAUSE);
+
+    let output = press_key(app, &ctx, egui::Key::Enter);
+    assert!(!egui::Popup::is_any_open(&ctx), "Enter closes the popup");
+    assert_eq!(app.edit_language.as_deref(), Some("python"));
+    assert!(app.edit_language_is_manual);
+    assert!(app.metadata_dirty, "the accepted choice stays staged");
+    assert!(editor_text_rect(&output, "Python").is_some());
+
+    // Apply is enabled and saves the accepted language.
+    let _ = metadata_save_dispatched(&harness.cmd_rx);
+    let apply = editor_text_rect(&output, "Apply").expect("Apply").center();
+    let _ = click(&mut harness.app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH, apply);
+    let saved = harness.cmd_rx.try_iter().find_map(|cmd| match cmd {
+        CoreCmd::UpdatePasteMeta {
+            language,
+            language_is_manual,
+            ..
+        } => Some((language, language_is_manual)),
+        _ => None,
+    });
+    assert_eq!(saved, Some((Some("python".to_string()), Some(true))));
+}
+
+#[test]
+fn escape_cancels_drawer_type_ahead_and_closes_only_the_popup() {
+    let mut harness = make_app();
+    let app = &mut harness.app;
+    let ctx = egui::Context::default();
+    app.open_editor_find();
+    let _ = open_language_combo(app, &ctx, LanguageCombo::Drawer);
+    let _ = type_keys(app, &ctx, "py", TYPEAHEAD_PAUSE);
+    assert_eq!(app.edit_language.as_deref(), Some("python"));
+
+    let output = press_key(app, &ctx, egui::Key::Escape);
+    assert!(!egui::Popup::is_any_open(&ctx), "Escape closes the popup");
+    assert_eq!(app.edit_language, None);
+    assert!(!app.edit_language_is_manual);
+    assert!(!app.metadata_dirty);
+    assert_eq!(
+        editor_text_rects(&output, "Auto").len(),
+        2,
+        "the toolbar and drawer combos both show Auto"
+    );
+    assert!(app.properties_drawer_open, "the drawer stays open");
+    assert!(app.editor_find.open, "Find stays open");
+}
+
+#[test]
+fn escape_keeps_metadata_dirty_for_a_name_edited_before_the_popup() {
+    let mut harness = make_app();
+    let app = &mut harness.app;
+    let ctx = egui::Context::default();
+    app.edit_name = "Alpha renamed".to_string();
+    app.metadata_dirty = true;
+    let _ = open_combo_showing(app, &ctx, LanguageCombo::Toolbar, "Auto");
+    let _ = type_keys(app, &ctx, "py", TYPEAHEAD_PAUSE);
+
+    let _ = press_key(app, &ctx, egui::Key::Escape);
+    assert_eq!(app.edit_language, None);
+    assert!(!app.edit_language_is_manual);
+    assert_eq!(app.edit_name, "Alpha renamed");
+    assert!(app.metadata_dirty, "the renamed title still needs saving");
+}
+
+#[test]
+fn escape_after_switching_pastes_leaves_the_new_paste_alone() {
+    let mut harness = make_app();
+    let app = &mut harness.app;
+    let ctx = egui::Context::default();
+    let _ = open_language_combo(app, &ctx, LanguageCombo::Toolbar);
+
+    // Sidebar arrow keys can load another paste while the popup stays open.
+    let mut beta = Paste::new("fn main() {}".to_string(), "Beta".to_string());
+    beta.id = "beta".to_string();
+    beta.language = Some("rust".to_string());
+    beta.language_is_manual = true;
+    app.select_loaded_paste(beta);
+    let _ = render_at(app, &ctx, LANGUAGE_COMBO_FRAME_WIDTH);
+    assert!(egui::Popup::is_any_open(&ctx));
+
+    let _ = press_key(app, &ctx, egui::Key::Escape);
+    assert!(!egui::Popup::is_any_open(&ctx), "Escape closes the popup");
+    assert_eq!(app.edit_language.as_deref(), Some("rust"));
+    assert!(app.edit_language_is_manual);
+    assert!(!app.metadata_dirty, "Alpha's draft does not land on Beta");
 }

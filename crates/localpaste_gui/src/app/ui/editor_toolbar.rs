@@ -6,9 +6,6 @@
 //! move to a second row instead of overlapping the metadata.
 
 use super::super::*;
-use super::properties_drawer::{
-    apply_language_choice, auto_language_choice_key, render_language_choice_combo,
-};
 use crate::app::util::parse_tags_csv;
 use eframe::egui;
 
@@ -167,7 +164,7 @@ impl LocalPasteApp {
 
         ui.add_enabled_ui(!background_mutation_blocked, |ui| {
             self.render_title_field(ui, title_width, requests);
-            self.render_language_field(ui);
+            self.render_language_field(ui, "header_language_select", Some(LANGUAGE_COMBO_WIDTH));
         });
         if ui
             .add_enabled(
@@ -223,41 +220,8 @@ impl LocalPasteApp {
         if name_response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Escape)) {
             if let Some(paste) = self.selected_paste.as_ref() {
                 self.edit_name = paste.name.clone();
-                self.metadata_dirty = self.edit_name != paste.name
-                    || self.edit_language != paste.language
-                    || self.edit_language_is_manual != paste.language_is_manual
-                    || self.edit_tags != paste.tags.join(", ");
+                self.refresh_metadata_dirty();
             }
-        }
-    }
-
-    fn render_language_field(&mut self, ui: &mut egui::Ui) {
-        let current_manual_value = self
-            .edit_language
-            .as_deref()
-            .map(localpaste_core::detection::canonical::canonicalize)
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "text".to_string());
-        let mut language_choice = if self.edit_language_is_manual {
-            current_manual_value.clone()
-        } else {
-            auto_language_choice_key().to_string()
-        };
-        let previous_language_choice = language_choice.clone();
-        render_language_choice_combo(
-            ui,
-            "header_language_select",
-            Some(LANGUAGE_COMBO_WIDTH),
-            &mut language_choice,
-        );
-        if language_choice != previous_language_choice {
-            apply_language_choice(
-                &mut self.edit_language_is_manual,
-                &mut self.edit_language,
-                &mut self.metadata_dirty,
-                language_choice.as_str(),
-                current_manual_value.as_str(),
-            );
         }
     }
 
