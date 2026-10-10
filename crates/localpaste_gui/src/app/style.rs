@@ -33,6 +33,10 @@ pub(super) const COLOR_SELECTION_STROKE: Color32 = Color32::from_rgb(0x3B, 0x82,
 pub(super) const COLOR_SELECTION_FILL_RGBA: [u8; 4] = [0x3B, 0x82, 0xF6, 0x55];
 /// Border/stroke color for panels and widgets.
 pub(super) const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
+/// Diff row tint for removed lines: red `#F85149` at 15% over `COLOR_BG_PRIMARY`.
+pub(super) const COLOR_DIFF_REMOVED_BG: Color32 = Color32::from_rgb(0x30, 0x1b, 0x1e);
+/// Diff row tint for added lines: green `#2EA043` at 15% over `COLOR_BG_PRIMARY`.
+pub(super) const COLOR_DIFF_ADDED_BG: Color32 = Color32::from_rgb(0x12, 0x26, 0x1e);
 /// Font family key for bundled 0xProto typeface.
 pub(super) const FONT_0XPROTO: &str = "0xProto";
 /// Custom font family key used by the editor text style.

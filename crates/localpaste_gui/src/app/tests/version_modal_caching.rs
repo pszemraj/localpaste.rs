@@ -354,3 +354,80 @@ fn diff_candidates_use_the_sidebar_language_labels() {
         .iter()
         .any(|text| text.contains("[text]") || text.contains("[csv]")));
 }
+
+#[test]
+fn diff_rows_tint_changed_lines_across_the_pane() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.open_diff_modal();
+    let mut rhs = Paste::new("beta-content".to_string(), "Beta".to_string());
+    rhs.id = "beta".to_string();
+    harness.app.version_ui.diff_target_paste = Some(rhs);
+    assert!(harness.app.sync_diff_preview_cache());
+    let CoreCmd::ComputeDiffPreview { request_id, .. } = recv_cmd(&harness.cmd_rx) else {
+        panic!("expected a diff preview request");
+    };
+    harness.app.apply_event(CoreEvent::DiffPreviewComputed {
+        request_id,
+        diff: localpaste_core::diff::DiffResponse {
+            equal: false,
+            unified: vec![" same".into(), "-content".into(), "+beta-content".into()],
+        },
+    });
+    // Frames a second apart let the window's fade-in finish, so fills are exact.
+    let input = |time: f64| egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1600.0, 1000.0),
+        )),
+        time: Some(time),
+        ..Default::default()
+    };
+    let _ = run_full_update_with_input(&mut harness.app, &ctx, input(0.0));
+    let output = run_full_update_with_input(&mut harness.app, &ctx, input(1.0));
+
+    let tints = |fill: egui::Color32| {
+        output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(rect) if rect.fill == fill => Some(rect.rect),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let text_rect = |label: &str| {
+        output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.job.text == label => {
+                    Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing {label}"))
+    };
+    for (label, fill) in [
+        ("-content", COLOR_DIFF_REMOVED_BG),
+        ("+beta-content", COLOR_DIFF_ADDED_BG),
+    ] {
+        let line = text_rect(label);
+        let [band] = tints(fill)[..] else {
+            panic!("expected one {label} band");
+        };
+        assert!(band.contains(line.center()), "{label} sits on its band");
+        assert!(
+            band.width() > 4.0 * line.width(),
+            "{label} band spans the pane"
+        );
+    }
+    let removed = tints(COLOR_DIFF_REMOVED_BG)[0];
+    let added = tints(COLOR_DIFF_ADDED_BG)[0];
+    assert!(
+        (removed.bottom() - added.top()).abs() < 0.5,
+        "adjacent changes form one band"
+    );
+    let context = text_rect(" same").center();
+    assert!(!removed.contains(context) && !added.contains(context));
+}

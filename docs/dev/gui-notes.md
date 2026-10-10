@@ -201,6 +201,7 @@ Startup reopens the paste that was open when the app last closed, along with the
   - the selected paste stays pinned during a queued hard reset,
   - the selected paste is temporarily read-only until reset success/error arrives.
 - Diff preview generation runs on the backend worker against frozen left/right text snapshots; the UI only renders cached results.
+- Removed and added rows in the line diff sit on full-width red and green tints (`COLOR_DIFF_REMOVED_BG`, `COLOR_DIFF_ADDED_BG` in [ui-palette.md](ui-palette.md)) that cover the row gap, so a run of changes reads as one band.
 - Reset and snapshot loading clear their in-flight UI state only for matching version-load/reset failures so unrelated backend errors cannot tear down the modal context.
 
 ## Language/Highlight QA (Magika + Fallback)

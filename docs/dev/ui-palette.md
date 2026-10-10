@@ -17,6 +17,8 @@ The desktop uses a dark palette defined in the theme module: [`../../crates/loca
 | `COLOR_SELECTION_STROKE`    | `#3B82F6`   | Selection outline                       |
 | `COLOR_SELECTION_FILL_RGBA` | `#3B82F655` | Selection fill RGBA tuple (`[r,g,b,a]`) |
 | `COLOR_BORDER`              | `#30363D`   | Divider strokes                         |
+| `COLOR_DIFF_REMOVED_BG`     | `#301B1E`   | Removed diff rows (`#F85149` at 15% over `COLOR_BG_PRIMARY`) |
+| `COLOR_DIFF_ADDED_BG`       | `#12261E`   | Added diff rows (`#2EA043` at 15% over `COLOR_BG_PRIMARY`)   |
 
 The theme pins ordinary widget text to `COLOR_TEXT_PRIMARY` through egui's text-color override, which also captures plain-string placeholders. Text inputs therefore set placeholders with `MutedHintExt::muted_hint`, which renders them as weak text in `COLOR_TEXT_MUTED`; [`clippy.toml`](../../clippy.toml) rejects raw `TextEdit::hint_text` calls.
 

@@ -206,17 +206,44 @@ impl LocalPasteApp {
                                         .auto_shrink([false, false])
                                         .show_rows(right, row_height, diff_lines.len(), |ui, range| {
                                             ui.set_min_width(ui.available_width());
+                                            let gap = ui.spacing().item_spacing.y;
                                             for idx in range {
                                                 let line = &diff_lines[idx];
-                                                let color = match line.as_bytes().first().copied() {
-                                                    Some(b'-') => egui::Color32::LIGHT_RED,
-                                                    Some(b'+') => egui::Color32::LIGHT_GREEN,
-                                                    _ => COLOR_TEXT_SECONDARY,
-                                                };
+                                                let (color, tint) =
+                                                    match line.as_bytes().first().copied() {
+                                                        Some(b'-') => (
+                                                            egui::Color32::LIGHT_RED,
+                                                            Some(COLOR_DIFF_REMOVED_BG),
+                                                        ),
+                                                        Some(b'+') => (
+                                                            egui::Color32::LIGHT_GREEN,
+                                                            Some(COLOR_DIFF_ADDED_BG),
+                                                        ),
+                                                        _ => (COLOR_TEXT_SECONDARY, None),
+                                                    };
+                                                let (row, _) = ui.allocate_exact_size(
+                                                    egui::vec2(ui.available_width(), row_height),
+                                                    egui::Sense::hover(),
+                                                );
+                                                if let Some(tint) = tint {
+                                                    // Cover the row gap too, so adjacent changes form one band.
+                                                    ui.painter().rect_filled(
+                                                        row.expand2(egui::vec2(0.0, gap / 2.0)),
+                                                        0.0,
+                                                        tint,
+                                                    );
+                                                }
                                                 let render_line =
                                                     prefix_by_chars(line, MAX_RENDER_CHARS_PER_LINE);
-                                                // `add_sized` would center each line and lose its indentation.
-                                                ui.add(
+                                                // A left-to-right child keeps indentation; `put` would center.
+                                                ui.new_child(
+                                                    egui::UiBuilder::new().max_rect(row).layout(
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
+                                                    ),
+                                                )
+                                                .add(
                                                     egui::Label::new(
                                                         RichText::new(render_line)
                                                             .monospace()
