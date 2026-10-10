@@ -109,15 +109,15 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - Collections scope controls are rendered as smart filters in the sidebar (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Documents`, `Code`, `Config`, `Logs`, `Links`) with compact chips and overflow under `...`.
 - Language filtering is rendered in the sidebar under smart filters and always includes an explicit `All languages` clear option.
 - Language filtering stacks with the active smart collection instead of replacing it.
-- Sidebar list refresh reads metadata projections; scoped sidebar and paste-picker searches return metadata summaries.
+- Sidebar list refresh reads metadata projections and is capped by `DEFAULT_LIST_PASTES_LIMIT` (`512`); scoped sidebar and paste-picker searches return metadata summaries.
 - Empty filtered results retain unsaved content, metadata, and pending saves with the edit lock until saving completes. Selecting the active paste cancels a queued switch, and repeated load replies cannot replace an initialized editor draft.
 - The Documents smart filter groups Markdown, prose notes, reStructuredText, and LaTeX. Document classification, Markdown scopes, and text-export extensions follow [Language Detection And Highlighting](../language-detection.md).
 - The app selects its dark theme before installing custom fonts and spacing, including on systems using a light theme. Editor geometry uses the resolved font even if a later style change removes the named Editor text style. Startup, first creation, and populated restart have regression coverage with light-system input and without test-only style registration.
 - The command palette searches actions only, including Export, Duplicate, Copy, Copy Link, Find, Properties, History, and Diff. The paste picker searches paste rows and retains Open, Copy, Copy Fenced, and Delete actions.
 - Command palette, paste picker, and shortcut help are mutually exclusive: opening one closes the other two so its query owns keyboard input. Escape or the toggle shortcut restores the input that opened discovery, including across switches between these surfaces. Input batched around these transitions stays in order: earlier text belongs to the previous input, and later text belongs to the new destination. Accepting a palette command or picker result with Enter processes the preceding query before routing subsequent text. Commands that open another workflow retain their intended focus destination.
-- Opening History or Diff closes discovery surfaces and prevents command-palette and paste-picker opens. Version windows allow Save for the current draft; New and Delete report why they are blocked. Discovery overlays block background New, Paste as New, Save, Delete, sidebar-search focus, and Properties shortcuts, including delayed clipboard replies; actions chosen within the palette remain available. Escape closes either version window. A refused sidebar selection preserves the picker-opened document and its pending input.
+- Discovery overlays block background New, Paste as New, Save, Delete, sidebar-search focus, and Properties shortcuts, including delayed clipboard replies; actions chosen within the palette remain available. [Diff and History](#diff-and-history-workflows) use separate workflow fences.
 - Command-palette keyboard navigation and query changes reveal the selected command within the scroll area.
-- Sidebar and picker each retain their own session query and field scope: All fields (default), Title, Metadata, or Body. Metadata searches the existing title/tag/language/derived-term projection. Title and Metadata avoid loading bodies; every scope searches the full store before applying the result limit. HTTP and CLI search are unchanged.
+- Sidebar and picker each retain their own session query and field scope: All fields (default), Title, Metadata, or Body. The [search read paths](../architecture.md#5-read-and-write-paths) determine which fields are loaded and ranked. HTTP and CLI search are unchanged.
 - Debounced sidebar and picker searches schedule their own repaint deadline; typing a query needs no further input or focus change to dispatch it. Pending or failed requests do not create a repaint loop.
 - Picker scope changes clear old results immediately; changing only sidebar scope retains the open document and reading position even if no rows match. Responses and backend cache keys carry the scope and collection so delayed results cannot leak between contexts. Collection rules apply in the backend before the search result limit, including when a matching collection row is older than the first 512 unfiltered results.
 - Opening the paste picker from its shortcut or the command palette refreshes its retained query and scope and selects the old query for replacement; responses discarded while it was closed cannot leave it stuck with empty results. Reopening or changing query/scope resets selection and scrolls to the first result once rows arrive; subsequent manual scrolling is preserved.
@@ -131,10 +131,9 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 - A completed editor, toolbar, text-field, or selectable-label copy supersedes an older pending picker copy. A copy with no selected text leaves the pending request intact.
 - Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Switching pastes with Find open selects the retained query's first match. Opening a paste from a sidebar or picker All fields or Body search primes this in-paste find bar when that search query appears in the paste body. Picker opens retain their originating query through loading and save-before-switch, including when reopening the active draft. Metadata-only picker hits preserve the existing Find query.
 - Growing the Find query refines the current selected match from its start. Find keeps query focus after clicking Prev, Next, or Case and on `Enter`/`Shift+Enter` and advances to the next/previous match. `Escape` from its query or `Close` returns focus to the editor while preserving the matched selection and the query for reopening. Buttons and document jumps center the caret independently of editor focus.
-- Typing and paste reveal the caret with minimal scrolling; manual scrolling stays where you leave it until another edit or navigation action. Virtual rows use zero vertical item spacing so hit testing and scrolling share the rendered row height.
+- Typing and paste reveal the caret with minimal scrolling, including the inserted tail of a multiline paste. Manual scrolling stays where you leave it until another edit or navigation action. Virtual rows use zero vertical item spacing so hit testing and scrolling share the rendered row height.
 - An editor-owned drag continues selection and autoscroll outside the viewport or window; foreground overlays retain their pointer ownership. Dragging the scrollbar preserves the editor selection.
 - Loading another paste resets the previous viewport to the first line before applying any search-match reveal, including when the previous paste was scrolled to its end.
-- Virtual-editor paste follows the post-paste cursor: when a multiline paste extends past the current viewport, the editor scrolls so the inserted tail/caret is visible instead of leaving the paste off-screen.
 - In a Markdown-labelled paste, pasting one HTTP(S) URL over selected text creates `[selected text](URL)` in one undoable edit. Inline code is retained; label line breaks use character references so blank lines cannot split the link. URL recognition uses the current language choice, including `md`; other languages, empty selections, and non-URL clipboard text retain ordinary paste behavior.
 - App-level shortcut dispatch, command-palette hints, and keyboard shortcut help share the runtime shortcut registry. Dispatch preserves native event order, including repeated chords. The shortcut help intentionally excludes command-palette query terms such as `diff` and `history`; those remain command-palette discoverability, not keyboard shortcuts.
 - Help lists app bindings and selected editor combinations. Basic navigation and standard select/copy/cut/undo/redo instructions are omitted.
@@ -152,6 +151,7 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 
 - Editor toolbar exposes `Diff` and `History` for the selected paste.
 - Command palette exposes `Open diff modal` and `Open history modal` when a paste is selected.
+- Opening either window closes discovery surfaces and prevents command-palette and paste-picker opens. Escape closes the version window.
 - Opening Diff focuses its candidate query once; later focus changes remain under user control. Floating-window query focus waits for a visible render pass and retains its one-shot request through egui's sizing pass, so accessibility focus always refers to a node in the published tree.
 - Diff is detached from main editor state:
   - left side uses the active snapshot (`active_snapshot`) so unsaved edits are included,
@@ -162,9 +162,9 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
   - reset restores the selected snapshot and archives the outgoing head as a recoverable snapshot.
   - dirty save-and-reset saves local edits before reset so the just-saved outgoing head is recoverable.
 - History, Diff, and reset-confirm windows fence background mutations:
-  - create/delete/paste-as-new and other destructive workflow shortcuts are blocked while a version window is open,
+  - create/delete/paste-as-new and other destructive workflow shortcuts are blocked while a version window is open; New and Delete report why,
   - autosave and explicit save still persist already-dirty content/metadata while a version window is open,
-  - selection changes and automatic reselection are blocked while a version window is open,
+  - selection changes and automatic reselection are blocked while a version window is open; a refused sidebar selection preserves the picker-opened document and its pending input,
   - the selected paste stays pinned during a queued hard reset,
   - the selected paste is temporarily read-only until reset success/error arrives.
 - Diff preview generation runs on the backend worker against frozen left/right text snapshots; the UI only renders cached results.
@@ -175,11 +175,11 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 Run this checklist when touching detection/highlight/filter code.
 
 1. Start GUI with default features (Magika enabled): `cargo run -p localpaste_gui --bin localpaste-gui`.
-2. Create new pastes with representative snippets and confirm detected language chip (auto mode):
+2. Create new pastes with representative snippets and confirm the detected language chip (auto mode). Use actual line breaks where `\n` is shown:
    - Rust: `fn main() { println!("hi"); }` -> `rust`
    - Python: `import os\nprint(os.getcwd())` -> `python`
    - Shell: `#!/bin/bash\necho hi` -> `shell`
-   - JSON: `{\"key\":\"value\"}` -> `json`
+   - JSON: `{"key":"value"}` -> `json`
 3. Open Properties drawer, set language to `Plain text`, save, and verify chip reads `plain` (not `auto`).
 4. With that same paste still manual plain, edit content into obvious Rust and verify language remains `plain`.
 5. Switch language back to `Auto`, save, and verify the language chip shows unresolved auto state.
@@ -197,6 +197,8 @@ Run this checklist when touching detection/highlight/filter code.
 10. Re-run keyboard/navigation sanity checks listed in
     [Keyboard And Navigation Contract](#keyboard-and-navigation-contract)
     after language UI edits.
+11. Repeat with heuristic detection using the
+    [build option](../language-detection.md#feature-topology).
 
 ## Manual GUI Human-Step Checklist (Comprehensive)
 
@@ -247,7 +249,7 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Paste a 20-30 line block near the bottom of the visible editor; expected: the inserted tail/caret scrolls into view.
    - Set the language to Markdown, select a phrase, and paste `https://example.com/docs`: expected `[phrase](https://example.com/docs)`, with the caret after the link. Undo restores the phrase and its selection; Redo restores the link. Save and restart to confirm persistence. Repeat with a non-URL or a plain-text paste and confirm ordinary replacement; a URL pasted without selection remains literal.
    - `Ctrl/Cmd+V` outside editor focus creates a new paste from clipboard.
-   - `Ctrl/Cmd+Shift+V` requests a new paste when native modifiers survive; the known backend modifier-loss case is tracked in [#35](https://github.com/pszemraj/localpaste.rs/issues/35). The command palette's Paste as New action remains available.
+   - Check `Ctrl/Cmd+Shift+V` against the [native paste behavior](#keyboard-and-navigation-contract), then confirm the command palette's Paste as New action creates a paste.
    - Start Paste as New, open help with `F1`, close it with `Escape`, then paste fresh text with `Ctrl/Cmd+V`. The fresh paste reaches the editor; an older canceled clipboard reply must not overwrite or prepend it.
    - Modified arrow movement/selection (`Ctrl`/`Alt`/`Shift`/`Cmd` + arrows) affects editor selection/caret movement and does not switch sidebar filters.
 9. Virtual editor selection:

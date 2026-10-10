@@ -2,18 +2,9 @@
 
 `lpaste` is the terminal-side companion to the desktop app. It talks to the same localhost API that the GUI exposes, so you can inspect, export, diff, or automate work without leaving the editor.
 
-> [!IMPORTANT]
-> GitHub release asset scope is listed in [GUI release assets](release-gui.md#artifact-contract). To use `lpaste`, build it from source with Cargo:
->
-> ```bash
-> cargo build -p localpaste_cli --bin lpaste
-> ```
->
-> or run it directly with:
->
-> ```bash
-> cargo run -p localpaste_cli --bin lpaste -- --help
-> ```
+Install `lpaste` with the [Cargo installation commands](dev/devlog.md#build-matrix).
+[Release archives](release-gui.md#install-a-release) contain the GUI only.
+The examples below assume `lpaste` is on `PATH`.
 
 ## Connect to the running GUI
 
@@ -41,6 +32,8 @@ For terminal access to a GUI-owned store, follow [storage operational expectatio
 
 ## Useful complementary workflows
 
+Replace quoted `<...>` placeholders with IDs from `lpaste list` or `lpaste versions`.
+
 Search metadata only. This is usually the fastest way to find a paste from the terminal when you remember tags, language, or derived retrieval terms:
 
 ```bash
@@ -59,59 +52,62 @@ lpaste search-meta --case-insensitive needle
 Fetch the current content of a paste into a local file:
 
 ```bash
-lpaste get <paste-id> > recovered.txt
+lpaste get "<paste-id>" > recovered.txt
 ```
 
 Inspect version history for a paste:
 
 ```bash
-lpaste versions <paste-id> --limit 20
+lpaste versions "<paste-id>" --limit 20
 ```
 
 Fetch one stored historical version:
 
 ```bash
-lpaste get-version <paste-id> <version-id-ms> > older-copy.txt
+lpaste get-version "<paste-id>" "<version-id-ms>" > older-copy.txt
 ```
 
 Diff two pastes, or diff two historical refs of the same paste:
 
 ```bash
-lpaste diff <left-id> <right-id>
-lpaste diff <paste-id> <paste-id> --left-version <older-version-id-ms> --right-version <newer-version-id-ms>
+lpaste diff "<left-id>" "<right-id>"
+lpaste diff "<paste-id>" "<paste-id>" --left-version "<older-version-id-ms>" --right-version "<newer-version-id-ms>"
 ```
 
 Duplicate a stored historical version into a new paste instead of resetting the current one:
 
 ```bash
-lpaste duplicate-version <paste-id> <version-id-ms> --name "recovered-snapshot"
+lpaste duplicate-version "<paste-id>" "<version-id-ms>" --name "recovered-snapshot"
 ```
 
 Reset a paste to a stored historical version:
 
 ```bash
-lpaste reset-hard <paste-id> <version-id-ms> --yes
+lpaste reset-hard "<paste-id>" "<version-id-ms>" --yes
 ```
 
 `reset-hard` is destructive: it rewrites the paste to the chosen snapshot and discards newer history for that paste.
 
-## Scripted export from the GUI-managed store
+## Scripted export of recent pastes
 
-The simplest robust export is JSON-first:
+Export JSON to preserve content and metadata:
 
 - use `lpaste --json list` to capture ids and names
 - use `lpaste --json get <id>` to fetch the full paste payload
 - write one JSON file per paste into a local directory
 
-That preserves content and metadata without guessing file extensions.
+`list` defaults to 10 rows, and the API caps it at 100 regardless of a larger
+`--limit`. These scripts export up to the 100 most recent paste heads, excluding
+historical versions. They cannot enumerate a larger store because list pagination
+is unavailable. Use [database backups](deployment.md#backups) for a complete snapshot.
 
-### PowerShell 5.1/7 example: export all pastes to `.\localpaste-all-pastes`
+### PowerShell 5.1/7 example
 
-This writes `index.json` plus one `<safe-name>--<id>.json` file per paste in the current working directory.
+This writes `index.json` plus one `<safe-name>--<id>.json` file per paste inside `localpaste-export/`.
 
 ```powershell
-$outDir = Join-Path (Get-Location) "localpaste-all-pastes"
-$limit = 100000
+$outDir = Join-Path (Get-Location) "localpaste-export"
+$limit = 100
 $utf8Encoding = [Text.UTF8Encoding]::new($false)
 [Console]::OutputEncoding = $utf8Encoding
 
@@ -138,15 +134,15 @@ foreach ($item in $items) {
 The explicit encoding preserves native CLI Unicode output and writes UTF-8 without a BOM
 on both PowerShell versions. `index.json` remains an array for empty and single-paste stores.
 
-### Bash example: export all pastes to `./localpaste-all-pastes`
+### Bash example
 
 This version uses `python3` only for JSON parsing and filename sanitization.
 
 ```bash
 set -euo pipefail
 
-out_dir="$PWD/localpaste-all-pastes"
-limit=100000
+out_dir="$PWD/localpaste-export"
+limit=100
 
 mkdir -p "$out_dir"
 lpaste --json list --limit "$limit" > "$out_dir/index.json"
@@ -168,8 +164,5 @@ PY
 done
 ```
 
-Notes:
-
-- `list` defaults to `10`, so the export script must pass a larger `--limit`.
-- If you have more than the chosen limit, raise it and rerun.
-- To export plain content instead of full JSON payloads, replace `lpaste --json get ...` with `lpaste get ...` and change the output extension.
+To export plain content instead of full JSON payloads, replace `lpaste --json get ...`
+with `lpaste get ...` and change the output extension.

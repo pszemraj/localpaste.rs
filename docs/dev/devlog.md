@@ -3,47 +3,21 @@
 Build and run the workspace binaries with the commands below.
 See [runtime architecture](../architecture.md) for process topology.
 
-## Workspace Layout
-
-```text
-localpaste.rs/
-|-- Cargo.toml
-|-- crates/
-|   |-- localpaste_core/    # config, db, models, naming, errors
-|   |-- localpaste_server/  # axum API + embedded server
-|   |-- localpaste_gui/     # native desktop app
-|   |-- localpaste_cli/     # lpaste binary
-|   `-- localpaste_tools/   # dataset generators / utilities
-|-- docs/
-|-- assets/
-`-- target/
-```
-
 ## Binary Map
 
-- `localpaste-gui` - native desktop app (`crates/localpaste_gui`)
-- `localpaste` - headless API server (`crates/localpaste_server`)
-- `lpaste` - CLI client (`crates/localpaste_cli`)
-- `generate-test-data` - synthetic dataset tool (`crates/localpaste_tools`)
-- `check-loc` - line-count policy checker (`crates/localpaste_tools`)
-- `check-ast-dupes` - AST-normalized duplicate/dead-symbol audit (`crates/localpaste_tools`)
+| Crate under `crates/` | Binaries | Purpose |
+| --- | --- | --- |
+| `localpaste_core` | Library only | Config, models, storage, shared operations |
+| `localpaste_gui` | `localpaste-gui` | Native desktop app |
+| `localpaste_server` | `localpaste` | Headless HTTP API |
+| `localpaste_cli` | `lpaste` | HTTP client and endpoint discovery |
+| `localpaste_tools` | `generate-test-data`, `check-loc`, `check-ast-dupes` | Fixtures, line-count policy, duplicate/dead-symbol audit |
 
 ## Build Matrix
 
 ```bash
-# GUI
-cargo build -p localpaste_gui --bin localpaste-gui --release
-
-# Server
-cargo build -p localpaste_server --bin localpaste --release
-
-# CLI
-cargo build -p localpaste_cli --bin lpaste --release
-
-# Tooling
-cargo build -p localpaste_tools --bin generate-test-data --release
-cargo build -p localpaste_tools --bin check-loc --release
-cargo build -p localpaste_tools --bin check-ast-dupes --release
+# Build all workspace binaries.
+cargo build --workspace --release
 ```
 
 For service and shell use, install the server and CLI into Cargo's binary directory:
@@ -65,16 +39,6 @@ cargo run -p localpaste_server --bin localpaste --release
 # CLI (built binary)
 ./target/release/lpaste --help
 ```
-
-Runtime contract references:
-
-- Runtime topologies + endpoint discovery/trust checks:
-  [architecture.md#2-runtime-topologies](../architecture.md#2-runtime-topologies)
-  and
-  [architecture.md#10-discovery-and-trust](../architecture.md#10-discovery-and-trust)
-- Single-writer `DB_PATH` + on-disk contract: [storage.md](../storage.md)
-- Lock semantics and API `423 Locked` behavior:
-  [locking-model.md](locking-model.md)
 
 For editor-mode flags and tracing env vars, see
 [gui-notes.md](gui-notes.md).
@@ -163,6 +127,7 @@ ID="$(./target/debug/lpaste list --limit 1 | awk '{print $1}')"
 
 # Restart persistence check
 kill "$SERVER_PID"
+wait "$SERVER_PID" || true
 ./target/debug/localpaste &
 SERVER_PID=$!
 sleep 1

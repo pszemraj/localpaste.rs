@@ -1,27 +1,15 @@
 # LocalPaste.rs
 
-Your local scratch layer for technical text that should be easy to save, search, edit, diff, and recover.
+LocalPaste stores technical text locally for editing, search, diff, and version recovery.
 
 ![LocalPaste Screenshot](assets/ui.jpg)
 
-LocalPaste is for the text that lives between your clipboard, a repo, and a formal document: code snippets, logs, stack traces, config fragments, prompts, queries, links, notes, and half-formed fixes you do not want to lose.
+Save code snippets, logs, stack traces, config fragments, prompts, queries, links, and notes.
 
 It is local-first by design. The desktop app is the main workspace, backed by an embedded database on your machine. A localhost API and the `lpaste` CLI can use the same store, so terminal capture, scripts, and the GUI can fit into one workflow without sending sensitive material to a cloud pastebin.
 
 > [!WARNING]
 > Follow the [storage operational expectations](docs/storage.md#operational-expectations) when combining GUI, server, and CLI workflows.
-
-## Why It Exists
-
-Clipboard history is too transient. A repo is too heavy for every useful fragment. Cloud pastebins are the wrong default for secrets, logs, client data, and work-in-progress.
-
-LocalPaste gives those scraps a durable home:
-
-- paste first, organize later
-- search by content, name, tags, language, and derived metadata
-- edit in a code-aware desktop surface
-- recover older versions when a scratch edit goes sideways
-- automate through a CLI or localhost HTTP API when the terminal is faster
 
 ## Quick Start
 
@@ -30,13 +18,22 @@ Download the latest binary for your system from
 Release downloads install the desktop GUI; build from source for `lpaste` or the standalone server.
 See [GUI releases](docs/release-gui.md) for artifact names and platform installation details.
 
-To build from source:
+Source builds need Git, Rust 1.89 or newer with Cargo, and a native C/C++ build
+toolchain. Linux builds also need `pkg-config`.
 
 ```bash
 git clone https://github.com/pszemraj/localpaste.rs.git
 cd localpaste.rs
+rustc --version
+cargo --version
 cargo run
 ```
+
+In the GUI, press `Ctrl/Cmd+N`, enter some text, and press `Ctrl/Cmd+S` to save it.
+The saved paste appears in the sidebar.
+
+Default GUI/server builds use Magika; see [detection build options](docs/language-detection.md#feature-topology)
+if ONNX Runtime is unavailable on your platform.
 
 Use the standalone server and CLI when you want a headless workflow:
 

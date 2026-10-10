@@ -67,7 +67,8 @@ For semantics and error contracts, use:
 
 ### System-wide Service
 
-Create `/etc/systemd/system/localpaste.service`:
+Create `/etc/systemd/system/localpaste.service`, replacing `username` and the
+binary path with your account and installation path:
 
 ```ini
 [Unit]
@@ -77,7 +78,7 @@ After=network.target
 [Service]
 Type=simple
 User=username
-ExecStart=/usr/local/bin/localpaste
+ExecStart=/home/username/.cargo/bin/localpaste
 Restart=on-failure
 Environment="RUST_LOG=info"
 
@@ -168,6 +169,23 @@ Set `AUTO_BACKUP=true` to snapshot an existing database at startup, or run `loca
 
 Startup compatibility repairs create a backup independently of `AUTO_BACKUP`; see the [repair policy](storage.md#compatibility-policy).
 
+To restore, stop the GUI or server that will use the restored database. Keep the
+original database and backup, and copy the snapshot into a fresh directory as
+`data.redb`. Do not copy the owner lock or `.api-addr` file.
+
+For example, from the source checkout, replace `path/to/backup.redb` with your snapshot:
+
+```bash
+mkdir -p target
+RESTORE_DB=$(mktemp -d "$PWD/target/lpaste-restore-XXXXXX")
+cp path/to/backup.redb "$RESTORE_DB/data.redb"
+DB_PATH="$RESTORE_DB" cargo run -p localpaste_gui --bin localpaste-gui
+```
+
+Verify the expected pastes and version history in this isolated copy before
+using it as your normal `DB_PATH`. Startup may apply the compatibility repairs
+linked above; the original snapshot remains available.
+
 ### Auto-restart on Crash
 
 With systemd:
@@ -186,7 +204,7 @@ With cron:
 
 ### Log Rotation
 
-```bash
+```text
 # /etc/logrotate.d/localpaste
 /home/username/.cache/localpaste/*.log {
     daily

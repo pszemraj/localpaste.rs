@@ -5,25 +5,25 @@ The GUI must stay responsive while scrolling, editing, and highlighting large pa
 ## Scope
 
 - English-first editor workflows only.
-- Runtime topology for this protocol: the GUI owns the DB lock and runs the embedded API endpoint in-process.
-- DB ownership rules: [storage.md#operational-expectations](../storage.md#operational-expectations).
+- Use the [GUI-primary topology](../architecture.md#gui-primary-topology) and [DB ownership rules](../storage.md#operational-expectations).
 - Detection/highlight behavior definitions, including virtual-editor async debounce/staging policy: [language-detection.md](../language-detection.md).
 - Primary perf scenario: `perf-scroll-5k-lines`.
 - Manual release-gate thresholds:
   - average FPS `>= 45`
   - p95 frame time `<= 25 ms`
   - no multi-second plain fallback during newline-burst editing.
-- Next gate target after virtual-editor Phase 1+2 perf changes:
-  - p95 frame time `<= 16 ms` once post-change measurements are captured and reviewed.
+- Potential tighter gate: p95 frame time `<= 16 ms` after newline-burst
+  measurements are captured and reviewed.
 
 Perf runs require an isolated `DB_PATH`; shared writers invalidate the measurements.
 
-## Automated Test Budget (CI/Headless)
+## Headless Checks
 
-- Automated headless tests use a broad regression budget, not release gating:
-  - list latency `< 5s`
-  - search latency `< 5s`
-- Test: [headless_workflows.rs](../../crates/localpaste_gui/tests/headless_workflows.rs) (`list_and_search_latency_stay_within_reasonable_headless_budget`).
+The [headless list/search test](../../crates/localpaste_gui/tests/headless_workflows.rs)
+(`list_and_search_latency_stay_within_reasonable_headless_budget`) checks result shape
+and requires command submission to finish within five seconds. Its timers stop before
+receiving worker results; it does not measure backend round-trip latency or GUI frame
+performance. Use the manual frame budgets above for responsiveness checks.
 
 For list Markdown containing repeated inline code, run the real-parser scaling probe:
 
@@ -43,8 +43,7 @@ Minimum binaries required for this protocol:
 
 ## Runbook
 
-Run this for reproducible perf checks:
-Flag behavior/meanings are documented in [gui-notes.md](gui-notes.md); this runbook only pins values used during perf validation.
+Run with the [GUI trace flags](gui-notes.md#runtime-flags):
 
 ```powershell
 $env:DB_PATH = Join-Path (Get-Location) "target/lpaste-perf-$([guid]::NewGuid().ToString('N'))"
@@ -86,8 +85,8 @@ This runbook seeds a large mixed dataset via `generate-test-data`:
 - 10k random pastes with `--count 10000`, plus the four named fixtures
 - weighted content-size distribution (small/medium/large/very large)
 - language-diverse snippets plus folder/tag metadata
-- GUI sidebar lists read metadata projections. Sidebar and paste-picker searches use the field scopes described in [GUI behavior](gui-notes.md#stable-behavior-notes).
-- Sidebar list window is capped by `DEFAULT_LIST_PASTES_LIMIT` (`512`); sidebar search and the paste picker search the full store.
+
+Check the [GUI list limits and search scopes](gui-notes.md#stable-behavior-notes).
 
 ## Manual Verification Checklist
 
@@ -108,7 +107,4 @@ Perf gating in this protocol is based on the checks below:
 
 ## Related Docs
 
-- Editor flags and trace env vars: [gui-notes.md](gui-notes.md)
-- Detection/normalization/highlight behavior: [language-detection.md](../language-detection.md)
 - Open perf follow-ups: [backlog.md](backlog.md)
-- System architecture context: [architecture.md](../architecture.md)

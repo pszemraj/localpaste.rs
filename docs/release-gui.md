@@ -1,4 +1,21 @@
-# GUI Release Pipeline
+# GUI Installation And Release Packaging
+
+## Install A Release
+
+Download an artifact for your platform from [GitHub Releases](https://github.com/pszemraj/localpaste.rs/releases):
+
+- Windows x86_64: run the MSI installer, or extract the ZIP and launch `localpaste.exe`.
+- Linux x86_64: make the AppImage executable (`chmod +x localpaste-*.AppImage`),
+  then launch it. Alternatively, extract the `.tar.gz` and run `./localpaste`.
+- macOS Apple Silicon: open the DMG and copy `LocalPaste.app` to Applications,
+  or extract the `.app.tar.gz` and move the app bundle there. See the
+  [Gatekeeper message](#gatekeeper-message) if macOS blocks an unsigned build.
+
+The `localpaste` executable inside release archives is the GUI, renamed during
+packaging. The source-built `localpaste` binary is the headless server; release
+archives do not include that server or `lpaste`.
+
+## Pipeline
 
 Workflow and helper-script entrypoints:
 
@@ -87,8 +104,10 @@ Behavior when secrets are present:
 
 - `release_tag` and `current_ref`: workflow signs, notarizes, and staples macOS artifacts.
 
-## Release Notes Gatekeeper Note
+## Gatekeeper Message
 
 When a `.dmg` is present in published assets, the workflow appends this one-line macOS note to the release body (idempotent):
 
-`macOS note: this release may include unsigned/unnotarized LocalPaste macOS artifacts. If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security or run \`xattr -cr /Applications/LocalPaste.app\`.`
+```text
+macOS note: this release may include unsigned/unnotarized LocalPaste macOS artifacts. If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security or run `xattr -cr /Applications/LocalPaste.app`.
+```

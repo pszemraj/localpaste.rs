@@ -47,6 +47,9 @@ Operations:
    - Reserves one or more paste IDs for a mutation critical section.
    - Fails if any target paste is currently held by owners.
    - While the guard is alive, new acquisitions on those IDs are rejected.
+4. `begin_mutation_ignoring_owner(paste_id, owner_id)`
+   - Allows the GUI's own edit hold during a local mutation.
+   - Still rejects other owners and in-flight mutations.
 
 Poison handling:
 
@@ -58,6 +61,10 @@ Single-paste mutation paths:
 
 - API update/delete acquire `begin_mutation` before storage mutation.
   - [`../../crates/localpaste_server/src/handlers/paste.rs`](../../crates/localpaste_server/src/handlers/paste.rs)
+- GUI worker mutations use the owner-aware guard while retaining the active edit hold.
+- Folder-scoped mutations acquire the folder transaction lock before reserving paste
+  IDs. Shared guard helpers in [`locks.rs`](../../crates/localpaste_server/src/locks.rs)
+  preserve this order across API and GUI paths.
 
 Folder delete path:
 

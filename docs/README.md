@@ -7,7 +7,7 @@
 | System architecture, runtime topology, and discovery | [architecture.md](architecture.md) |
 | Storage backend and single-writer `DB_PATH` contract | [storage.md](storage.md) |
 | Security defaults and exposure policy | [security.md](security.md) |
-| Service operations and lock recovery | [deployment.md](deployment.md) |
+| Service operations, backup restoration, and lock recovery | [deployment.md](deployment.md) |
 | Detection, normalization, and highlighting | [language-detection.md](language-detection.md) |
 | Lock semantics (`db.owner.lock`, paste edit locks, API `423`) | [dev/locking-model.md](dev/locking-model.md) |
 | Version history, diff, and metadata retrieval/search path | [architecture.md#5-read-and-write-paths](architecture.md#5-read-and-write-paths) |
@@ -16,7 +16,7 @@
 | Build/run/validation workflow | [dev/devlog.md](dev/devlog.md) |
 | Server+CLI smoke test (restart persistence included) | [dev/devlog.md#runtime-smoke-test-server-cli](dev/devlog.md#runtime-smoke-test-server-cli) |
 | Tooling CLI contracts (`check-loc`, `check-ast-dupes`) | [dev/devlog.md#tooling-cli-contracts](dev/devlog.md#tooling-cli-contracts) |
-| GUI release pipeline and artifact contract | [release-gui.md](release-gui.md) |
+| GUI installation, release pipeline, and artifact contract | [release-gui.md](release-gui.md) |
 | GUI packaging verification workflow | [../.github/workflows/verify-gui-packaging.yml](../.github/workflows/verify-gui-packaging.yml) |
 | Engineering backlog | [dev/backlog.md](dev/backlog.md) |
 | UI design tokens | [dev/ui-palette.md](dev/ui-palette.md) |

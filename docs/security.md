@@ -5,7 +5,6 @@
 - [Default Security Settings](#default-security-settings)
 - [Runtime Configuration](#runtime-configuration)
 - [Public Exposure (Not Recommended)](#public-exposure-not-recommended)
-- [Security Best Practices](#security-best-practices)
 - [Threat Model](#threat-model)
 - [Reporting Security Issues](#reporting-security-issues)
 - [Local Data](#local-data)
@@ -89,9 +88,23 @@ Before exposing publicly, ensure:
 - [ ] Firewall rules configured to limit access
 - [ ] Consider adding authentication (not built-in)
 - [ ] Use HTTPS proxy (nginx/caddy) for encryption
-- [ ] Monitor access logs
+- [ ] Configure [service logging](deployment.md) and monitor it
 - [ ] Regular security updates
-- [ ] Backup strategy in place
+- [ ] Use [database backups](deployment.md#backups) and copy snapshots outside the DB directory
+
+Example firewall rule:
+
+```bash
+ufw allow from 192.168.1.0/24 to any port 38411
+```
+
+Review dependency updates locally:
+
+```bash
+cargo update
+# Requires the cargo-audit subcommand to be installed.
+cargo audit
+```
 
 ### 3. Reverse Proxy Example (nginx)
 
@@ -117,42 +130,9 @@ server {
 }
 ```
 
-## Security Best Practices
-
-1. **Regular Updates**: Keep dependencies updated
-
-   ```bash
-   cargo update
-   cargo audit
-   ```
-
-2. **Monitoring**: Watch logs for unusual activity
-   Use the service/logging patterns in [deployment.md](deployment.md).
-
-3. **Backups**: Use the [backup operations](deployment.md#backups) and keep copies outside the DB directory when needed.
-
-4. **Access Control**: Use firewall rules
-
-   ```bash
-   # Allow only specific IPs (example with ufw)
-   ufw allow from 192.168.1.0/24 to any port 38411
-   ```
-
-5. **Keep broad-list payloads bounded by design**
-   `GET /api/pastes` and `GET /api/search` return metadata rows.
-   Fetch full content with `GET /api/paste/:id` only for selected records.
-
 ## Threat Model
 
-LocalPaste is designed for trusted local environments. The main security considerations:
-
-### What's Protected
-
-- Loopback binding keeps the default listener off external network interfaces.
-- Browser headers constrain resource loading and forbid framing.
-- Size limits bound individual paste content and HTTP request bodies.
-
-### What's Not Protected
+LocalPaste is designed for trusted local environments. Its limits are:
 
 - No built-in authentication/authorization
 - No HTML sanitization guarantee; paste content is preserved, and clients rendering it as HTML must escape it

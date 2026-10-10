@@ -15,11 +15,14 @@ Authoritative tables:
 - `folders`: folder rows.
 - `folders_deleting`: in-progress delete markers for folder-tree operations.
 
-Derived/index tables:
+Rebuildable projections and indexes:
 
 - `pastes_meta`: list/search/filter projection, including derived retrieval metadata (`kind`, compact `handle`, top `terms`).
 - `pastes_meta_state`: projection schema marker; startup rebuilds `pastes_meta` from authoritative paste rows when the marker is missing or stale.
 - `pastes_by_updated`: recency index keyed by `(reverse_millis, paste_id)`.
+
+Retained history and delete-undo data (not reconstructible from the active paste rows):
+
 - `paste_versions_meta`: newest-first historical snapshot metadata per paste.
 - `paste_versions_content`: historical snapshot content keyed by `(paste_id, version_id_ms)`.
 - `deleted_pastes`: GUI delete-undo staging rows keyed by undo token.
@@ -51,9 +54,19 @@ The GUI worker discards expired or overflowed tokens. Database startup and GUI b
 
 ## Durability and Atomicity
 
-- redb write transactions are commit-durable.
-- LocalPaste relies on `commit()` durability; there is no required explicit flush step.
-- Multi-table write operations are executed inside single redb write transactions where invariant coupling matters.
+redb write transactions are commit-durable; no separate flush is required.
+Coupled multi-table operations share one write transaction.
+
+```mermaid
+flowchart TD
+    W["Write request (create/update/delete/move)"] --> T["Open single redb write transaction"]
+    T --> C["Update authoritative + derived tables"]
+    C --> K{"commit() succeeds?"}
+    K -- yes --> OK["All changes visible atomically"]
+    K -- no --> ABORT["No partial rows committed"]
+
+    R["Read request (list/search/meta)"] --> I["Read from authoritative/metadata tables"]
+```
 
 ## Operational Expectations
 

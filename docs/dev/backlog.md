@@ -8,26 +8,26 @@
 - [ ] Split `LocalPasteApp` into domain state groups (`EditorState`, `HighlightState`, `SearchState`, `UiState`) to reduce coupling and simplify test harness construction.
 - [ ] Extract the virtual input-routing/control-flow block from `LocalPasteApp::update` into a dedicated per-frame input pipeline API.
 - [ ] Add local perf microbench coverage (list-from-metadata and highlight/layout paths) to catch regressions earlier than manual perf runs.
-- [~] Keep reducing highlight request payload churn: virtual-editor requests now send `Rope` snapshots with worker-side materialization; debounce tuning should be revisited with fresh perf traces.
-- [~] Avoid full `Vec<HighlightRenderLine>` clone during patch merge (`queue_highlight_patch`) for very large files; one redundant `base.lines.clone()` was removed, but fallback-path `HighlightRender` cloning still needs structural refactor (e.g., base lookup plus move/patch without full render clone).
+- [~] Reduce highlight request payload churn and revisit debounce tuning using fresh perf traces.
+- [~] Reduce the fallback `base.lines.clone()` in `queue_highlight_patch` for very large files while preserving the displayed render until its replacement is ready.
 - [ ] Investigate worker-side highlight diffing that avoids full line-hash scans for every request (especially tiny edits), while preserving patch correctness and stale-result dropping semantics.
 - [ ] Revisit backend query-cache invalidation strategy with metadata-aware generations/in-place cache patching where correctness permits.
 - [ ] Replace the GUI's 30s refresh poll with invalidation for embedded-API writes; GUI backend mutations already refresh immediately through events.
 - [ ] Add a synthetic same-frame focus-loss + `Ctrl+Delete` regression once the per-frame input pipeline is extracted, so the paste-delete shortcut and editor word-delete ownership stay covered under simultaneous pointer/key input.
-- [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained or retired now that owner-lock probing is the preferred path.
+- [ ] Decide whether legacy process-list diagnostics in `Database::new` should be retained alongside owner-lock probing or retired.
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR`).
 - [ ] Finish native macOS GUI smoke/probe before merging phase-two UX hardening; cover keyboard ownership, ~~IME `cursor_rect` placement~~, and cold-start visibility because headless tests stop at the rendering boundary. Linux X11 and Windows navigation probe automation are covered in [gui-notes.md#navigation-probe](gui-notes.md#navigation-probe).
 - [ ] Complete Windows release checks still missing from native navigation coverage: MSI installation, startup with a clean GUI profile, ~~composing IME~~, physical hold/release gestures, and intercepted F1. Synthetic chords and isolated databases do not establish those results. IME/CJK testing is optional; additional testing and insights welcome.
-- [ ] [Upgrade egui/eframe for MCP inspection and reliable native paste (#35)](https://github.com/pszemraj/localpaste.rs/issues/35) in a standalone migration to at least `0.35.0`; evaluate `0.36.2` for its ordered modifier-change events. Under CPU load on X11, the pinned backend can discard the press chord before clipboard delivery, making `Ctrl/Cmd+Shift+V` insert into the current editor. Preserve paste intent through event routing, cover text-layout regressions and real Windows cold-start behavior, and keep the current dependency line at `0.33.3` until that migration lands.
+- [ ] [Upgrade egui/eframe for MCP inspection and reliable native paste (#35)](https://github.com/pszemraj/localpaste.rs/issues/35) in a standalone migration to at least `0.35.0`; evaluate `0.36.2` for its ordered modifier-change events to resolve the [native paste limitation](gui-notes.md#keyboard-and-navigation-contract). Preserve paste intent through event routing, cover text-layout regressions and real Windows cold-start behavior, and keep the current dependency line at `0.33.3` until that migration lands.
 - [ ] Capture newline-burst highlight perf evidence before adopting the tighter [performance gate](gui-perf-protocol.md#scope).
-- [ ] Enforce key/value identity checks for authoritative paste rows (`tree` key must match decoded `Paste.id`) and define repair behavior for mismatches.
+- [ ] Enforce key/value identity checks for authoritative paste rows (table key must match decoded `Paste.id`) and define repair behavior for mismatches.
 - [ ] Remove or explicitly re-approve the narrow redb row-shape reader fallbacks before stable release; storage compatibility policy is in [../storage.md#compatibility-policy](../storage.md#compatibility-policy).
 - [ ] Narrow `PasteDb` mutation API so folder assignment changes cannot bypass folder-count transaction paths.
 - [ ] Track folder-count decrement failures with a persistent repair marker and run opportunistic `reconcile_folder_invariants` recovery in long-lived processes.
 - [ ] Add an explicit runtime reconcile entrypoint/scheduler for metadata indexes so degraded states are repaired without restart.
 - [ ] Add low-cost semantic drift detection for `pastes_meta` rows (without full content deserialization in list/search hot paths), e.g. metadata hash/version marker validation at write/reconcile time.
 - [ ] Migrate remaining test-only delete-undo bundle/capped coverage to the persisted staged-token restore APIs, then remove the `#[cfg(test)]` bundle helpers if they no longer protect distinct invariants.
-- [ ] Add a muted second sidebar metadata line when a derived handle exists, now that persisted semantic retrieval metadata and hover/details surfaces are in place.
+- [ ] Add a muted second sidebar metadata line when a derived handle exists.
 - [ ] Split history-reset worker failures out from generic `CoreErrorSource::SaveContent` so reset-specific UI transitions and error reporting do not rely on shared save-content handling.
 - [ ] Evaluate code-editor-style smart Home behavior for the virtual editor (first non-whitespace <-> column 0) without regressing platform-native line/document key bindings.
 - [ ] Decide whether sidebar recency grouping should keep the current rolling seven-day `This Week` behavior, switch to local-calendar week semantics, or rename the bucket to `Last 7 Days`.
@@ -45,12 +45,12 @@
 - [ ] Evaluate a shared test bootstrap utility for temporary DB + backend event receive flows across GUI/server/core tests while keeping unit-vs-integration boundaries explicit (avoid forcing production API exposure only for tests).
 - [ ] Re-evaluate whether `LocalPasteApp::{active_text_len_bytes, active_text_chars, active_revision, active_snapshot}` should remain separate explicit helpers or move behind a single active-buffer abstraction; keep separate until a clear readability/perf win is demonstrated.
 - [ ] Replace real `sleep(1100ms)` version-history/retention test waits with an injectable clock or deterministic snapshot timestamp hook across core and server tests.
-- [~] Extract focused helpers from `crates/localpaste_gui/src/app/state_ops.rs` (sidebar projection/navigation now lives in `state_ops/list_projection.rs`) before adding more GUI workflows. Version preview caching now lives in `version_ui/cache.rs`, returning `version_ui.rs` below the normal warning threshold.
+- [~] Extract focused helpers from `crates/localpaste_gui/src/app/state_ops.rs` before adding more GUI workflows.
 - [ ] Extract `render_virtual_editor_panel` into smaller focused helpers when the virtual-input pipeline work lands; keep the current monolithic method stable until then.
 - [ ] Decide whether YAML alias-only markers (`*alias`) should count as distinctive YAML structure or remain rejected as ambiguous prose.
 
 - [ ] Consolidate the paired sidebar-to-Find tests in `crates/localpaste_gui/src/app/tests/editor_find.rs` if a table keeps the contrasting body-match and metadata-only assertions readable. The duplicate-code audit reports shared setup; behavior is intentionally distinct.
 
-`app/tests/virtual_editor_behaviors.rs` is intentionally on the LOC watchlist while remaining below the 1,000-line limit. Its non-LF regression keeps edit byte offsets, rendered caret geometry, Undo/Redo, typing, and CRLF navigation/selection in one scenario so correct buffer contents cannot hide an invisible caret. Preserve these assertions when reorganizing the test module.
+The non-LF regression in `app/tests/virtual_editor_behaviors.rs` keeps edit byte offsets, rendered caret geometry, Undo/Redo, typing, and CRLF navigation/selection in one scenario so correct buffer contents cannot hide an invisible caret. Preserve these assertions when reorganizing the test module.
 
-`detection/mod.rs` remains below 1,000 lines; its command lexical helpers are shared with semantic classification to keep both paths consistent. `detection/tests.rs` keeps the source/prose matrices together so fallback and Magika configurations exercise the same boundaries. The AST visibility suggestion for `detection/heuristic.rs::looks_like_python_source` is a false positive: `detection/mod.rs` re-exports it for `semantic.rs`, so crate visibility is required.
+Command lexical helpers in `detection/mod.rs` are shared with semantic classification to keep both paths consistent. `detection/tests.rs` keeps the source/prose matrices together so fallback and Magika configurations exercise the same boundaries. The AST visibility suggestion for `detection/heuristic.rs::looks_like_python_source` is a false positive: `detection/mod.rs` re-exports it for `semantic.rs`, so crate visibility is required.

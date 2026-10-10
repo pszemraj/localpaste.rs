@@ -13,13 +13,20 @@ Implementation roots:
 - `localpaste_gui` and `localpaste_server` enable `magika` by default.
 - `localpaste_cli` sends content to the API; detection runs in the receiving GUI/server, not the CLI.
 
-This keeps GUI/server detection broad by default while preserving portability for core/CLI users.
+Magika builds download ONNX Runtime binaries. To use structural and heuristic
+detection without that dependency, disable the binary crate's default features:
+
+```bash
+cargo run -p localpaste_gui --bin localpaste-gui --no-default-features
+# Or run the headless server with the same fallback:
+cargo run -p localpaste_server --bin localpaste --no-default-features
+```
 
 ## Detection Flow
 
 For auto-detected language (`language_is_manual == false`):
 
-1. Recognize a standalone Markdown fence, then a known source shebang, before ambiguous body structure. Complete Makefiles with targets and tabbed recipes or distinctive directives, shell command sequences or `for` loops, listed executables after a leading comment, commands with explicit arguments after a leading quote (or a terminal prompt), and runtime traceback/panic structure also precede statistical detection.
+1. Apply structural overrides for standalone fences, source shebangs, Makefiles, commands, and runtime output before statistical detection. Content boundaries follow the [rules below](#filter-and-search-semantics).
 2. If `magika` feature is enabled:
    - run Magika detection with CRLF normalized to LF for inference only (stored content stays unchanged),
    - reject non-text results,
@@ -131,7 +138,7 @@ Standalone-fence recognition checks the full body to distinguish a closing fence
 
 ### Normalized Filters
 
-Language filters normalize both stored metadata and the requested value, preserving interoperability across legacy/current labels (`csharp` and `cs`). Search ranking also checks normalized languages to retain metadata relevance as labels evolve.
+Language filtering and metadata search apply the [same normalization](#normalization-contract) to stored and requested values.
 
 ## Text Export Extensions
 
