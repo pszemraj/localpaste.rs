@@ -1,5 +1,15 @@
 # Storage Contract
 
+LocalPaste keeps pastes, folders, and version history in one redb database under `DB_PATH`. This page states what that database keeps, how it is laid out, and what to expect when it is shared or upgraded.
+
+## What Survives What
+
+Pastes, folders, and version history are committed durably and survive restarts. Delete undo does not.
+
+- **Version history** is stored with the paste and persists across restarts. When a paste's content changes, the previous content is saved as a snapshot, subject to the interval and retention limits in [Version History Storage](#version-history-storage). Deleting a paste deletes its history, so history cannot bring a deleted paste back.
+- **Delete undo** is a short GUI affordance, not a recovery mechanism. The GUI holds a deleted paste for about ten seconds so Undo can restore it. Any database startup discards what is still held, and a delete through the API or CLI is permanent immediately.
+- **Backups** are separate database files, created on request or before a startup repair and never on a schedule ([deployment.md](deployment.md#backups)). Restoring a backup taken before the deletion is the only way to recover a deleted paste. A backup holds the pastes and history that existed when it was taken; undo data inside a backup is discarded when it is opened.
+
 ## Backend And File Layout
 
 - Storage backend: `redb` 3.x.
@@ -31,31 +41,29 @@ Retained history and delete-undo data (not reconstructible from the active paste
 
 ## Version History Storage
 
-Content-changing writes may archive the outgoing head content as a historical snapshot. Snapshot interval and retention settings are listed in [security.md#environment-variables](security.md#environment-variables).
+A content-changing write archives the outgoing content as a snapshot in the same transaction, except when it matches the latest snapshot or the latest snapshot is younger than `LOCALPASTE_VERSION_INTERVAL_SECS`. The first change to a paste always records one. Retention pruning removes the oldest snapshot metadata and content rows in the same transaction. A write also prunes a history that exceeds a lowered `LOCALPASTE_VERSION_RETENTION_LIMIT`, even when it records no new snapshot. Both settings are listed in [security.md](security.md#environment-variables).
 
-History reset workflows may temporarily preserve one confirmed reset target in addition to the normal retention limit while saving the current head before the reset. This prevents the selected rollback target from being pruned between user confirmation and the backend reset transaction. GUI reset transactions archive the outgoing head as a recovery snapshot before restoring the selected historical version.
+A hard reset to a snapshot removes the snapshots newer than it. The GUI first keeps the replaced content as a snapshot so it stays recoverable; the API's `reset-hard` endpoint does not.
 
-Retention pruning keeps the newest configured snapshot metadata rows and removes older matching `paste_versions_content` rows in the same write transaction. Writes also prune existing over-limit histories when the configured retention limit was lowered, even when the write does not record a new snapshot.
+### Delete Undo Staging
 
-GUI delete undo moves a paste and its historical versions into `deleted_*` staging tables in the same write transaction that removes the active rows and updates folder projections. Undo restores those rows by token.
-
-The GUI worker discards expired or overflowed tokens. Database startup and GUI backend reinitialization discard all staged rows, including live or malformed tokens, because the undo action does not survive restart. Discarding a token removes both the paste and its historical versions; version history cannot recover a deleted paste. Reopen a backup taken before deletion to recover it. A backup containing only staged delete-undo rows does not restore an undo window when opened.
+A GUI delete moves the paste and its snapshots into the `deleted_*` tables in the same transaction that removes the active rows and updates folder projections. Undo restores them by token. The GUI worker discards tokens that expire or exceed its undo limit. Database startup and GUI backend reinitialization discard every staged row, including live tokens, because the undo action does not survive a restart. Discarding a token removes the paste and its snapshots permanently.
 
 ## Compatibility Policy
 
-- Until stable release, backward compatibility is not required.
-- Pre-stable redb row-shape changes are not migrated by default; current builds expect current bincode row schemas and may reject older `data.redb` files created by earlier pre-stable builds.
-- Do not add broad pre-stable row-shape migrations just because an older development build wrote different bincode bytes. Prefer current schemas and fresh `DB_PATH` directories unless there is a narrow active-development reason to keep a reader fallback.
-- A temporary reader fallback must stay local to the decode helper, have regression coverage, define deterministic defaults for new fields, and remain cheap enough that deleting it later is straightforward.
-- Current narrow exceptions are the bincode reader fallbacks for `pastes`, `pastes_meta`, and `paste_versions_meta` rows that predate the language/manual/derived metadata fields. They protect active development databases only; they are not a general compatibility guarantee.
-- Derived metadata projection version 19 implements the [detection and retrieval rules](language-detection.md#filter-and-search-semantics). Startup rebuilds older projections from paste rows, preserving content, language, and manual/locked fields.
-- When an existing redb database needs startup schema or projection repair, startup creates a pre-repair snapshot using the [backup layout](deployment.md#backups) before mutating derived/index tables. Backup failure aborts startup instead of repairing in place without a snapshot.
-- Sled-era artifacts are incompatible and have no migration path. If `data.redb` is missing and legacy sled artifacts are present, startup fails with an explicit incompatible-storage error; use a fresh `DB_PATH` unless you explicitly convert the data.
+LocalPaste is pre-stable: a database written by an earlier version is not guaranteed to open in a later one, and no migrations are provided. Derived data (`pastes_meta`, `pastes_by_updated`) is rebuilt at startup, but paste rows written in an older layout can make startup fail or leave the affected pastes unreadable, and a legacy sled directory (no `data.redb`) is refused with an error. If an existing database is rejected, point `DB_PATH` at a fresh directory.
+
+### Startup Repair
+
+When an existing database needs schema or projection repair, startup first writes a backup using the [backup layout](deployment.md#backups); if that backup fails, startup aborts instead of repairing in place. Repair rebuilds an outdated or missing `pastes_meta` projection from the paste rows, so content, language, and manual-language flags are preserved. The projection implements the [detection and retrieval rules](language-detection.md#filter-and-search-semantics) and its version is `CURRENT_PASTES_META_SCHEMA_VERSION` in `crates/localpaste_core/src/db/paste/mod.rs`.
+
+### For Contributors
+
+Row-shape changes are not migrated before the stable release: prefer the current schema and a fresh `DB_PATH` over a broad migration for older development builds. A temporary reader fallback must stay local to its decode helper, have regression coverage, give new fields deterministic defaults, and be cheap to delete. The existing fallbacks cover `pastes`, `pastes_meta`, and `paste_versions_meta` rows that predate the language, manual-language, and derived-metadata fields; they protect development databases and are not a compatibility guarantee. Bump `CURRENT_PASTES_META_SCHEMA_VERSION` whenever the persisted `PasteMeta` projection changes.
 
 ## Durability and Atomicity
 
-redb write transactions are commit-durable; no separate flush is required.
-Coupled multi-table operations share one write transaction.
+redb write transactions are commit-durable; no separate flush is required. Coupled multi-table operations share one write transaction.
 
 ```mermaid
 flowchart TD
@@ -70,7 +78,8 @@ flowchart TD
 
 ## Operational Expectations
 
-- One writer process per `DB_PATH` at a time.
+A database has one writer process at a time; a second process fails to open the same `DB_PATH`.
+
 - Do not run `localpaste-gui` and standalone `localpaste` concurrently on the same `DB_PATH`.
 - If the GUI owns a DB, use its embedded API for CLI/automation access instead of starting standalone `localpaste` on that path.
 - For isolated local testing, use distinct `DB_PATH` directories.

@@ -1,153 +1,92 @@
 # Security Configuration
 
----
-
-- [Default Security Settings](#default-security-settings)
-- [Runtime Configuration](#runtime-configuration)
-- [Public Exposure (Not Recommended)](#public-exposure-not-recommended)
-- [Threat Model](#threat-model)
-- [Reporting Security Issues](#reporting-security-issues)
-- [Local Data](#local-data)
-
----
-
 ## Default Security Settings
 
-LocalPaste.rs is designed for local use and comes with secure defaults:
+LocalPaste is built for one user on one machine. By default the API listens on `127.0.0.1` only, accepts cross-origin browser requests only from loopback origins on its own port, and sends a Content-Security-Policy together with `X-Content-Type-Options: nosniff` and `X-Frame-Options: DENY` on every response.
 
-- **Localhost-only binding**: Server binds to `127.0.0.1` by default
-- **CORS restrictions**: Browser cross-origin access is allowed only from loopback origins matching the active listener port
-- **Security headers**: CSP, X-Frame-Options, X-Content-Type-Options
-- **Request size limits**: Decoded paste content and transport bodies have separate limits; see [Environment Variables](#environment-variables).
+CORS decides which web pages may read API responses; it does not authenticate callers. Any process on the machine, and any client that sends no `Origin` header, can use the loopback API.
 
 ## Runtime Configuration
+
+The headless server (`localpaste`) and the API embedded in the GUI read the same environment variables, except where noted.
 
 ### Environment Variables
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `DB_PATH` | platform cache dir | Database directory containing `data.redb`, lock files, and GUI discovery metadata |
+| `DB_PATH` | `~/.cache/localpaste/db` (Windows: `%LOCALAPPDATA%\localpaste\db`) | Database directory containing `data.redb`, lock files, and GUI discovery metadata |
 | `PORT` | `38411` | Listener port used when `BIND` is unset |
-| `BIND` | unset | Overrides `PORT`; otherwise bind to `127.0.0.1:$PORT`. Non-loopback values require `ALLOW_PUBLIC_ACCESS=1` |
-| `ALLOW_PUBLIC_ACCESS` | disabled | Enable CORS for all origins and allow non-loopback bind |
-| `MAX_PASTE_SIZE` | `10485760` | Max accepted paste size in bytes for API and GUI backend write paths |
+| `BIND` | unset | Listen address as `host:port`; takes precedence over `PORT`. A non-loopback address requires `ALLOW_PUBLIC_ACCESS=1` |
+| `ALLOW_PUBLIC_ACCESS` | disabled | Allow a non-loopback `BIND` and CORS from any origin; see [Public Exposure](#public-exposure-not-recommended) |
+| `MAX_PASTE_SIZE` | `10485760` | Maximum paste size in bytes, for API and GUI writes |
 | `AUTO_SAVE_INTERVAL` | `2000` | GUI autosave delay in milliseconds |
-| `AUTO_BACKUP` | disabled | Headless server: create a DB backup at startup when an existing DB is present |
-| `LOCALPASTE_SEARCH_CASE_SENSITIVE` | disabled | Default case-sensitive matching for search endpoints when the request omits `case_sensitive` |
-| `LOCALPASTE_VERSION_INTERVAL_SECS` | `300` | Minimum seconds between persisted historical snapshots (`>= 1`) |
-| `LOCALPASTE_VERSION_RETENTION_LIMIT` | `200` | Maximum historical snapshots retained per paste (`1..=1000`) |
-| `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` | unset | Legacy fallback key for `LOCALPASTE_VERSION_INTERVAL_SECS` |
+| `AUTO_BACKUP` | disabled | Headless server only: back up an existing database at startup |
+| `LOCALPASTE_SEARCH_CASE_SENSITIVE` | disabled | Case-sensitive matching for search requests that omit `case_sensitive` |
+| `LOCALPASTE_VERSION_INTERVAL_SECS` | `300` | Minimum seconds between saved history snapshots of a paste (`>= 1`) |
+| `LOCALPASTE_VERSION_RETENTION_LIMIT` | `200` | Maximum history snapshots kept per paste (`1..=1000`) |
+| `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` | unset | Legacy fallback for `LOCALPASTE_VERSION_INTERVAL_SECS` |
 
-`localpaste` startup fails fast on malformed `BIND`/`PORT`/numeric/boolean/version env values so invalid deployment configuration is explicit.
-Reference defaults/examples: [`.env.example`](../.env.example).
+`localpaste` refuses to start when `BIND`, `PORT`, or a numeric, boolean, or version setting is malformed. [`.env.example`](../.env.example) lists the defaults.
 
-`MAX_PASTE_SIZE` bounds decoded UTF-8 content, with a default of 10 MiB. The HTTP body limit allows worst-case JSON escaping: `min(6 * MAX_PASTE_SIZE + 16 KiB, 256 MiB)`. The default transport limit is therefore 60 MiB plus 16 KiB, rather than 10 MiB.
+`MAX_PASTE_SIZE` applies to decoded paste content. The HTTP request limit is larger, because JSON escaping can make a body several times bigger than the text it carries, but the paste size limit is still enforced on the decoded content.
 
-CORS controls browser access to responses; it does not authenticate callers or block clients that omit an `Origin` header. Processes on the machine can access the loopback API.
-
-### Security Headers
-
-The following headers are automatically set:
-
-- `Content-Security-Policy`: Uses same-origin defaults, permits inline scripts/styles and `data:` images, and forbids framing
-- `X-Content-Type-Options: nosniff`: Prevents MIME-type sniffing
-- `X-Frame-Options: DENY`: Prevents clickjacking
-
-To add a referrer policy, configure your reverse proxy or extend the Axum middleware layer.
-
-### Lock Management
-
-Operational recovery is documented in [deployment.md](deployment.md).
-Lock semantics are documented in [dev/locking-model.md](dev/locking-model.md).
-`DB_PATH` single-writer contract is documented in [storage.md](storage.md#operational-expectations).
-Treat uncertain lock ownership as unsafe.
+Only one process may write to a `DB_PATH` at a time; see [storage.md](storage.md#operational-expectations) for the contract and [deployment.md](deployment.md#lock-safety) for lock recovery.
 
 ## Public Exposure (Not Recommended)
 
-If you need to expose LocalPaste publicly, follow these steps:
+The API has no authentication: anyone who can reach it can read, change, and delete every paste. For remote access, an SSH tunnel (`ssh -L 38411:127.0.0.1:38411 user@host`) or a VPN avoids exposing the API at all. If it must be published, put a reverse proxy in front that terminates TLS and requires authentication.
 
-> [!WARNING]
-> Setting `ALLOW_PUBLIC_ACCESS=1` relaxes loopback-only protections. Use it only behind a firewall/reverse proxy you control.
+### Reverse proxy on the same host
 
-### 1. Enable Public Binding
-
-For launch and service setup, see [deployment.md](deployment.md) and [dev/devlog.md](dev/devlog.md). Public binding requires these overrides:
-
-```bash
-# Bind to all interfaces (requires ALLOW_PUBLIC_ACCESS)
-export BIND=0.0.0.0:38411
-
-# Allow cross-origin requests and non-loopback bind
-export ALLOW_PUBLIC_ACCESS=1
-```
-
-### 2. Security Checklist
-
-Before exposing publicly, ensure:
-
-- [ ] Firewall rules configured to limit access
-- [ ] Consider adding authentication (not built-in)
-- [ ] Use HTTPS proxy (nginx/caddy) for encryption
-- [ ] Configure [service logging](deployment.md) and monitor it
-- [ ] Regular security updates
-- [ ] Use [database backups](deployment.md#backups) and copy snapshots outside the DB directory
-
-Example firewall rule:
-
-```bash
-ufw allow from 192.168.1.0/24 to any port 38411
-```
-
-Review dependency updates locally:
-
-```bash
-cargo update
-# Requires the cargo-audit subcommand to be installed.
-cargo audit
-```
-
-### 3. Reverse Proxy Example (nginx)
+Leave the server on its defaults. A proxy on the same machine forwards to `http://127.0.0.1:38411`, so neither `BIND` nor `ALLOW_PUBLIC_ACCESS` is needed, and only the proxy is reachable from the network. The server already sets `X-Content-Type-Options` and `X-Frame-Options`, so the proxy does not need to add them. The server keeps no audit log; the proxy's access log is the only record of who did what.
 
 ```nginx
 server {
-    listen 443 ssl http2;
+    listen 443 ssl;
+    http2 on;    # nginx 1.25.1 or later; older versions use "listen 443 ssl http2;"
     server_name paste.example.com;
 
-    ssl_certificate /path/to/cert.pem;
+    ssl_certificate     /path/to/cert.pem;
     ssl_certificate_key /path/to/key.pem;
 
-    # Security headers
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "DENY" always;
+    # The API has no authentication of its own.
+    auth_basic           "LocalPaste";
+    auth_basic_user_file /etc/nginx/localpaste.htpasswd;
+
+    # nginx rejects request bodies over 1 MB by default. LocalPaste enforces
+    # MAX_PASTE_SIZE itself, so allow at least its request limit (about 60 MiB
+    # with the default MAX_PASTE_SIZE).
+    client_max_body_size 64m;
 
     location / {
         proxy_pass http://127.0.0.1:38411;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
 
+### When `ALLOW_PUBLIC_ACCESS` is needed
+
+`ALLOW_PUBLIC_ACCESS=1` is required in two cases: the server itself must accept non-loopback connections (a non-loopback `BIND`, for example when the proxy runs on another host or in a separate container network), or web pages from other origins must call the API directly from a browser. Without it, `localpaste` exits at startup when `BIND` is a non-loopback address.
+
+> [!WARNING]
+> `ALLOW_PUBLIC_ACCESS=1` lifts the loopback-only restrictions and allows CORS from any origin. It adds no authentication.
+
+With a non-loopback `BIND`, restrict the port at the firewall to the proxy host, for example `ufw allow from <proxy-ip> to any port 38411`.
+
 ## Threat Model
 
-LocalPaste is designed for trusted local environments. Its limits are:
+LocalPaste is designed for trusted local environments. Its limits:
 
-- No built-in authentication/authorization
-- No HTML sanitization guarantee; paste content is preserved, and clients rendering it as HTML must escape it
-- No guarantee against denial of service from a trusted local caller
-- No encryption at rest (use disk encryption)
-- No rate limiting (add reverse proxy if needed)
-- No audit logging; diagnostic tracing can be configured through `RUST_LOG`
+- No built-in authentication or authorization.
+- No HTML sanitization guarantee: paste content is preserved as written, and a client that renders it as HTML must escape it.
+- No guarantee against denial of service from a trusted local caller.
+- No rate limiting; add it at a reverse proxy if needed.
+- No encryption at rest; use disk encryption.
+- No audit logging; diagnostic tracing can be enabled with `RUST_LOG`.
 
 ## Reporting Security Issues
 
-If you discover a security vulnerability, please:
-
-1. Do not create a public GitHub issue
-2. Email details to the maintainer
-3. Allow time for a fix before disclosure
+Report suspected vulnerabilities privately; do not post details in a public issue. No private contact channel is published yet. Open a [GitHub issue](https://github.com/pszemraj/localpaste.rs/issues/new) that says only that you have a security report and asks how to send it, without exploit details or reproduction steps. Allow time for a fix before disclosing publicly.
 
 ## Local Data
 

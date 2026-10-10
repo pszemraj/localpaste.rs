@@ -3,9 +3,8 @@
 Implementation roots:
 
 - Core detection entrypoint: [`../crates/localpaste_core/src/detection/mod.rs`](../crates/localpaste_core/src/detection/mod.rs)
-- GUI highlight pipeline entrypoints:
-  - [`../crates/localpaste_gui/src/app/highlight/mod.rs`](../crates/localpaste_gui/src/app/highlight/mod.rs)
-  - [`../crates/localpaste_gui/src/app/highlight/worker.rs`](../crates/localpaste_gui/src/app/highlight/worker.rs)
+- Retrieval kinds, handles, and terms: [`../crates/localpaste_core/src/semantic.rs`](../crates/localpaste_core/src/semantic.rs)
+- GUI highlight pipeline: [`../crates/localpaste_gui/src/app/highlight/mod.rs`](../crates/localpaste_gui/src/app/highlight/mod.rs), with its lifecycle described in [dev/highlighting.md](dev/highlighting.md)
 
 ## Feature Topology
 
@@ -13,8 +12,7 @@ Implementation roots:
 - `localpaste_gui` and `localpaste_server` enable `magika` by default.
 - `localpaste_cli` sends content to the API; detection runs in the receiving GUI/server, not the CLI.
 
-Magika builds download ONNX Runtime binaries. To use structural and heuristic
-detection without that dependency, disable the binary crate's default features:
+Magika builds download ONNX Runtime binaries. To use structural and heuristic detection without that dependency, disable the binary crate's default features:
 
 ```bash
 cargo run -p localpaste_gui --bin localpaste-gui --no-default-features
@@ -24,41 +22,25 @@ cargo run -p localpaste_server --bin localpaste --no-default-features
 
 ## Detection Flow
 
-For auto-detected language (`language_is_manual == false`):
+For auto-detected language (`language_is_manual == false`), detection tries cheap structural checks first, then the Magika model, then heuristics:
 
-1. Apply structural overrides for standalone fences, source shebangs, Makefiles, commands, and runtime output before statistical detection. Content boundaries follow the [rules below](#filter-and-search-semantics).
-2. If `magika` feature is enabled:
-   - run Magika detection with CRLF normalized to LF for inference only (stored content stays unchanged),
-   - reject non-text results,
-   - reject generic labels (`txt`, `randomtxt`, `unknown`, `empty`, `undefined`),
-   - normalize and return if non-empty and not `text`.
-3. Otherwise (or if Magika is unavailable/fails/generic), run heuristic fallback.
-4. Normalize heuristic label and return unless empty/`text`.
+1. Structural overrides run before any model inference: a paste that is a single standalone Markdown fence, a source shebang, Python compound statements, Makefiles, shell command sequences, and runtime output such as Rust panics and Python tracebacks.
+2. With the `magika` feature, Magika classifies the body. CRLF is normalized to LF for inference only; stored content is unchanged. Non-text results and generic labels (`txt`, `randomtxt`, `unknown`, `empty`, `undefined`) are discarded. Any other label is normalized and [refined](#label-refinement), and a label that survives and is not `text` is the result.
+3. Otherwise (Magika disabled, unavailable, failed, generic, or rejected by refinement), the heuristic fallback runs. Its label is normalized and returned unless it is empty or `text`.
 
-Auto mode is intentionally "pending detection":
+Auto mode is a pending state rather than a continuously updated label. Switching a paste to Auto clears its resolved language, and the next content edit runs detection. Once detection resolves a concrete language, the paste is locked to it (`language_is_manual = true`) until it is switched back to Auto. API create requests that omit `language_is_manual` detect immediately and lock when detection resolves; a request with `language_is_manual: false` and no `language` starts unresolved and defers detection to a later edit. A manual language is never re-detected on content edits.
 
-- switching to auto clears the resolved language label,
-- the next content edit re-runs detection,
-- if detection resolves a concrete language, that value is locked (`language_is_manual = true`) until explicitly switched back to auto.
-- API create requests that omit `language_is_manual` detect immediately and lock when detection resolves; pass `language_is_manual: false` to start unresolved auto mode and defer detection until a later edit.
-
-For manual language (`language_is_manual == true`), content edits do not re-run auto detection.
-
-An inferred Markdown label is refined using [whole-body technical structure](#documents-and-fenced-content). Inferred Python labels are rejected when surrounding prose or Markdown structure supplies document evidence; an absent import/definition alone does not reject Python. Inferred Batch labels receive the [prose-boundary checks](#yaml-refinement-guardrail) described below. These refinements apply during detection; manual stored language values remain unchanged.
+Structural recognition is conservative where shapes overlap. A colon followed by indented lines can be a Makefile target, a Python compound statement, or a note, so each is accepted only when the whole sampled body supports it.
 
 A `target:` line followed by tab-indented lines is claimed as a Makefile before model inference only when every indented line looks like a command: it names a known tool, uses a flag, path, variable, or shell operator, or it is a lowercase tool name followed by plain arguments, such as `zig build`. Makefiles for unfamiliar build tools therefore qualify, while stack traces, assembly, logs, and other tab-indented code keep their detected language. Distinctive Make syntax is enough on its own: continued lines, `override` assignments, `vpath`, Make function calls, `.mk` includes, and closed `define` blocks.
 
 Two document shapes look like Makefiles but are not. A note such as `Agenda:` followed by indented sentences or short items resolves to Markdown, unless prerequisites, a second target, directives, or command syntax show a real build file. A README section keeps its document label when a capitalized label such as `Install:` sits under a Markdown heading, or when its only label is `Example:` or `Steps:`. When Magika itself reports a Makefile, only such a complete note changes the label; unfamiliar syntax alone does not.
 
-Python compound statements can also resemble targets and tabbed recipes. They retain Python classification when the sampled body consistently contains Python-shaped headers and statements, including attribute, subscript, tuple, and annotated assignments. Strings and comments may contain dollar signs; unquoted shell variables remain recipe evidence. Unrelated targets, Make directives, and command recipes elsewhere in the sample prevent this compound-source override. An explicit source shebang retains precedence.
+Python compound statements (`if`, `for`, or `def` headers followed by indented bodies) can resemble targets with tabbed recipes as well. A body keeps its Python label while its sampled lines are consistently Python-shaped; unrelated targets, Make directives, unquoted shell variables, or command recipes anywhere in the sample disqualify it. An explicit source shebang takes precedence.
 
-Positive note structure also repairs the retrieval kind of stored Shell/Makefile labels on those note bodies and incidental JavaScript keyword labels on prose sentences. The stored language and lock stay unchanged, so highlighting and export continue to honor that choice; switch to Auto to resolve the label again.
+Note-shaped bodies also correct the retrieval kind. A paste stored as Shell or Makefile whose body is a note, or a prose sentence stored as JavaScript only because it contains `let` and `function`, derives the Document kind. The stored language and lock are untouched, so highlighting and export keep that choice; switching to Auto clears the label, and the next edit detects it again.
 
-Magika session lifecycle:
-
-- lazy singleton (`OnceLock<Result<Mutex<magika::Session>, String>>`),
-- guarded with `Mutex` because Magika identify calls require `&mut self`,
-- `prewarm()` is called in GUI/server startup paths to avoid first-save load latency.
+Magika's model loads lazily on first use and is shared by all callers. The GUI backend worker and the server call `prewarm()` at startup so the first save does not pay the load cost. If the model cannot initialize or an inference fails, detection falls back to the heuristics.
 
 ## Normalization Contract
 
@@ -76,170 +58,85 @@ Normalization maps legacy aliases and user-entered variants to stable labels (ex
 - `restructuredtext`, `restructured text` -> `rst`
 - `plaintext`, `plain text`, `plain`, `txt` -> `text`
 
-Unknown values pass through in lowercase.
+Unknown values pass through in lowercase. `jsonl` stays distinct from `json`: the two share a highlighter but not a stored format, an export extension, or a language filter. The complete alias table is `canonicalize` in [`detection/canonical.rs`](../crates/localpaste_core/src/detection/canonical.rs).
 
 Manual language picker values are defined centrally in `MANUAL_LANGUAGE_OPTIONS` and stored as normalized values.
 
 ## Filter And Search Semantics
 
-### Documents And Fenced Content
+The language label controls highlighting and export. Metadata search and the sidebar smart collections rely on a separate derived classification: each paste gets a kind (Document, Code, Config, Log, Link, or Other), a short handle, and a few search terms. They are computed locally from the content and the stored language, persisted with the paste, and never change the language or its lock. The rules live in [`semantic.rs`](../crates/localpaste_core/src/semantic.rs) and its `semantic/` submodules; derived values are rebuilt through the [storage projection repair policy](storage.md#compatibility-policy) when the rules change.
 
-The Documents collection uses the derived Document kind, independently of the highlighting label. It includes Markdown, reStructuredText, LaTeX, and prose notes without stronger code/config/log/link signals. Embedded examples and misleading titles/tags do not override a document language. Empty document-language bodies derive Document with no handle or terms; other empty bodies derive Other.
+Two principles run through the rules. The first is that the whole body outranks a single label. Auto-detection locks the labels it infers, so a stored label cannot be told apart from a user's choice, and a wrong one would misfile the paste: a log stored as `dockerfile`, or a shell session stored as `markdown`. Structural evidence in the body, such as a runtime header, a command sequence, or Python source, therefore wins. The second is that prose outweighs weak command evidence. A sentence does not become a command because it starts with `set` or mentions `--release`; a command needs a recognized executable with command-shaped arguments such as options, paths, quoting, or shell operators, and it must lead the paste.
 
-Whole-body technical structure overrides a stored Markdown label: commands and target-plus-tabbed-command recipes derive Code or Other, bodies anchored by Python imports/definitions derive Code, and runtime output derives Log. A weak Markdown label yields Document only when the body supplies positive document evidence such as headings, lists, links, fences, emphasis, rules, tables, wholly quoted prose, or ordinary prose shape. Surrounding headings and explanatory prose retain document classification even when a command comes first. Python comments can appear before or between statements; comma-separated imports, trailing import comments, semicolon-separated statements, and multiline or incomplete statements remain source when stronger surrounding Markdown/prose evidence is absent. Imports mentioned inside prose do not establish a source body. This is a structural heuristic, not a Python parser. Automatically detected labels become locked, so the stored flag cannot distinguish them from user-selected labels; both receive the same content-derived exception. Language and lock fields remain unchanged.
+The kinds:
 
-A paste containing only one fence is classified by its info word or body:
+- **Document.** Markdown, reStructuredText, LaTeX, and unlabeled prose, meaning several words that are mostly letters with little punctuation. A Markdown label alone is not enough; the body must read as a document. A document can quote code, commands, or log lines without changing kind: `The --release option optimizes the build.` is a Document, and so is a Markdown note headed `# Log notes` that quotes an `[INFO]` line. A paste that is a single fenced block is classified by the fence instead of the Markdown wrapper: a `python` or `sh` fence is Code, a `json` fence is Config, and a `text` fence holding a traceback is a Log. A fence surrounded by prose, or one that wraps Markdown, stays a Document.
+- **Code.** Source in a recognized programming language, and bodies that lead with a command. `git rev-parse HEAD` and `cd repo && git status` are Code, with handles such as `git rev-parse`; a note that mentions `git` halfway through is not. Source files also get definition handles such as `fn handle_request`.
+- **Config.** JSON, JSONL, YAML, TOML, XML, Dockerfile, and Makefile content, plus unlabeled `key: value` bodies using well-known keys such as `name`, `model`, or `image`. A YAML paste containing `model: gpt-4` is Config with the handle `model gpt-4`.
+- **Log.** Runtime output: level-prefixed lines such as `[INFO] Server started` or `INFO Starting the server`, Python tracebacks, and Rust panic headers. Runtime structure overrides an incidental Code or Config label, including a locked one, but a panic header must lead the paste, so source that contains one later stays Code.
+- **Link.** A body that is a single URL. `https://example.com/docs` is a Link with the handle `example.com`.
+- **Other.** Everything the rules above do not claim: single words such as `hi`, hexadecimal blobs, and delimited tables such as TSV.
 
-- Python/shell fences belong to Code; JSON/YAML fences belong to Config.
-- Structurally recognized runtime output belongs to Logs, including in a `text` fence.
-- Other explicit `text` fences and unlabeled prose fences remain Documents.
-- Unlabeled bodies use structural heuristics without statistical detection or a language lock. Structural data that remains Other does not become prose merely because it is fenced.
-- Fences containing a document language, or embedded in surrounding prose, remain Documents.
-- An unlabeled fence whose body is Markdown remains a Document; inner fences are literal body content and are not recursively unwrapped.
+The sidebar collections Documents, Code, Config, Logs, and Links filter on these kinds. Language, title, and tags can also place a paste in Code, Config, Logs, or Links, so a paste named `deploy.log` appears under Logs even when its body is unremarkable, and a paste of kind Other appears in none of these collections unless that metadata points to one. Document-kind pastes accept only explicit signals (a file suffix, a language label, or a whole-word tag), so a note titled `holographic otter` is not mistaken for a log.
 
-Retrieval derivation leaves the stored Markdown highlighting/export label intact. Fallback prose needs at least three whitespace-separated words, at least 70% letters, and at most 20% symbols among non-whitespace characters. Single tokens, hexadecimal blobs, and recognized commands remain outside Documents.
+Classification reads a bounded leading sample of the body, ending on a line boundary so a partly included row cannot change the result. Very large pastes are therefore classified from their opening content.
 
-Fallback prose yields to explicit filename suffixes, lowercase executable prefixes, URL-shaped names, languages, and whole-word tags (`deploy.log`, a `logs` tag). Substrings such as `log` in `holographic` or `script` in `transcript` do not exclude prose. Ambiguous `make`/`just` title prefixes need a command-derived kind.
-
-### Commands
-
-Command handles use the first command after optional leading shell comments and `$`, `%`, or `>` prompts. A command mentioned later in an ordinary note cannot reclassify that note. Executable names are case-sensitive; known commands include `rustup`, `conda`, `mkdir`, `sudo`, `echo`, and `make`/`just` target lists. `git` requires a known subcommand (including `blame`, `rev-parse`, and `submodule`) unless shell syntax makes the command explicit. Determiners, pronouns, prepositions, and verb inflection keep sentence-shaped `make`/`just` prose in Documents.
-
-A listed executable after a leading comment supplies command evidence without enumerating tool actions such as `pip freeze`, `npm ls`, or `docker images`. Grammatical prose arguments retain document classification, and bare `ls` after `# Todo` remains a document. A `>` quote still needs an option, path, quoted operand, operator, or recognized executable action; quoted prose such as `> python rocks` remains a document. Complete `for ... in ...; do ...; done` loops remain shell scripts even when a leading comment resembles a heading.
-
-Environment-prefixed commands and unknown lowercase executables with real option tokens or an immediately following path operand are excluded from prose when they have command structure. A separated ` - `, a later path in a sentence, or `$`/`%` followed by an amount supplies no command evidence. Notes mentioning options or paths retain prose classification.
-
-Setup commands require specific arguments:
-
-- `export`: leading options or assignment operands.
-- `set`: an option, an assignment (including CMD names/values with spaces and quoted assignments), or a single-variable query.
-- `source`: a path, including a quoted path with spaces.
-- `cd`: leading options, a path, a quoted path, or a CMD drive-switch/path form.
-
-Closed leading quoted arguments and shell control operators after command-shaped arguments establish setup commands; punctuation in a prose URL does not. Compact bare setup arguments may introduce a sequence only when immediately followed by a genuine command after optional blanks/comments. Thus `cd repo` or bare `cd Program Files` needs that following command. Prose copulas/prepositions, digits, incidental apostrophes, and slashes do not establish a sequence.
-
-### Logs And Delimited Data
-
-Delimited records require consistent field counts. Comma/semicolon rows also need compact/quoted fields or numeric data, so comma-heavy sentences remain prose. A stored TSV label protects a one-row header from log-level interpretation.
-
-Uppercase spaced levels and lower/uppercase levels with colons or brackets are single-line log signals. Lowercase spaced prose, shell function definitions, and tabular headers are excluded. Two leading strong machine-level rows establish a log even when tab-delimited. Repeated lowercase spaced levels also establish a log after a Yarn command or when every message has machine-style capitalization. An optional context such as `INFO (main)` is part of the header; sentence-style headings such as `Warning:` need other log evidence.
-
-A Rust panic needs a leading runtime header or Cargo run preamble. Runtime rows/panic headers override incidental Code/Config labels, including locked labels, without changing language or lock fields. Derived Logs remain in Logs rather than Code/Config. Config handles take precedence over ambiguous colon-prefixed levels; assignments (`INFO = value`), bare TOML headers (`[INFO]`), and genuine Dockerfile instructions remain code/config.
-
-A Python traceback needs its leading runtime header, a file-frame row, and a final exception row; an optional `stderr:`/`stdout:` wrapper or quoted exception row remains runtime output. Surrounding explanatory prose or embedded examples retain document classification.
-
-### Sampling And Stored Projections
-
-Line-based semantic and shell-sequence samples retain complete LF/CRLF records within 64 KiB. A final row cut mid-record is discarded when an earlier complete row exists. If no complete row fits, the UTF-8-safe bounded prefix remains available for prose and handles. This prevents a cut command, CSV/TSV record, or log row from changing sampled structure while allowing long single-line prose.
-
-JSONL detection parses every complete record beginning within the 64 KiB sample. A cut final record is finished only when that individual record also fits 64 KiB; larger records remain outside JSONL classification. Complete records at the boundary and CRLF input remain eligible.
-
-Derived kinds are rebuilt through the [storage projection repair policy](storage.md#compatibility-policy).
-
-Standalone-fence recognition checks the full body to distinguish a closing fence from trailing prose, even beyond the semantic sample. Classification samples the borrowed body afterward and does not recursively unwrap nested Markdown fences.
-
-### Normalized Filters
-
-Language filtering and metadata search apply the [same normalization](#normalization-contract) to stored and requested values.
+Language filters and metadata search normalize both the stored and the requested value with the [same rules](#normalization-contract), so a filter of `cs` also lists pastes stored as `csharp`.
 
 ## Text Export Extensions
 
-[`preferred_extension`](../crates/localpaste_core/src/detection/extensions.rs) centrally maps recognized text formats to conventional extensions, independently of grammar support. CSV and TSV export as `.csv` and `.tsv`; JSON Lines keeps its `jsonl` label and exports as `.jsonl` while sharing JSON highlighting. Both Magika JSON labels are refined by checking for multiple valid line records. Document aliases resolve to `.md`, `.rst`, or `.tex`. Unsupported highlighting does not force `.txt`; unknown formats still use `.txt`. Export writes the current editor content unchanged.
+[`preferred_extension`](../crates/localpaste_core/src/detection/extensions.rs) maps each recognized text format to its conventional extension, independently of highlighting grammar support: `zig` exports as `.zig` even though it renders as plain text. CSV and TSV export as `.csv` and `.tsv`. JSON Lines exports as `.jsonl` and shares JSON highlighting; because Magika reports both JSON and JSON Lines under either of its JSON labels, detection chooses `jsonl` when the body holds multiple valid line records. Markdown, reStructuredText, and LaTeX export as `.md`, `.rst`, and `.tex`. Unknown formats use `.txt`. Export writes the current editor content unchanged.
 
 ## GUI Highlight Resolution
 
-Markdown uses the project-owned [LocalPaste Markdown grammar](../crates/localpaste_gui/assets/LocalPaste-Markdown.sublime-syntax), with [list contexts added at load time](../crates/localpaste_gui/src/app/highlight/markdown.rs). Matching or longer delimiters close fences. Top-level closers allow at most three leading spaces and no quote/list prefix. In list continuations, that limit is relative to the item indentation; four additional spaces remain literal code. Bullet/nested/ordered lists support backtick and tilde fences. A quoted fence also ends when its blockquote ends, without consuming the next unquoted line.
-
-Footnote markers end at the reference/definition boundary so body text remains readable. Escaped punctuation stays literal in prose; backslashes inside code do not escape delimiters. Inline-code spans can cross content lines within a paragraph or list item, but an unmatched span ends at a blank paragraph boundary or interrupting heading, rule, fence, or new list item. Structural rules accept LF and CRLF. Fenced bodies use one string color with no embedded-language highlighting; scope mappings use the theme's foreground, string, and keyword colors.
-
-Other GUI highlight resolution uses a multi-step strategy instead of a fixed name table:
+The editor converts a stored language label into a syntect grammar with `resolve_syntax`. The label is normalized first, so `bash` and `sh` both reach `shell`, and `jsonl` borrows the JSON grammar while remaining JSONL in storage. `markdown` resolves to the project-owned [LocalPaste Markdown grammar](../crates/localpaste_gui/assets/LocalPaste-Markdown.sublime-syntax), in which fenced code is drawn in a single code color rather than highlighted in the fence's language, and `text` and its aliases resolve to plain text. Any other label is tried in this order:
 
 1. exact syntax name
 2. exact extension
 3. case-insensitive name
 4. normalized-name match (alphanumeric only)
 5. case-insensitive extension scan
-6. explicit fallback candidates for known mismatches/high-priority labels
+6. explicit fallback candidates for known mismatches
 7. plain text
 
-Policy:
+The fallback table is deliberately small. A few high-priority labels borrow a nearby grammar (for example `typescript`, `toml`, and `powershell`), but labels without a bundled grammar, such as `zig`, `kotlin`, and `dart`, render as plain text rather than with misleading tokenization. Their metadata labels stay visible in filters and export.
 
-- Keep explicit fallback mapping narrow and intentional.
-- Preserve unsupported-language visibility by keeping their metadata labels even when rendering falls back to plain text.
-
-Fallback candidate mapping lives in:
-
-- [`../crates/localpaste_gui/src/app/highlight/syntax.rs`](../crates/localpaste_gui/src/app/highlight/syntax.rs) (`syntax_fallback_candidates`)
-
-Fallback coverage tests live in:
-
-- [`../crates/localpaste_gui/src/app/highlight/worker.rs`](../crates/localpaste_gui/src/app/highlight/worker.rs) (`resolver_tests`)
-
-Examples covered by the resolver tests include:
-
-- fallback-to-grammar labels (for example: `typescript`, `powershell`, `sass`)
-- metadata-only/plain-render labels (for example: `zig`, `kotlin`, `dart`)
+The fallback candidates live in `syntax_fallback_candidates` in [`syntax.rs`](../crates/localpaste_gui/src/app/highlight/syntax.rs), and `resolver_tests` in [`worker.rs`](../crates/localpaste_gui/src/app/highlight/worker.rs) cover both the borrowed-grammar and the plain-render cases.
 
 ## Virtual Editor Async Highlight Flow
 
-Virtual-editor highlight behavior is async and staged to avoid mid-burst visual churn while typing.
+Highlighting runs on a background thread. While the user types, the previous colors stay in place, and a new result replaces them only after a short pause in editing, so colors do not flicker mid-burst. Buffers of 256 KiB or more (`HIGHLIGHT_PLAIN_THRESHOLD` in [`app/mod.rs`](../crates/localpaste_gui/src/app/mod.rs)) are not highlighted at all: the editor draws them as plain text, and the sidebar and paste picker show their language as `plain`. The stored language is unchanged.
 
-Flow:
-
-1. UI sends a highlight request keyed by buffer lifetime and paste/context (`buffer_epoch`, `paste_id`, `revision`, `text_len`, `language_hint`, `theme_key`).
-2. Worker coalesces queued requests and computes either:
-   - full render (`HighlightRender`), or
-   - changed-range patch (`HighlightPatch`) when the UI base snapshot matches the worker cache base.
-   Edit hints carry UTF-8 byte positions from the editor buffer; the worker counts preceding LF bytes off the UI thread to find the parser line. This avoids mixing Rope's CR/Unicode line indices with syntax-parser LF lines. A single-edit pass checks every touched line before reusing a matching tail; unchanged interior lines do not end a multiline edit. Other edits use hash alignment, retaining original line indices so deleting a line cannot reuse a suffix with the deleted line's parser state.
-3. UI rejects replies from a replaced buffer before changing pending or staged state, including when the same paste reloads with the same revision and length. Matching patches merge into staged/current highlight state.
-4. Staged highlight applies:
-   - immediately only when there is no current render,
-   - otherwise only after idle threshold.
-
-Current policy constants (virtual editor):
-
-- idle apply threshold: `200ms`
-- adaptive debounce windows:
-  - tiny edits below 64 KiB (`<=4` changed chars, `<=2` touched lines): `15ms`
-  - medium edits: `35ms`
-  - larger supported buffers (`>=64 KiB`): `50ms`
-- plain rendering threshold: `>=256 KiB` content
-
-Primary implementation:
-
-- request/stage/apply lifecycle: [`../crates/localpaste_gui/src/app/highlight_flow.rs`](../crates/localpaste_gui/src/app/highlight_flow.rs)
-- virtual edit hint capture: [`../crates/localpaste_gui/src/app/virtual_ops_apply.rs`](../crates/localpaste_gui/src/app/virtual_ops_apply.rs)
-- editor dispatch and debounce usage: [`../crates/localpaste_gui/src/app/ui/editor_panel.rs`](../crates/localpaste_gui/src/app/ui/editor_panel.rs)
+Request, debounce, and staging mechanics are described in [dev/highlighting.md](dev/highlighting.md).
 
 ## Runtime Provider Default (Magika)
 
-When Magika is enabled, runtime defaults to CPU execution provider:
-
-- env var: `MAGIKA_FORCE_CPU`
-- default: `true`
-- falsey values (`0`, `false`, `no`, `off`) allow runtime/provider defaults
+When Magika is enabled, ONNX Runtime defaults to the CPU execution provider. The environment variable `MAGIKA_FORCE_CPU` controls this and defaults to `true`; a falsey value (`0`, `false`, `no`, `off`) allows runtime/provider defaults.
 
 Reference: [`../.env.example`](../.env.example)
 
-## YAML Refinement Guardrail
+## Label Refinement
 
-YAML auto-detection requires YAML-distinctive structure before accepting a mapping-heavy sample.
-Single-line and prose-like flat mappings remain ambiguous because they also match notes,
-logs, and email or HTTP headers. YAML is accepted when the sample has a document marker,
-nested indentation, flow collections, block scalars, anchors, structured sequence items,
-or multiple config-shaped flat mapping lines.
+Magika also reports short notes, headers, and prose as structured formats, so its label is checked against the body before it is accepted. A rejected label falls through to the heuristics. The checks are implemented in `refine_magika_label` in [`detection/mod.rs`](../crates/localpaste_core/src/detection/mod.rs):
 
-Primary implementation:
+- Markdown: a label on a body that is wholly commands, runtime output, or Python source is replaced by the matching language. A standalone fence is always Markdown.
+- Python: dropped when a Markdown document with surrounding prose wraps the snippet.
+- YAML: accepted only with YAML-distinctive structure (see below).
+- SCSS: relabeled CSS when the body has no SCSS-specific syntax.
+- gitattributes: requires a path pattern with attribute tokens or recognized attribute assignments, so short clipboard prose does not qualify.
+- Batch: rejected for prose such as a sentence beginning with `set`, `export`, or `source` whose arguments lack setup-command structure (an assignment, option, or path operand; see `setup_command_is_valid`), or one with `in`, `at`, or `by` before a later path. A stored Batch label on such prose derives the Document kind.
+- JSON and JSON Lines: split by checking for multiple valid line records.
 
-- [`../crates/localpaste_core/src/detection/mod.rs`](../crates/localpaste_core/src/detection/mod.rs)
+These refinements apply during detection only; manual stored language values are never rewritten.
 
-Magika's `gitattributes` label also requires attribute-shaped content: a path pattern with attribute tokens, or recognized attribute assignments. Short clipboard prose does not acquire that label merely because it contains whitespace-separated words. Manual language values remain unchanged by this guard. Automatic Batch labels are rejected for prose starting with `set`, `export`, or `source` when their arguments lack the [setup-command structure](#commands), and for prose with `in`, `at`, or `by` before a later path and no explicit command arguments. Immediate path operands, options, script headers, and Batch directives retain their behavior; stored Batch-labelled prose with these same boundaries derives Document without changing its language or manual/locked state.
+A mapping-heavy sample must show YAML-distinctive structure before it is accepted as YAML. Single-line and prose-like flat mappings stay ambiguous because they also match notes, logs, and email or HTTP headers. YAML is accepted when the sample has a document marker, nested indentation, flow collections, block scalars, anchors, structured sequence items, or multiple config-shaped flat mapping lines.
 
 ## Validation Targets
 
 When touching detection/highlight behavior, validate:
 
-- core detection tests (`localpaste_core::detection::tests`),
+- core detection and semantic tests (`localpaste_core::detection::tests`, `localpaste_core::semantic::tests`),
 - GUI resolver/worker tests (`localpaste_gui::app::highlight::worker::resolver_tests`),
+- GUI highlight flow tests (`localpaste_gui::app::tests::highlight_behaviors`),
 - GUI manual checks in [dev/gui-notes.md](dev/gui-notes.md),
 - GUI perf checks in [dev/gui-perf-protocol.md](dev/gui-perf-protocol.md).

@@ -1,23 +1,21 @@
 # Using `lpaste` with the GUI
 
-`lpaste` is the terminal-side companion to the desktop app. It talks to the same localhost API that the GUI exposes, so you can inspect, export, diff, or automate work without leaving the editor.
+`lpaste` is the terminal-side companion to the desktop app. It talks to the same localhost API that the GUI exposes (the standalone server serves it too), so you can inspect, export, diff, or automate work without leaving the editor.
 
-Install `lpaste` with the [Cargo installation commands](dev/devlog.md#build-matrix).
-[Release archives](release-gui.md#install-a-release) contain the GUI only.
-The examples below assume `lpaste` is on `PATH`.
+Install `lpaste` with the `cargo install` commands in the [README](../README.md#server-and-cli). [Release archives](release-gui.md#install-a-release) contain the GUI only. The examples below assume `lpaste` is on `PATH`.
 
 ## Connect to the running GUI
 
-When the GUI is open, `lpaste` follows the discovery and trust rules in
-[architecture.md#10-discovery-and-trust](architecture.md#10-discovery-and-trust).
-In practice, if the GUI is already running on the same `DB_PATH`, `lpaste` usually works without extra flags:
+By default the GUI serves its API on `127.0.0.1:38411`, or on a free port if that one is taken, and writes the address it ended up with to a `.api-addr` file in its database directory. Unless told otherwise, `lpaste` reads that file from the directory named by its own `DB_PATH` (the default location when unset) and sends a probe request to the recorded address, giving up after 250 ms. It uses the address only if the answer identifies a LocalPaste API on a loopback host. A missing, stale, or unrelated entry falls back to the default endpoint, `http://localhost:38411`. The probe's exact checks are described in [architecture.md#10-discovery-and-trust](architecture.md#10-discovery-and-trust).
+
+So when the GUI runs on the default `DB_PATH`, `lpaste` works without extra flags. If the GUI was started with a different `DB_PATH`, set the same value in the shell that runs `lpaste`:
 
 ```bash
 lpaste list --limit 20
 lpaste search-meta fsdp2
 ```
 
-If you want to pin the endpoint explicitly, use `--server` or `LP_SERVER`:
+To pin the endpoint instead, use `--server` or `LP_SERVER`; either skips discovery and sends requests to the given address:
 
 ```bash
 lpaste --server http://127.0.0.1:38411 list --limit 20
@@ -26,6 +24,12 @@ lpaste --server http://127.0.0.1:38411 list --limit 20
 ```powershell
 $env:LP_SERVER = "http://127.0.0.1:38411"
 lpaste list --limit 20
+```
+
+`--no-discovery` turns discovery off without choosing an endpoint: `lpaste` then uses `--server` or `LP_SERVER` if set and the default endpoint otherwise, and never reads `.api-addr` or probes a port.
+
+```bash
+lpaste --no-discovery list --limit 20
 ```
 
 For terminal access to a GUI-owned store, follow [storage operational expectations](storage.md#operational-expectations).
@@ -41,8 +45,7 @@ lpaste search-meta validation
 lpaste search-meta cublaslt
 ```
 
-Search inherits the server's default case behavior, including `LOCALPASTE_SEARCH_CASE_SENSITIVE`.
-Use an explicit flag when a script needs deterministic matching:
+Search inherits the server's default case behavior, including `LOCALPASTE_SEARCH_CASE_SENSITIVE`. Use an explicit flag when a script needs deterministic matching:
 
 ```bash
 lpaste search --case-sensitive Needle
@@ -96,10 +99,7 @@ Export JSON to preserve content and metadata:
 - use `lpaste --json get <id>` to fetch the full paste payload
 - write one JSON file per paste into a local directory
 
-`list` defaults to 10 rows, and the API caps it at 100 regardless of a larger
-`--limit`. These scripts export up to the 100 most recent paste heads, excluding
-historical versions. They cannot enumerate a larger store because list pagination
-is unavailable. Use [database backups](deployment.md#backups) for a complete snapshot.
+`list` defaults to 10 rows, and the API caps it at 100 regardless of a larger `--limit`. These scripts export up to the 100 most recent paste heads, excluding historical versions. They cannot enumerate a larger store because list pagination is unavailable. Use [database backups](deployment.md#backups) for a complete snapshot.
 
 ### PowerShell 5.1/7 example
 
@@ -131,8 +131,7 @@ foreach ($item in $items) {
 }
 ```
 
-The explicit encoding preserves native CLI Unicode output and writes UTF-8 without a BOM
-on both PowerShell versions. `index.json` remains an array for empty and single-paste stores.
+The explicit encoding preserves native CLI Unicode output and writes UTF-8 without a BOM on both PowerShell versions. `index.json` remains an array for empty and single-paste stores.
 
 ### Bash example
 
@@ -164,5 +163,4 @@ PY
 done
 ```
 
-To export plain content instead of full JSON payloads, replace `lpaste --json get ...`
-with `lpaste get ...` and change the output extension.
+To export plain content instead of full JSON payloads, replace `lpaste --json get ...` with `lpaste get ...` and change the output extension.

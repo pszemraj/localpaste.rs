@@ -6,24 +6,19 @@ The GUI must stay responsive while scrolling, editing, and highlighting large pa
 
 - English-first editor workflows only.
 - Use the [GUI-primary topology](../architecture.md#gui-primary-topology) and [DB ownership rules](../storage.md#operational-expectations).
-- Detection/highlight behavior definitions, including virtual-editor async debounce/staging policy: [language-detection.md](../language-detection.md).
+- Detection behavior: [language-detection.md](../language-detection.md). Virtual-editor highlight debounce and staging policy: [highlighting.md](highlighting.md).
 - Primary perf scenario: `perf-scroll-5k-lines`.
 - Manual release-gate thresholds:
   - average FPS `>= 45`
   - p95 frame time `<= 25 ms`
   - no multi-second plain fallback during newline-burst editing.
-- Potential tighter gate: p95 frame time `<= 16 ms` after newline-burst
-  measurements are captured and reviewed.
+- Potential tighter gate: p95 frame time `<= 16 ms` after newline-burst measurements are captured and reviewed.
 
 Perf runs require an isolated `DB_PATH`; shared writers invalidate the measurements.
 
 ## Headless Checks
 
-The [headless list/search test](../../crates/localpaste_gui/tests/headless_workflows.rs)
-(`list_and_search_latency_stay_within_reasonable_headless_budget`) checks result shape
-and requires command submission to finish within five seconds. Its timers stop before
-receiving worker results; it does not measure backend round-trip latency or GUI frame
-performance. Use the manual frame budgets above for responsiveness checks.
+The [headless list/search test](../../crates/localpaste_gui/tests/headless_workflows.rs) (`list_and_search_latency_stay_within_reasonable_headless_budget`) checks result shape and requires command submission to finish within five seconds. Its timers stop before receiving worker results; it does not measure backend round-trip latency or GUI frame performance. Use the manual frame budgets above for responsiveness checks.
 
 For list Markdown containing repeated inline code, run the real-parser scaling probe:
 
@@ -35,8 +30,7 @@ It reports timings and rendered span counts at 1,000, 5,000, and 10,000 spans. C
 
 ## Prereqs
 
-Use the build matrix in [devlog.md](devlog.md).
-Minimum binaries required for this protocol:
+Use the build matrix in [devlog.md](devlog.md). Minimum binaries required for this protocol:
 
 - `localpaste_tools` / `generate-test-data`
 - `localpaste_gui` / `localpaste-gui`
@@ -58,8 +52,7 @@ cargo run -p localpaste_tools --bin generate-test-data -- --clear --yes --count 
 cargo run -p localpaste_gui --bin localpaste-gui --release
 ```
 
-While GUI is running, use the API endpoint shown in the status bar (`API: http://...`) for CLI/API compatibility checks.
-In another PowerShell terminal, seed the named cases used below through that endpoint:
+While GUI is running, use the API endpoint shown in the status bar (`API: http://...`) for CLI/API compatibility checks. In another PowerShell terminal, seed the named cases used below through that endpoint:
 
 ```powershell
 $env:LP_SERVER = "http://127.0.0.1:38973" # Replace with the GUI status-bar endpoint.
@@ -75,8 +68,8 @@ foreach ($fixture in $fixtures.GetEnumerator()) {
 ```
 
 Run this seed block once per fresh dataset; the random generator does not create these fixed names.
-For standalone server-only smoke/perf validation, use
-[devlog.md#runtime-smoke-test-server-cli](devlog.md#runtime-smoke-test-server-cli).
+
+For standalone server-only smoke/perf validation, use [devlog.md#runtime-smoke-test-server-cli](devlog.md#runtime-smoke-test-server-cli).
 
 ## Dataset Expectations
 
@@ -90,8 +83,7 @@ Check the [GUI list limits and search scopes](gui-notes.md#stable-behavior-notes
 
 ## Manual Verification Checklist
 
-Run the full functional GUI checklist first:
-[gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive).
+Run the full functional GUI checklist first: [gui-notes.md#manual-gui-human-step-checklist-comprehensive](gui-notes.md#manual-gui-human-step-checklist-comprehensive).
 
 Perf gating in this protocol is based on the checks below:
 

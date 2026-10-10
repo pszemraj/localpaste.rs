@@ -1,7 +1,6 @@
 # Development Guide
 
-Build and run the workspace binaries with the commands below.
-See [runtime architecture](../architecture.md) for process topology.
+Build and run the workspace binaries with the commands below. See [runtime architecture](../architecture.md) for process topology.
 
 ## Binary Map
 
@@ -40,10 +39,9 @@ cargo run -p localpaste_server --bin localpaste --release
 ./target/release/lpaste --help
 ```
 
-For editor-mode flags and tracing env vars, see
-[gui-notes.md](gui-notes.md).
-For repeatable GUI perf validation, see
-[gui-perf-protocol.md](gui-perf-protocol.md).
+For editor-mode flags and tracing env vars, see [gui-notes.md](gui-notes.md).
+
+For repeatable GUI perf validation, see [gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Validation Loop
 
@@ -78,15 +76,11 @@ cargo build --workspace --all-targets --all-features
 rustdoc-checker crates --strict
 ```
 
-After these checks, run the [server/CLI smoke test](#runtime-smoke-test-server-cli)
-and the [GUI checklist](gui-notes.md#manual-gui-human-step-checklist-comprehensive)
-as applicable, then commit the validated change. Resolve warnings or record a reason
-in the [backlog](backlog.md) or [LOC exceptions](loc-exceptions.toml).
+After these checks, run the [server/CLI smoke test](#runtime-smoke-test-server-cli) and the [GUI checklist](gui-notes.md#manual-gui-human-step-checklist-comprehensive) as applicable, then commit the validated change. Resolve warnings or record a reason in the [backlog](backlog.md) or [LOC exceptions](loc-exceptions.toml).
+
 Documentation-only changes need checks for the content changed, not the full Rust loop.
 
-For changes to `.github/workflows/*`, `.github/scripts/*`, or GUI packaging,
-run these checks locally. See [workflow triggers](../release-gui.md#workflow-triggers)
-for automated runs.
+For changes to `.github/workflows/*`, `.github/scripts/*`, or GUI packaging, run these checks locally. See [workflow triggers](release-pipeline.md#workflow-triggers) for automated runs.
 
 ```bash
 # release helper regression tests
@@ -97,13 +91,11 @@ python -m unittest discover -s .github/scripts -p 'test_*.py'
 python .github/scripts/validate_workflow.py .github/workflows
 ```
 
-The workflow validator needs PyYAML, `yamllint` on `PATH`, and a working Bash
-for shell syntax checks.
+The workflow validator needs PyYAML, `yamllint` on `PATH`, and a working Bash for shell syntax checks.
 
 ## Runtime Smoke Test (Server CLI)
 
-Run this API/core smoke test.
-It validates CRUD behavior and persistence across process restart.
+Run this API/core smoke test. It validates CRUD behavior and persistence across process restart.
 
 ### Bash
 
@@ -169,8 +161,7 @@ Start-Sleep -Seconds 1
 Stop-Process -Id $proc.Id
 ```
 
-The isolated test database remains under `target/` for inspection. The final list
-must exclude the deleted paste. Use an unused `PORT` if 3055 is occupied.
+The isolated test database remains under `target/` for inspection. The final list must exclude the deleted paste. Use an unused `PORT` if 3055 is occupied.
 
 ## Tooling CLI Contracts
 

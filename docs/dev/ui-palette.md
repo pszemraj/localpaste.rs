@@ -1,7 +1,6 @@
 # LocalPaste Desktop Palette
 
-The desktop uses a dark palette defined in the theme module:
-[`../../crates/localpaste_gui/src/app/style.rs`](../../crates/localpaste_gui/src/app/style.rs).
+The desktop uses a dark palette defined in the theme module: [`../../crates/localpaste_gui/src/app/style.rs`](../../crates/localpaste_gui/src/app/style.rs).
 
 | Token                       | Hex         | Notes                                   |
 | --------------------------- | ----------- | --------------------------------------- |

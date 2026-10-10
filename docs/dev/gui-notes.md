@@ -1,8 +1,6 @@
 # GUI Notes
 
-GUI runtime flags and interaction contracts.
-Detection/normalization/highlight behavior: [language-detection.md](../language-detection.md).
-Perf validation steps and gates: [gui-perf-protocol.md](gui-perf-protocol.md).
+GUI runtime flags and interaction contracts. Detection/normalization/highlight behavior: [language-detection.md](../language-detection.md). Perf validation steps and gates: [gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Runtime Flags
 
@@ -11,14 +9,13 @@ Perf validation steps and gates: [gui-perf-protocol.md](gui-perf-protocol.md).
 - `LOCALPASTE_EDITOR_INPUT_TRACE=1`: virtual input routing trace.
 - `LOCALPASTE_HIGHLIGHT_TRACE=1`: highlight request/apply/drop lifecycle trace.
 - `LOCALPASTE_LOG_FILE=<path>`: append GUI tracing logs to a file (useful on Windows release builds where no console is shown).
-- `LOCALPASTE_LINUX_DESKTOP_ENTRY=force|off`: Linux-only desktop-entry setup override. `force` writes the managed user entry; `off`/`skip`/`disabled` disables desktop-entry setup for isolated probe or test launches.
+- `LOCALPASTE_LINUX_DESKTOP_ENTRY=force|off`: Linux-only desktop-entry setup override. `force` writes the managed user entry; `off` (also `0`, `false`, `no`, `skip`, `disable`, `disabled`) disables desktop-entry setup for isolated probe or test launches.
 - `LOCALPASTE_NAV_PROBE_LOG=<path>`: enables per-frame NDJSON navigation probe logging.
 - `LOCALPASTE_NAV_PROBE_SCENARIO=<id>`: labels probe frames for runner assertions.
 - `LOCALPASTE_NAV_PROBE_SEED_TEXT=<text>`, `LOCALPASTE_NAV_PROBE_SEED_NAME=<name>`, `LOCALPASTE_NAV_PROBE_SEED_CURSOR=<char|line:col>`: seed the disposable in-memory probe paste and initial caret.
-- `LOCALPASTE_NAV_PROBE_FOCUS_EDITOR=1`: requests initial virtual-editor focus until the active native window acquires it; later focus changes follow normal app behavior.
+- `LOCALPASTE_NAV_PROBE_FOCUS_EDITOR=1`: requests initial virtual-editor focus until the active native window acquires it; later focus changes follow normal app behavior. Only `1` and `true` enable it.
 - `LOCALPASTE_NAV_PROBE_PYTHON=<path>`: runner/assertion Python executable override.
-- Shared boolean flags above accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed).
-- Unrecognized shared boolean values emit a warning and are treated as unset/false.
+- The perf and trace flags (`LOCALPASTE_EDITOR_PERF_LOG`, `LOCALPASTE_BACKEND_PERF_LOG`, `LOCALPASTE_EDITOR_INPUT_TRACE`, `LOCALPASTE_HIGHLIGHT_TRACE`) accept `1`, `true`, `yes`, `on` and `0`, `false`, `no`, `off` (case-insensitive, whitespace trimmed). An unrecognized value logs a warning and counts as false.
 
 ## Keyboard And Navigation Contract
 
@@ -40,22 +37,20 @@ Shortcut contract:
 
 egui-winit delivers these chords as a Paste event with no key event, so routing reads the chord from the frame's modifier state. If the modifiers are released before the frame runs, under CPU load or with automated key injection, `Ctrl/Cmd+Shift+V` is indistinguishable from `Ctrl/Cmd+V` and follows that rule. [Issue #35](https://github.com/pszemraj/localpaste.rs/issues/35) tracks preserving the pressed chord.
 
+Focus ownership: the virtual editor keeps the keyboard until the window loses native focus, a text field or discovery surface takes focus, or a click lands outside it (editor toolbar actions that preserve focus excepted). Native deactivation first applies the text and paste events that arrived earlier in the same frame, then releases editor focus while keeping the selection. When a frame carries several focus events the last one decides, so a deactivate-and-reactivate pair keeps editing. While unfocused, `Ctrl/Cmd+C` still copies the editor selection if no other text input has focus, `Ctrl/Cmd+V` creates a new paste, and a click on the editor resumes editing. Uncommitted IME composition is cancelled on deactivation and when a discovery surface takes focus, restoring the displaced text and selection; a later commit is one undoable replacement of the original selection.
+
 Navigation/selection contract:
 
-- Global sidebar navigation via `Up`/`Down` is bare-arrow only; modified arrows (`Ctrl`/`Alt`/`Shift`/`Cmd`) stay in editor-selection semantics.
-- `Tab` indents selected nonblank lines; without a selection it inserts four spaces. `Shift+Tab` removes one leading tab or up to four spaces from each affected line. This uses the buffer's line boundaries, including CR and Unicode separators, and preserves original line endings. Even a partial single-line selection indents that entire line. Directional selections survive indentation and undo/redo; each indentation is one undo step.
-- Window deactivation releases editor keyboard ownership after applying earlier text and paste events. When multiple native focus events arrive in one frame, the final event determines whether to blur. Uncommitted IME preedit is cancelled on deactivation or discovery focus transfer, restoring displaced text and selection so typing can resume. Committing composition creates one undoable replacement of the original selection. `Ctrl/Cmd+C` still copies that selection when no other text input owns the keyboard; `Ctrl/Cmd+V` creates a new paste. Click the editor to resume editing.
-- Shift-click and Shift-drag extend the editor selection from its existing anchor using modifiers captured at mouse press, even if Shift is released before the mouse. Floating-window clicks, including window edges, leave the underlying caret and selection untouched.
+- `Up`/`Down` move the sidebar selection only as bare arrows while neither the editor nor a text input owns the keyboard and no overlay is open; if the selected paste is not in the visible list, the first press selects the first visible row. Arrows with `Ctrl`/`Alt`/`Shift`/`Cmd` stay with editor-selection semantics.
+- `Tab` indents each selected line that has non-whitespace content by four spaces, and inserts four spaces at a single caret. `Shift+Tab` removes one leading tab or up to four spaces from each affected line. A partial single-line selection indents the whole line, directional selections survive indentation and undo/redo, and each indentation is one undo step.
+- Shift-click and Shift-drag extend the editor selection from its existing anchor using the modifiers captured at mouse press, even if Shift is released before the mouse. Clicks on floating windows, including their edges, leave the underlying caret and selection untouched.
 - Virtual wrapped-row navigation preserves wrap-boundary intent across vertical movement (boundary affinity handling).
 - CRLF is one navigation boundary: Left/Right and shifted selection cross both characters without placing the caret between them. Edits and undo/redo keep the caret on a visible position and preserve unedited line endings.
 - Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
-- Virtual editor double-click word selection is clamped to the render cap so hidden post-cap content is never selected/mutated implicitly.
 
 ## Navigation Probe
 
-The navigation probe writes per-frame NDJSON for native keyboard focus and caret checks. The OS-specific runner scripts set the probe environment variables listed in [Runtime Flags](#runtime-flags); set them directly only for local debugging or manual Wayland checks.
-
-Probe contract and tooling:
+The navigation probe writes per-frame NDJSON for native keyboard focus and caret checks: actual viewport and caret bounds, visible-caret status, Find focus, and scroll offset, so contracts assert visibility as well as cursor indices. The OS-specific runner scripts set the probe environment variables listed in [Runtime Flags](#runtime-flags); set them directly only for local debugging or manual Wayland checks.
 
 - Scenario contract: [nav_contract.json](nav_contract.json)
 - Assertion checker: [../../tools/nav_probe_assert.py](../../tools/nav_probe_assert.py)
@@ -63,89 +58,84 @@ Probe contract and tooling:
 - macOS runner: [../../tools/nav_probe_run_macos.sh](../../tools/nav_probe_run_macos.sh)
 - Windows runner: [../../tools/nav_probe_run_windows.ps1](../../tools/nav_probe_run_windows.ps1)
 
-Probe snapshots include actual viewport/caret bounds, visible-caret status, Find focus, and scroll offset. Native contracts assert visibility as well as cursor indices.
+Each runner launches a disposable probe DB under `target/`, seeds the editor, waits for a probe frame showing virtual-editor keyboard focus, injects native key chords, and writes NDJSON evidence. The GUI process is terminated after the evidence frame by default (Windows `-GracefulShutdown` opts out), so normal window-close shutdown races cannot fail a probe run. Run a runner with `--help` (`Get-Help tools\nav_probe_run_windows.ps1` on Windows) for scenario selection, timing, and repeat options; `--list` (`-List` on Windows) prints the scenarios that would run. Windows runs also write a `*.manifest.json` beside the log, which `-Assert` verifies; `python tools/nav_probe_assert.py --help` lists the options for re-verifying a saved bundle.
 
-All automated runners launch a disposable probe DB under `target/`, seed the editor, wait for a probe frame showing virtual-editor keyboard focus, inject native key chords, and write NDJSON evidence. They terminate the child GUI process after the evidence frame by default so disposable probe runs do not fail on normal window-close shutdown races. Use `--help` / `Get-Help` on the runner for timing and filtering options.
-
-Linux automation is X11-only and requires `xdotool`; Wayland must be checked manually with the same probe environment variables because compositor policy restricts synthetic input.
+Linux automation is X11-only and requires `xdotool`; Wayland must be checked manually with the same probe environment variables because compositor policy restricts synthetic input. The runner sets `LOCALPASTE_LINUX_DESKTOP_ENTRY=off` so contract runs do not touch user desktop-integration paths, and defaults to `LIBGL_ALWAYS_SOFTWARE=1` and `WGPU_BACKEND=gl` to avoid host GPU/EGL startup noise; set either variable beforehand to override.
 
 ```bash
 tools/nav_probe_run_linux_x11.sh --build --assert --only ctrl_home_from_middle
-tools/nav_probe_run_linux_x11.sh --assert --ctrl-only --summary
-tools/nav_probe_run_linux_x11.sh --assert
+tools/nav_probe_run_linux_x11.sh --assert --summary
 ```
 
-The Linux runner sets `LOCALPASTE_LINUX_DESKTOP_ENTRY=off` for probe launches so contract runs do not touch user desktop-integration paths.
-It also defaults probe launches to `LIBGL_ALWAYS_SOFTWARE=1` and `WGPU_BACKEND=gl` to avoid host GPU/EGL startup noise; set either variable before running the script to override that default.
-
-macOS automation uses `tools/nav_probe_run_macos.sh` and requires Accessibility permission for the terminal running the script, because native key injection goes through the Swift/CoreGraphics helper built from `tools/nav_probe_macos_driver.swift`:
+macOS automation requires Accessibility permission for the terminal running the script, because native key injection goes through the Swift/CoreGraphics helper built from `tools/nav_probe_macos_driver.swift`.
 
 ```bash
 tools/nav_probe_run_macos.sh --build --assert --only cmd_up_from_middle --summary
 tools/nav_probe_run_macos.sh --build --assert --summary
-tools/nav_probe_run_macos.sh --list
 ```
 
-Windows automation uses `tools/nav_probe_run_windows.ps1` from Windows PowerShell 5.1 or PowerShell 7 and defaults to the low-level `SendInput` path for navigation chords. Use `-UseSendKeys` only as a fallback when debugging the driver itself:
+Windows automation runs from Windows PowerShell 5.1 or PowerShell 7 and sends navigation chords through low-level `SendInput`; `-UseSendKeys` is a fallback for debugging the driver itself.
 
 ```powershell
 tools\nav_probe_run_windows.ps1 -Build -Assert -Only ctrl_home_from_middle
-tools\nav_probe_run_windows.ps1 -Build -Assert -CtrlOnly -Summary
-tools\nav_probe_run_windows.ps1 -Build -Assert -CtrlOnly -Summary -RepeatCount 3
-tools\nav_probe_run_windows.ps1 -Assert
+tools\nav_probe_run_windows.ps1 -Build -Assert -Summary
 ```
-
-Use `-RepeatCount` for flake hunting. When assertions are enabled, repeated runs log each repetition under a unique scenario label and assert it immediately against the base contract so a later passing run cannot hide an earlier failed chord.
-Windows runs also write a manifest next to the NDJSON log by default (`*.manifest.json`) with scenario selection, repeat labels, completed runs, input driver, shutdown mode, log path, and final assertion status. Use `-Manifest <path>` to override it.
-Runs with `-Assert` self-verify the final manifest before exiting. New manifests record `-Only` selections, so a `-CtrlOnly` manifest without `-Only` must cover every Windows ctrl scenario in the current contract for every repeat.
-Re-verify a completed Windows artifact bundle with `python tools/nav_probe_assert.py --manifest target/<run>.manifest.json --summary`; pass explicit `LOG SPEC` positional paths before `--manifest` if the manifest was copied from another checkout.
-For the full Windows ctrl-navigation proof, re-verify the final artifact with `python tools/nav_probe_assert.py --manifest target/<run>.manifest.json --require-full-windows-ctrl --min-repeat-count 3 --summary`.
 
 Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --windows-runner tools/nav_probe_run_windows.ps1 --self-test` to lint scenario ids, driver chord syntax, macOS key-code entries, Windows runner key support, and manifest-completeness checks without launching the GUI.
 
 ## Stable Behavior Notes
 
-- Paste rows use `selectable_label`; keep this if adjusting row styling to preserve reliable click targets.
-- Collections scope controls are rendered as smart filters in the sidebar (`All`, `Today`, `This Week`, `Recent`, `Unfiled`, `Documents`, `Code`, `Config`, `Logs`, `Links`) with compact chips and overflow under `...`.
-- Language filtering is rendered in the sidebar under smart filters and always includes an explicit `All languages` clear option.
-- Language filtering stacks with the active smart collection instead of replacing it.
-- Sidebar list refresh reads metadata projections and is capped by `DEFAULT_LIST_PASTES_LIMIT` (`512`); scoped sidebar and paste-picker searches return metadata summaries.
-- Empty filtered results retain unsaved content, metadata, and pending saves with the edit lock until saving completes. Selecting the active paste cancels a queued switch, and repeated load replies cannot replace an initialized editor draft.
-- The Documents smart filter groups Markdown, prose notes, reStructuredText, and LaTeX. Document classification, Markdown scopes, and text-export extensions follow [Language Detection And Highlighting](../language-detection.md).
-- The app selects its dark theme before installing custom fonts and spacing, including on systems using a light theme. Editor geometry uses the resolved font even if a later style change removes the named Editor text style. Startup, first creation, and populated restart have regression coverage with light-system input and without test-only style registration.
-- The command palette searches actions only, including Export, Duplicate, Copy, Copy Link, Find, Properties, History, and Diff. The paste picker searches paste rows and retains Open, Copy, Copy Fenced, and Delete actions.
-- Command palette, paste picker, and shortcut help are mutually exclusive: opening one closes the other two so its query owns keyboard input. Escape or the toggle shortcut restores the input that opened discovery, including across switches between these surfaces. Input batched around these transitions stays in order: earlier text belongs to the previous input, and later text belongs to the new destination. Accepting a palette command or picker result with Enter processes the preceding query before routing subsequent text. Commands that open another workflow retain their intended focus destination.
-- Discovery overlays block background New, Paste into Editor, Save, Delete, sidebar-search focus, and Properties shortcuts, including delayed Paste as New clipboard replies; actions chosen within the palette remain available. [Diff and History](#diff-and-history-workflows) use separate workflow fences.
-- Command-palette keyboard navigation and query changes reveal the selected command within the scroll area.
-- Sidebar and picker each retain their own session query and field scope: All fields (default), Title, Metadata, or Body. The [search read paths](../architecture.md#5-read-and-write-paths) determine which fields are loaded and ranked. HTTP and CLI search are unchanged.
-- Debounced sidebar and picker searches schedule their own repaint deadline; typing a query needs no further input or focus change to dispatch it. Pending or failed requests do not create a repaint loop.
-- Picker scope changes clear old results immediately; changing only sidebar scope retains the open document and reading position even if no rows match. Responses and backend cache keys carry the scope and collection so delayed results cannot leak between contexts. Collection rules apply in the backend before the search result limit, including when a matching collection row is older than the first 512 unfiltered results.
-- Opening the paste picker from its shortcut or the command palette refreshes its retained query and scope and selects the old query for replacement; responses discarded while it was closed cannot leave it stuck with empty results. Reopening or changing query/scope resets selection and scrolls to the first result once rows arrive; subsequent manual scrolling is preserved.
-- Picker Delete restores the originating input after deleting a different paste and preserves the editor draft through the delete reply. Deleting the open paste keeps the picker as the keyboard owner, including for typing and paste into its query, and blocks dismissal, discovery toggles, and unrelated selection changes until the delete reply and replacement paste load settle. A selection already queued before deletion is preferred over the adjacent fallback. A save, delete, or replacement-load failure releases the fence while preserving the picker; after a successful replacement load, Escape returns to the originating input.
-- Arrow navigation from a hidden selection starts at the first visible row.
-- The paste picker shows `Searching...` while a scoped request is in flight. Search failures remain visible in the picker with a Retry button. Requests resume only when Retry is clicked or query/scope changes; a successful response clears the error. Closing it discards displayed results and resets selection while retaining its query and scope. Language labels follow the sidebar's large-buffer plain-rendering rule.
-- Sidebar scope changes retain existing rows until replacement results arrive. A failed search keeps those rows and shows `Retry search`; retry or a query/filter change resumes requests. Stale failures cannot replace the current query's status.
-- Picker All fields and Body results show a compact excerpt around the first literal body match. Title and Metadata results use metadata alone and have no body excerpts.
-- Opening a picker result focuses its editor after loading. Text and paste received while the previous draft saves or the chosen body loads wait for that accepted selection; failed or cancelled opens discard their queued input. Native deactivation preserves earlier queued edits and leaves the editor blurred. Results outside current sidebar results stay selected through background refreshes until sidebar navigation, the search query, or collection/language filters change. Copying a picker result leaves the current editor selection and draft intact.
-- Repeated picker copies use the latest request's snapshot and format. Older loaded, missing, or failed replies cannot consume a newer copy action, including another copy of the same paste.
-- A completed editor, toolbar, text-field, or selectable-label copy supersedes an older pending picker copy. A copy with no selected text leaves the pending request intact.
-- Editor toolbar `Find` searches the currently open paste body, selects the active match in the virtual editor, and scrolls it into view. Switching pastes with Find open selects the retained query's first match. Opening a paste from a sidebar or picker All fields or Body search primes this in-paste find bar when that search query appears in the paste body. Picker opens retain their originating query through loading and save-before-switch, including when reopening the active draft. Metadata-only picker hits preserve the existing Find query.
-- Growing the Find query refines the current selected match from its start. Find keeps query focus after clicking Prev, Next, or Case and on `Enter`/`Shift+Enter` and advances to the next/previous match. `Escape` from its query or `Close` returns focus to the editor while preserving the matched selection and the query for reopening. Buttons and document jumps center the caret independently of editor focus.
-- Typing and paste reveal the caret with minimal scrolling, including the inserted tail of a multiline paste. Manual scrolling stays where you leave it until another edit or navigation action. Virtual rows use zero vertical item spacing so hit testing and scrolling share the rendered row height.
-- An editor-owned drag continues selection and autoscroll outside the viewport or window; foreground overlays retain their pointer ownership. Dragging the scrollbar preserves the editor selection.
-- Loading another paste resets the previous viewport to the first line before applying any search-match reveal, including when the previous paste was scrolled to its end.
-- In a Markdown-labelled paste, pasting one HTTP(S) URL over selected text creates `[selected text](URL)` in one undoable edit. Inline code is retained; label line breaks use character references so blank lines cannot split the link. URL recognition uses the current language choice, including `md`; other languages, empty selections, selections that are themselves URLs, and non-URL clipboard text retain ordinary paste behavior, so replacing a link destination swaps the URL.
-- App-level shortcut dispatch, command-palette hints, and keyboard shortcut help share the runtime shortcut registry. Dispatch preserves native event order, including repeated chords. The shortcut help intentionally excludes command-palette query terms such as `diff` and `history`; those remain command-palette discoverability, not keyboard shortcuts.
-- Help lists app bindings and selected editor combinations. Basic navigation and standard select/copy/cut/undo/redo instructions are omitted.
-- F1 help uses a stable, scrollable layout with aligned native-platform key labels. Search omits empty sections, reports no matches, and returns to the first result when edited. Clear keeps search focus; Escape, F1, and Close return focus to the input that opened help. Opening a different discovery surface transfers focus to that surface instead.
-- F1 help temporarily hides History or Diff while keeping its version workflow intact. Closing help returns to that dialog; Escape dismisses only help.
-- Virtual-editor highlight debounce/staging policy is defined in
-  [language-detection.md#virtual-editor-async-highlight-flow](../language-detection.md#virtual-editor-async-highlight-flow).
-- Language display behavior is explicit: auto + unset -> `auto`; manual + unset -> `plain`.
-- Rename/title edits commit on `Enter` and on title-field blur.
-- Metadata editing is intentionally compact in the editor header row; expanded metadata edits live in the Properties drawer.
-- Properties drawer is non-modal; opening it does not disable virtual-editor typing, caret movement, or editor shortcuts.
-- Folder create/edit/move controls are absent from the GUI; organize with smart filters and search.
+### Sidebar and filters
+
+Sidebar rows are virtualized and grouped under Today, Yesterday, This Week, and Earlier headers by last update; the headers are omitted while a search query is active. Each row is a single full-width click target showing the title and a language label, and the label follows the large-buffer plain-rendering rule. The list is a metadata projection capped at `DEFAULT_LIST_PASTES_LIMIT` (`512`), and scoped sidebar and paste-picker searches likewise return metadata summaries rather than full bodies.
+
+Smart filters (All, Today, This Week, Recent (30d), Unfiled, Documents, Code, Config, Logs, Links) render as compact chips with the overflow collapsed under a `...` menu. The language filter beneath them always offers an explicit `All languages` entry and stacks with the active smart filter instead of replacing it. Classification, including the Documents grouping of Markdown, reStructuredText, LaTeX, and prose notes, follows [filter semantics](../language-detection.md#filter-and-search-semantics).
+
+Empty filter results never discard work in progress: unsaved content, unsaved metadata, and pending saves keep their paste and edit lock until saving completes. Selecting the already-active paste cancels a queued switch to another, and a repeated load reply cannot overwrite an initialized editor draft.
+
+### Editor
+
+Title edits commit on `Enter` and on title-field blur. The editor header row stays compact (title and language); the Properties drawer holds the expanded metadata fields and is non-modal, so opening it does not disable typing, caret movement, or editor shortcuts. A language label displays as `auto` when automatic detection has not resolved one and as `plain` when the language is manually pinned without a value. The GUI has no folder create, edit, or move controls; organization is by smart filters and search. Virtual-editor highlight debounce and staging policy is defined in [highlighting.md](highlighting.md).
+
+Typing and paste reveal the caret with minimal scrolling, including the inserted tail of a multiline paste, and manual scrolling stays where it is left until the next edit or navigation action. Document jumps and Find results center the caret instead, independent of editor focus. Loading another paste resets the viewport to the first line before any search-match reveal, even if the previous paste was scrolled to its end. Virtual rows use zero vertical item spacing so hit testing and scrolling share the rendered row height.
+
+An editor-owned drag keeps extending the selection and autoscrolling outside the viewport or window, foreground overlays retain their pointer ownership, and dragging the scrollbar preserves the selection.
+
+In a paste whose current language is Markdown (including the `md` alias), pasting a single HTTP(S) URL over a non-empty selection inserts `[selection](URL)` as one undoable edit; escaping, inline code, and line-break handling live in `format_markdown_link`. Other languages, empty selections, selections that are themselves URLs, and non-URL clipboard text paste normally, so selecting the destination of an existing link and pasting a URL swaps it rather than nesting a new link.
+
+### Search and paste picker
+
+The sidebar and the paste picker each keep their own query and field scope for the session: All fields (default), Title, Metadata, or Body. The [search read paths](../architecture.md#5-read-and-write-paths) determine which fields are loaded and ranked. Responses and backend cache keys carry the scope and collection, so delayed results cannot leak between contexts, and collection rules are applied in the backend before the result limit, so a matching row older than the first 512 unfiltered results still appears. Debounced searches schedule their own repaint deadline, so a typed query dispatches without further input or focus changes, while pending or failed requests do not create a repaint loop.
+
+Changing the sidebar scope keeps the existing rows, the open document, and its reading position until replacement results arrive, even when nothing matches. A failed sidebar search keeps those rows and shows `Retry search`; retrying or changing the query or a filter resumes requests, and a stale failure cannot replace the current query's status.
+
+The paste picker is separate from the command palette: the palette lists actions only (for example Export, Duplicate, Copy, Copy link, Find, Properties, History, and Diff), and the picker lists paste rows. A result opens on click or `Enter` and offers Copy, Copy Fenced, and Delete. While a scoped request is in flight the picker shows `Searching...`; a failure stays visible with a Retry button, requests resume only on Retry or a query or scope change, and a successful response clears the error. Changing the query or scope clears old results immediately. Closing the picker discards its results and resets selection while retaining the query and scope; opening it selects the retained query for replacement and re-dispatches the search, so responses discarded while it was closed cannot leave it empty. Once rows arrive after a reopen or a query or scope change, selection resets to the first result and the list scrolls to the top, after which manual scrolling is preserved. All fields and Body results carry a compact excerpt around the first literal body match; Title and Metadata results are metadata only.
+
+Opening a result focuses its editor after the paste loads. Text and paste input received while the previous draft saves or the chosen body loads is held for the accepted selection and replayed into the editor; a pointer press, `Escape`, another app shortcut, or a failed open discards it. A result outside the current sidebar results stays selected through background refreshes until the sidebar selection, search query, or collection or language filter changes.
+
+Copying a picker result leaves the editor selection and draft intact. Only the latest copy request is honored: older loaded, missing, or failed replies cannot consume a newer request, even one for the same paste, and a completed copy from the editor, toolbar, a text field, or a selectable label supersedes an older pending picker copy (a copy with no selected text does not).
+
+Deleting a different paste from the picker restores the originating input and keeps the editor draft. Deleting the open paste keeps the picker as keyboard owner, including for typing and paste into its query, and blocks dismissal, discovery toggles, and unrelated selection changes until the delete reply and the replacement paste load settle. A selection queued before the delete is preferred over the adjacent fallback, a save, delete, or load failure releases the block while keeping the picker, and after a successful replacement load `Escape` returns to the originating input.
+
+### Find
+
+Editor-toolbar `Find` searches the open paste body, selects the active match in the virtual editor, and scrolls it into view. Switching pastes with Find open selects the first match of the retained query. Opening a paste from a sidebar or picker All fields or Body search primes the find bar with that query when it appears in the body; picker opens carry their originating query through loading and save-before-switch, including when reopening the active draft, and metadata-only picker hits leave the existing Find query alone.
+
+Growing the query refines the current match from its start. Clicking Prev, Next, or Case and pressing `Enter`/`Shift+Enter` keep focus in the query field, with `Enter` and `Shift+Enter` moving to the next and previous match. `Escape` in the query field or `Close` returns focus to the editor, preserving the matched selection and the query for reopening.
+
+### Discovery overlays and help
+
+The command palette, paste picker, and shortcut help are mutually exclusive: opening one closes the other two so its query owns keyboard input. `Escape` or the toggle shortcut returns focus to the input that opened discovery, including across switches between surfaces. Input batched around a transition stays in order, with earlier text belonging to the previous input and later text to the new destination, and `Enter` on a palette command or picker result processes the preceding query before routing later text. Commands that open another workflow keep their intended focus destination.
+
+While any of the three is open, background New, Paste into Editor, Save, Delete, sidebar-search focus, and Properties shortcuts are blocked, including delayed Paste as New clipboard replies; actions chosen inside the palette remain available. [Diff and History](#diff-and-history-workflows) use separate workflow fences. The palette keeps the selected command visible during keyboard navigation and query changes.
+
+App-level shortcut dispatch, palette hints, and shortcut help share one runtime shortcut registry, and dispatch preserves native event order, including repeated chords. Help lists the app bindings plus selected editor combinations and omits basic navigation and the standard select/copy/cut/undo/redo keys. Palette query terms such as `diff` and `history` are palette discoverability rather than keyboard shortcuts, so help intentionally excludes them.
+
+The `F1` window has a stable scrollable layout with key labels in the native platform's spelling. Search matches descriptions and key combinations, omits empty sections, reports when nothing matches, and returns to the first result when edited. Clear keeps search focus; `Escape`, `F1`, and Close return focus to the input that opened help, unless a different discovery surface opened in its place. Opening help over History or Diff hides that window without disturbing its workflow; closing help brings it back, and `Escape` dismisses only help.
+
+### Startup and styling
+
+The app has a single dark palette. It selects the dark theme before installing custom fonts and spacing, so a light system theme cannot replace it, and editor geometry uses the resolved font if the named Editor text style is missing.
 
 ## Diff And History Workflows
 
@@ -187,18 +177,14 @@ Run this checklist when touching detection/highlight/filter code.
 7. Validate alias interoperability in UI filtering:
    - Set active language filter to `cs`; verify both `csharp` and `cs` pastes remain visible.
    - Set active language filter to `shell`; verify `bash`/`sh` labeled content matches.
-8. Validate syntax resolver behavior against the matrix in
-   [language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
+8. Validate syntax resolver behavior against the matrix in [language-detection.md#gui-highlight-resolution](../language-detection.md#gui-highlight-resolution):
    - alias labels should resolve to non-plain grammars where expected,
    - unsupported labels should remain metadata-visible while rendering plain text.
    - In Markdown, put a Rust fence after a `- ` list marker, add an indented body, then an unindented `ordinary prose` line. The final line returns to prose colors; repeat with an ordered marker, tildes, and a following sibling list item.
 9. Validate large-buffer guardrail:
-   - Use content over the [plain-rendering threshold](../language-detection.md#virtual-editor-async-highlight-flow) and verify display is plain regardless of language metadata.
-10. Re-run keyboard/navigation sanity checks listed in
-    [Keyboard And Navigation Contract](#keyboard-and-navigation-contract)
-    after language UI edits.
-11. Repeat with heuristic detection using the
-    [build option](../language-detection.md#feature-topology).
+   - Use content over the [plain-rendering threshold](highlighting.md#large-buffers) and verify display is plain regardless of language metadata.
+10. Re-run keyboard/navigation sanity checks listed in [Keyboard And Navigation Contract](#keyboard-and-navigation-contract) after language UI edits.
+11. Repeat with heuristic detection using the [build option](../language-detection.md#feature-topology).
 
 ## Manual GUI Human-Step Checklist (Comprehensive)
 
@@ -219,10 +205,9 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
 3. Focus behavior:
    - Click editor, type a character, caret remains visible and blinking.
    - Focus stays in editor during in-editor interaction.
-   - Focus blurs only when clicking outside editor or when the app window loses focus.
+   - Focus blurs when clicking outside the editor, when another text field or overlay takes focus, or when the app window loses focus.
 4. Core shortcuts and navigation:
-   - Verify all contracts in
-     [Keyboard And Navigation Contract](#keyboard-and-navigation-contract).
+   - Verify all contracts in [Keyboard And Navigation Contract](#keyboard-and-navigation-contract).
    - Confirm save transitions dirty -> saved after `Ctrl/Cmd+S`.
 5. Commands and paste discovery:
    - `Ctrl/Cmd+K` lists commands; a paste-body query does not produce paste rows.
@@ -252,14 +237,14 @@ Run this end-to-end pass when a change touches GUI interaction or state logic.
    - Repeat, but press `Ctrl/Cmd+Shift+V` after switching back: expected the text inserted at the previous caret, with the editor focused. Repeat from sidebar search and from the title field; the text lands in the editor, not the focused field.
    - With no paste open, press `Ctrl/Cmd+Shift+V`: the top sidebar paste opens with the text appended on a new last line. Confirm the command palette's Paste as New action still creates a paste.
    - Start Paste as New, open help with `F1`, close it with `Escape`, then paste fresh text with `Ctrl/Cmd+V`. The fresh paste reaches the editor; an older canceled clipboard reply must not overwrite or prepend it.
-   - Modified arrow movement/selection (`Ctrl`/`Alt`/`Shift`/`Cmd` + arrows) affects editor selection/caret movement and does not switch sidebar filters.
+   - Modified arrow movement/selection (`Ctrl`/`Alt`/`Shift`/`Cmd` + arrows) affects editor selection/caret movement and does not change the sidebar selection.
 9. Virtual editor selection:
    - Double-click selects word.
-   - On a render-capped long line, double-click does not extend selection beyond the visible cap.
+   - On a line longer than 10,000 characters, `End` reaches the true end of the line, and double-click selects the word under the pointer even beyond column 10,000.
    - Triple-click selects line.
    - Drag selection across lines keeps expected range and autoscroll direction.
    - Load `a\rb\n# c\n` (escapes denote actual line separators), move to `b`, and Delete it. Check the visible caret after deletion, undo, and redo; typing `x` after redo produces `ax\r\n# c\n`. Right/Left and Shift+Right/Left cross the CRLF pair without an invisible caret or changing the body.
-   - Load Rust `// comment\u2028let b = 2;\u2029let c = 3;` with actual Unicode separators. Both `let` rows retain Rust colors; `Ctrl/Cmd+Home`, `End`, `Shift+Home`, Copy selects only `// comment`, excluding its separator.
+   - Load Rust `// comment let b = 2; let c = 3;` with actual Unicode separators. Both `let` rows retain Rust colors; `Ctrl/Cmd+Home`, `End`, `Shift+Home`, Copy selects only `// comment`, excluding its separator.
    - Replace several Rust rows separated by Unicode line breaks, keeping a middle row unchanged and making the last replaced row a comment. Its colors must update immediately, including after Undo/Redo.
 10. Wrap-boundary regression: down-move boundary intent:
     - Paste content `abcd\nab\n`.

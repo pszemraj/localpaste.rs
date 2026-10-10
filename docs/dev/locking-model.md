@@ -62,9 +62,7 @@ Single-paste mutation paths:
 - API update/delete acquire `begin_mutation` before storage mutation.
   - [`../../crates/localpaste_server/src/handlers/paste.rs`](../../crates/localpaste_server/src/handlers/paste.rs)
 - GUI worker mutations use the owner-aware guard while retaining the active edit hold.
-- Folder-scoped mutations acquire the folder transaction lock before reserving paste
-  IDs. Shared guard helpers in [`locks.rs`](../../crates/localpaste_server/src/locks.rs)
-  preserve this order across API and GUI paths.
+- Folder-scoped mutations acquire the folder transaction lock before reserving paste IDs. Shared guard helpers in [`locks.rs`](../../crates/localpaste_server/src/locks.rs) preserve this order across API and GUI paths.
 
 Folder delete path:
 
@@ -87,8 +85,7 @@ Each GUI app instance uses a stable lock owner ID for its session lifetime:
 
 ## Error Surface Contract
 
-Lock conflicts map to `423 Locked` on API paths.
-Unexpected lock-manager failures map to storage/internal errors.
+Lock conflicts map to `423 Locked` on API paths, while unexpected lock-manager failures map to storage/internal errors.
 
 Shared mapping helpers:
 

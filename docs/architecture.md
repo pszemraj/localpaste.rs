@@ -104,19 +104,14 @@ Folder API pathways remain for compatibility and emit deprecation headers; the G
 Version and diff surfaces:
 
 - `/api/paste/:id/versions*` supports list/get/reset-hard/duplicate for historical snapshots.
-- `/api/diff` and `/api/equal` compare head or historical paste references. Distinct
-  references with combined content above 1 MiB return `413 Payload Too Large`;
-  identical references resolve existence and return equality without that size gate.
+- `/api/diff` and `/api/equal` compare head or historical paste references. Distinct references with combined content above 1 MiB return `413 Payload Too Large`; identical references resolve existence and return equality without that size gate.
 - Content-changing writes may persist an older-head snapshot. Snapshot interval and retention behavior are defined in [storage.md#version-history-storage](storage.md#version-history-storage).
 
 Read behavior:
 
 - List and search responses contain metadata rows; fetch `/api/paste/:id` for full content.
 - Lists read metadata and recency projections backed by atomic write consistency.
-- Title and Metadata searches use the projection; All fields and Body searches
-  also read authoritative paste content. Metadata ranking uses `name`, derived
-  handle/terms, tags, and normalized language. Every scope filters and ranks the
-  full store before applying the result limit.
+- Title and Metadata searches use the projection; All fields and Body searches also read authoritative paste content. Metadata ranking uses `name`, derived handle/terms, tags, and normalized language. Every scope filters and ranks the full store before applying the result limit.
 - Projection updates commit with authoritative writes; reads need no stale-index fallback.
 
 ## 6) Locking And Concurrency
@@ -143,8 +138,7 @@ Key properties:
 
 - autosave and keyboard-triggered manual saves dispatch through backend commands,
 - metadata save path is separate from content save path,
-- shutdown attempts to drain saves, enqueue final dirty snapshots, and wait for the
-  backend to finish; failures and timeouts are logged, so this is best effort.
+- shutdown attempts to drain saves, enqueue final dirty snapshots, and wait for the backend to finish; failures and timeouts are logged, so this is best effort.
 
 Relevant code:
 
@@ -172,8 +166,7 @@ sequenceDiagram
 
 ## 10) Discovery And Trust
 
-`lpaste` resolves endpoints as follows. `--no-discovery` skips `.api-addr`
-probing and uses explicit/env/default resolution.
+`lpaste` resolves endpoints as follows. `--no-discovery` skips `.api-addr` probing and uses explicit/env/default resolution.
 
 ```mermaid
 sequenceDiagram
@@ -196,9 +189,7 @@ sequenceDiagram
     end
 ```
 
-Discovered endpoints must use HTTP with a loopback host and return `200` from
-`/api/pastes/meta?limit=1` with JSON content type, `X-Content-Type-Options: nosniff`,
-`X-Frame-Options: DENY`, and `x-localpaste-server: 1` headers.
+Discovered endpoints must use HTTP with a loopback host and return `200` from `/api/pastes/meta?limit=1` with JSON content type, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `x-localpaste-server: 1` headers.
 
 The probe uses 250 ms connection/read/write timeouts. These checks reject stale or unrelated endpoints; the headers identify a compatible API but do not authenticate a local process.
 
