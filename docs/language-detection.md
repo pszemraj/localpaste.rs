@@ -86,6 +86,8 @@ The sidebar collections Documents, Code, Config, Logs, and Links filter on these
 
 Classification reads a bounded leading sample of the body, ending on a line boundary so a partly included row cannot change the result. Very large pastes are therefore classified from their opening content.
 
+Search terms come from the same sample: up to four word-like tokens, preferring repeated and identifier-shaped ones. A token must be 3 to 48 characters long (`MAX_TERM_CHARS` in `semantic.rs`, matching the 48-character handle cap) to qualify. A longer token, such as a minified line or a base64 blob, is dropped rather than truncated, because a prefix of it is not a meaningful term; a handle synthesized from terms therefore cannot be built from one either. Body search still finds such strings. Realistic identifiers such as `std::collections::hash_map::entry` or `HIGHLIGHT_DEBOUNCE_LARGE_BYTES` fit well within the cap.
+
 Language filters and metadata search normalize both the stored and the requested value with the [same rules](#normalization-contract), so a filter of `cs` also lists pastes stored as `csharp`.
 
 ## Text Export Extensions

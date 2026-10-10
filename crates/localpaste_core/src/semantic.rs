@@ -17,6 +17,10 @@ pub(crate) use makefile::{
 const SAMPLE_MAX_LINES: usize = 256;
 const MAX_TERMS: usize = 4;
 const MAX_HANDLE_CHARS: usize = 48;
+/// Longest token kept as a derived term. Longer tokens (minified blobs, base64
+/// lines, a single giant word) are not retrieval terms and would otherwise be
+/// persisted in the metadata projection and shown in full by the UI.
+const MAX_TERM_CHARS: usize = 48;
 
 /// Coarse content class used by metadata-only retrieval and GUI filters.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -744,7 +748,11 @@ fn tokenize(input: &str) -> Vec<String> {
 }
 
 fn is_search_worthy_token(token: &str, language: &str) -> bool {
-    if token.len() < 3 || token.chars().all(|ch| ch.is_ascii_digit()) {
+    // Tokens are ASCII (see `tokenize`), so byte length equals character count.
+    if token.len() < 3
+        || token.len() > MAX_TERM_CHARS
+        || token.chars().all(|ch| ch.is_ascii_digit())
+    {
         return false;
     }
 
@@ -789,6 +797,9 @@ mod command_tests;
 /// Structure-based log recognition regression coverage.
 #[cfg(test)]
 mod log_tests;
+/// Derived-term extraction regression coverage.
+#[cfg(test)]
+mod term_tests;
 /// Content classification and retrieval regression coverage.
 #[cfg(test)]
 mod tests;
