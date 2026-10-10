@@ -6,6 +6,8 @@ use super::heuristic;
 use super::looks_like_flat_config_yaml;
 use super::looks_like_yaml;
 use super::refine_magika_label;
+use crate::semantic::commands::looks_like_shell_command_sequence;
+use crate::semantic::logs::looks_like_rust_panic;
 
 #[test]
 fn review_regression_commented_python_and_unlabeled_fences() {
@@ -143,7 +145,7 @@ fn review_regression_prose_imports_and_command_wrappers_stay_documents() {
         "# Python notes\nfrom pathlib import Path\n1) Read the input.\n2) Write the output.",
         "# Python notes\nfrom pathlib import Path\n[Reference][1]\n\n[1]: https://example.com/docs",
     ].into_iter().flat_map(|content| [content.to_owned(), content.replace('\n', "\r\n")]) {
-        assert!(!crate::semantic::commands::looks_like_shell_command_sequence(&content), "{content}");
+        assert!(!looks_like_shell_command_sequence(&content), "{content}");
         assert!(!matches!(heuristic::detect(&content).as_deref(), Some("shell" | "python")), "{content}");
         let paste = Paste::new(content.clone(), "ordinary note".into());
         assert_eq!(paste.content, content);
@@ -296,7 +298,7 @@ fn shell_sequence_sampling_drops_only_a_cut_final_line() {
                 format!("git push origin main{ending}").repeat(4_000)
             );
             assert!(
-                crate::semantic::commands::looks_like_shell_command_sequence(&content),
+                looks_like_shell_command_sequence(&content),
                 "offset {offset} {ending:?}"
             );
             assert_eq!(
@@ -576,10 +578,7 @@ fn shell_command_sequences_override_leading_setup_comments() {
         "git rev-parse HEAD\ngit blame README.md\n",
         "cd 'my repo'\r\ngit submodule update\r\n",
     ] {
-        assert!(
-            crate::semantic::commands::looks_like_shell_command_sequence(content),
-            "{content}"
-        );
+        assert!(looks_like_shell_command_sequence(content), "{content}");
         assert_eq!(
             detect_language(content).as_deref(),
             Some("shell"),
@@ -596,10 +595,7 @@ fn shell_command_sequences_override_leading_setup_comments() {
         "source code is at https://example.com\ncargo check\n",
         "cd albums are on the shelf/desk\ncargo check\n",
     ] {
-        assert!(
-            !crate::semantic::commands::looks_like_shell_command_sequence(content),
-            "{content}"
-        );
+        assert!(!looks_like_shell_command_sequence(content), "{content}");
     }
 }
 
@@ -766,9 +762,7 @@ fn json_lines_keep_format_identity_through_detection_and_export() {
 #[test]
 fn panic_detection_requires_a_leading_runtime_header() {
     let panic = "thread 'main' panicked at src/main.rs:12:5";
-    assert!(crate::semantic::logs::looks_like_rust_panic(&format!(
-        "\n  {panic}\n"
-    )));
+    assert!(looks_like_rust_panic(&format!("\n  {panic}\n")));
     assert_eq!(detect_language(panic).as_deref(), Some("log"));
     for content in [
         format!(
@@ -777,7 +771,7 @@ fn panic_detection_requires_a_leading_runtime_header() {
         format!("$cargo run\n{panic}\n"),
         format!("$ cargo run --quiet\n{panic}\n"),
     ] {
-        assert!(crate::semantic::logs::looks_like_rust_panic(&content), "{content}");
+        assert!(looks_like_rust_panic(&content), "{content}");
         assert_eq!(detect_language(&content).as_deref(), Some("log"));
         assert_eq!(
             crate::semantic::derive(&content, Some("text")).kind,
@@ -798,7 +792,7 @@ fn panic_detection_requires_a_leading_runtime_header() {
             "rust",
         ),
     ] {
-        assert!(!crate::semantic::logs::looks_like_rust_panic(&content));
+        assert!(!looks_like_rust_panic(&content));
         assert_eq!(detect_language(&content).as_deref(), Some(language));
         assert_eq!(
             crate::semantic::derive(&content, Some(language)).kind,
@@ -814,10 +808,7 @@ fn panic_detection_requires_a_leading_runtime_header() {
         format!("Running errands before lunch\n{panic}\n"),
         format!("Compiling notes for the meeting\n{panic}\n"),
     ] {
-        assert!(
-            !crate::semantic::logs::looks_like_rust_panic(&prose),
-            "{prose}"
-        );
+        assert!(!looks_like_rust_panic(&prose), "{prose}");
     }
 }
 
