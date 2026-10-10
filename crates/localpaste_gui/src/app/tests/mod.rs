@@ -489,6 +489,7 @@ mod persistence;
 mod picker_copy;
 mod picker_find;
 mod picker_scroll;
+mod query_field_width;
 mod save_and_metadata;
 mod selected_delete;
 mod selection_guard_regressions;

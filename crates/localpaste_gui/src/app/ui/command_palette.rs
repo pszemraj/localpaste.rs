@@ -60,6 +60,7 @@ impl LocalPasteApp {
                     egui::TextEdit::singleline(&mut self.command_palette_query)
                         .id(egui::Id::new(COMMAND_PALETTE_INPUT_ID))
                         .return_key(None)
+                        .desired_width(f32::INFINITY)
                         .muted_hint("Search commands..."),
                 );
                 if response.changed() {
