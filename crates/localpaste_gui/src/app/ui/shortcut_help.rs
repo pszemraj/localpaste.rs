@@ -328,7 +328,7 @@ impl LocalPasteApp {
                             [ui.available_width() - 84.0, ui.spacing().interact_size.y],
                             egui::TextEdit::singleline(&mut self.shortcut_help_query)
                                 .id(egui::Id::new("shortcut_help_query"))
-                                .hint_text("Search shortcuts...")
+                                .muted_hint("Search shortcuts...")
                                 .return_key(None),
                         );
                         if focus_requested {

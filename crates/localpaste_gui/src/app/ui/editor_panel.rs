@@ -50,7 +50,7 @@ impl LocalPasteApp {
                                     .id(egui::Id::new(TITLE_INPUT_ID))
                                     .font(egui::TextStyle::Button)
                                     .desired_width(title_width)
-                                    .hint_text("Untitled paste"),
+                                    .muted_hint("Untitled paste"),
                             );
                             if name_response.changed() {
                                 self.metadata_dirty = true;

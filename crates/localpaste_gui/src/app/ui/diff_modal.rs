@@ -94,7 +94,7 @@ impl LocalPasteApp {
                         egui::TextEdit::singleline(&mut self.version_ui.diff_query)
                             .id(egui::Id::new(DIFF_QUERY_INPUT_ID))
                             .desired_width(280.0)
-                            .hint_text("name, id, tag, language"),
+                            .muted_hint("name, id, tag, language"),
                     );
                 });
                 ui.add_space(8.0);

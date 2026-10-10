@@ -1,4 +1,4 @@
-//! Real startup, first creation, and populated restart without a harness style.
+//! App styling: real startup without a harness style, and themed text colors.
 
 use super::*;
 use localpaste_core::env::{env_lock, EnvGuard};
@@ -63,4 +63,66 @@ fn normal_startup_first_paste_and_populated_restart_render_without_test_styles()
     run_full_update(&mut app, &ctx, vec![]);
     assert!(app.virtual_line_height > 0.0);
     app.flush_pending_saves_for_shutdown();
+}
+
+/// Returns the color of every rendered text shape whose content equals `text`.
+fn rendered_text_colors(output: &egui::FullOutput, text: &str) -> Vec<egui::Color32> {
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(shape) if shape.galley.job.text == text => Some(
+                shape
+                    .galley
+                    .job
+                    .sections
+                    .first()
+                    .map_or(shape.fallback_color, |section| section.format.color),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn placeholders_render_muted_while_widget_text_keeps_body_color() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.properties_drawer_open = true;
+    harness.app.edit_name.clear();
+    harness.app.edit_tags.clear();
+    let input = || egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(1600.0, 900.0),
+        )),
+        ..Default::default()
+    };
+    let _ = run_full_update_with_input(&mut harness.app, &ctx, input());
+    let output = run_full_update_with_input(&mut harness.app, &ctx, input());
+
+    let search_hint = format!(
+        "Search pastes... ({})",
+        shortcuts::runtime_shortcut_label(RuntimeShortcutAction::FocusSearch)
+    );
+    for hint in [
+        "comma,separated,tags",
+        "Untitled paste",
+        search_hint.as_str(),
+    ] {
+        assert_eq!(
+            rendered_text_colors(&output, hint),
+            vec![COLOR_TEXT_MUTED],
+            "placeholder {hint:?}"
+        );
+    }
+    // Headings, buttons, and selectable chips keep the theme's body text color.
+    for label in ["Properties", "Copy", "All", "+ New Paste"] {
+        let colors = rendered_text_colors(&output, label);
+        assert!(!colors.is_empty(), "missing {label:?}");
+        assert!(
+            colors.iter().all(|color| *color == COLOR_TEXT_PRIMARY),
+            "{label:?} rendered {colors:?}"
+        );
+    }
 }

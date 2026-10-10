@@ -3,7 +3,7 @@
 use super::LocalPasteApp;
 use eframe::egui::{
     self, style::WidgetVisuals, Color32, CornerRadius, FontData, FontDefinitions, FontFamily,
-    FontId, Margin, Stroke, TextStyle, Visuals,
+    FontId, Margin, RichText, Stroke, TextStyle, Visuals,
 };
 use tracing::warn;
 
@@ -70,6 +70,28 @@ fn modal_chrome_style(base_style: &egui::Style) -> egui::Style {
     style
 }
 
+/// Placeholder text for text inputs, rendered in the muted text token.
+pub(super) trait MutedHintExt {
+    /// Sets placeholder text that renders in [`COLOR_TEXT_MUTED`] rather than body text.
+    ///
+    /// # Arguments
+    /// - `text`: Placeholder shown while the input is empty.
+    ///
+    /// # Returns
+    /// The input with its placeholder configured.
+    fn muted_hint(self, text: impl Into<String>) -> Self;
+}
+
+impl MutedHintExt for egui::TextEdit<'_> {
+    // The theme's `override_text_color` is baked into plain-string hints, so a
+    // raw `hint_text` renders at body brightness. Weak rich text resolves to the
+    // theme's `weak_text_color` instead; this is the one sanctioned call site.
+    #[allow(clippy::disallowed_methods)]
+    fn muted_hint(self, text: impl Into<String>) -> Self {
+        self.hint_text(RichText::new(text).weak())
+    }
+}
+
 /// Temporarily applies muted modal chrome so large window title bars do not
 /// overpower the rest of the dark palette.
 ///
@@ -128,6 +150,8 @@ impl LocalPasteApp {
         let mut style = (*ctx.style()).clone();
         style.visuals = Visuals::dark();
         style.visuals.override_text_color = Some(COLOR_TEXT_PRIMARY);
+        // Placeholders and other weak text use the muted token; see `MutedHintExt`.
+        style.visuals.weak_text_color = Some(COLOR_TEXT_MUTED);
         style.visuals.window_fill = COLOR_BG_PRIMARY;
         style.visuals.panel_fill = COLOR_BG_SECONDARY;
         style.visuals.extreme_bg_color = COLOR_BG_PRIMARY;

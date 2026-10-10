@@ -81,7 +81,7 @@ impl LocalPasteApp {
                 let response = egui::TextEdit::singleline(&mut query)
                     .id(query_id)
                     .return_key(None)
-                    .hint_text("Search pastes...")
+                    .muted_hint("Search pastes...")
                     .show(ui)
                     .response;
                 if response.changed() {

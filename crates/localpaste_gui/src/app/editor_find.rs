@@ -170,7 +170,7 @@ impl LocalPasteApp {
                         .id(find_id)
                         .return_key(None)
                         .desired_width((ui.available_width() * 0.38).clamp(180.0, 420.0))
-                        .hint_text("Search current paste"),
+                        .muted_hint("Search current paste"),
                 );
                 if self.editor_find.focus_requested {
                     response.request_focus();

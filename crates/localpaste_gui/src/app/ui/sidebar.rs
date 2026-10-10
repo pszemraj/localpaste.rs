@@ -167,7 +167,7 @@ impl LocalPasteApp {
                 let search_resp = ui.add(
                     egui::TextEdit::singleline(&mut search_buf)
                         .id(egui::Id::new(SEARCH_INPUT_ID))
-                        .hint_text(format!(
+                        .muted_hint(format!(
                             "Search pastes... ({})",
                             runtime_shortcut_label(RuntimeShortcutAction::FocusSearch)
                         )),

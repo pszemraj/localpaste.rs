@@ -266,7 +266,7 @@ impl LocalPasteApp {
                             egui::TextEdit::singleline(&mut self.edit_tags)
                                 .id(egui::Id::new(PROPERTIES_TAGS_INPUT_ID))
                                 .desired_width(f32::INFINITY)
-                                .hint_text("comma,separated,tags"),
+                                .muted_hint("comma,separated,tags"),
                         )
                         .changed()
                     {
