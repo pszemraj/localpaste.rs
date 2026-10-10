@@ -89,6 +89,8 @@ Language filters and metadata search normalize both the stored and the requested
 
 ## GUI Highlight Resolution
 
+![YAML, SQL, Markdown, and shell pastes highlighted in the editor, each with its detected language in the toolbar](../assets/screenshots/highlighting.png)
+
 The editor converts a stored language label into a syntect grammar with `resolve_syntax`. The label is normalized first, so `bash` and `sh` both reach `shell`, and `jsonl` borrows the JSON grammar while remaining JSONL in storage. `markdown` resolves to the project-owned [LocalPaste Markdown grammar](../crates/localpaste_gui/assets/LocalPaste-Markdown.sublime-syntax), in which fenced code is drawn in a single code color rather than highlighted in the fence's language, and `text` and its aliases resolve to plain text. Any other label is tried in this order:
 
 1. exact syntax name

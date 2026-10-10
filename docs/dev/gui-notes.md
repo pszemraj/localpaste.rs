@@ -108,6 +108,8 @@ Use `python tools/nav_probe_assert.py --check-spec docs/dev/nav_contract.json --
 
 ### Sidebar and filters
 
+![Sidebar search for "infra" listing the four pastes tagged infra, with the Dockerfile result open in the editor](../../assets/screenshots/sidebar-search.png)
+
 Sidebar rows are virtualized and grouped under Today, Yesterday, This Week, and Earlier headers by last update; the headers are omitted while a search query is active. Each row is a single full-width click target showing the title and a language label, and the label follows the large-buffer plain-rendering rule. The list is a metadata projection capped at `DEFAULT_LIST_PASTES_LIMIT` (`512`), and scoped sidebar and paste-picker searches likewise return metadata summaries rather than full bodies.
 
 Smart filters (All, Today, This Week, Recent (30d), Unfiled, Documents, Code, Config, Logs, Links) render as compact chips with the overflow collapsed under a `...` menu. The language filter beneath them always offers an explicit `All languages` entry and stacks with the active smart filter instead of replacing it. Classification, including the Documents grouping of Markdown, reStructuredText, LaTeX, and prose notes, follows [filter semantics](../language-detection.md#filter-and-search-semantics).
@@ -130,6 +132,8 @@ The sidebar and the paste picker each keep their own query and field scope for t
 
 Changing the sidebar scope keeps the existing rows, the open document, and its reading position until replacement results arrive, even when nothing matches. A failed sidebar search keeps those rows and shows `Retry search`; retrying or changing the query or a filter resumes requests, and a stale failure cannot replace the current query's status.
 
+![Paste picker searching all fields for "deploy", with a body excerpt and Copy, Copy Fenced, and Delete on each result](../../assets/screenshots/paste-picker.png)
+
 The paste picker is separate from the command palette: the palette lists actions only (for example Export, Duplicate, Copy, Copy link, Find, Properties, History, and Diff), and the picker lists paste rows. A result opens on click or `Enter` and offers Copy, Copy Fenced, and Delete. While a scoped request is in flight the picker shows `Searching...`; a failure stays visible with a Retry button, requests resume only on Retry or a query or scope change, and a successful response clears the error. Changing the query or scope clears old results immediately. Closing the picker discards its results and resets selection while retaining the query and scope; opening it selects the retained query for replacement and re-dispatches the search, so responses discarded while it was closed cannot leave it empty. Once rows arrive after a reopen or a query or scope change, selection resets to the first result and the list scrolls to the top, after which manual scrolling is preserved. All fields and Body results carry a compact excerpt around the first literal body match; Title and Metadata results are metadata only.
 
 Opening a result focuses its editor after the paste loads. Text and paste input received while the previous draft saves or the chosen body loads is held for the accepted selection and replayed into the editor; a pointer press, `Escape`, another app shortcut, or a failed open discards it. A result outside the current sidebar results stays selected through background refreshes until the sidebar selection, search query, or collection or language filter changes.
@@ -146,6 +150,8 @@ Growing the query refines the current match from its start. Clicking Prev, Next,
 
 ### Discovery overlays and help
 
+![The command palette and the F1 shortcut help, shown side by side](../../assets/screenshots/command-palette-and-help.png)
+
 The command palette, paste picker, and shortcut help are mutually exclusive: opening one closes the other two so its query owns keyboard input. `Escape` or the toggle shortcut returns focus to the input that opened discovery, including across switches between surfaces. Input batched around a transition stays in order, with earlier text belonging to the previous input and later text to the new destination, and `Enter` on a palette command or picker result processes the preceding query before routing later text. Commands that open another workflow keep their intended focus destination.
 
 While any of the three is open, background New, Paste into Editor, Save, Delete, sidebar-search focus, and Properties shortcuts are blocked, including delayed `Paste as new paste` clipboard replies; actions chosen inside the palette remain available. [Diff and History](#diff-and-history-workflows) use separate workflow fences. The palette keeps the selected command visible during keyboard navigation and query changes.
@@ -159,6 +165,10 @@ The `F1` window has a stable scrollable layout with key labels in the native pla
 The app has a single dark palette. It selects the dark theme before installing custom fonts and spacing, so a light system theme cannot replace it, and editor geometry uses the resolved font if the named Editor text style is missing.
 
 ## Diff And History Workflows
+
+![History window with an older snapshot selected and its content previewed beside the version list](../../assets/screenshots/history.png)
+
+![Diff window comparing the open paste against another paste, with removed lines in red](../../assets/screenshots/diff.png)
 
 - Editor toolbar exposes `Diff` and `History` for the selected paste.
 - Command palette exposes `Open diff modal` and `Open history modal` when a paste is selected.
