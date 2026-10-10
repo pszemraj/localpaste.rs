@@ -283,9 +283,13 @@ impl LocalPasteApp {
                         }
                         let total = self.version_ui.history_versions.len();
                         ui.label(
-                            RichText::new(format!("{total} stored snapshots"))
-                                .small()
-                                .color(COLOR_TEXT_MUTED),
+                            RichText::new(count_label(
+                                total,
+                                "stored snapshot",
+                                "stored snapshots",
+                            ))
+                            .small()
+                            .color(COLOR_TEXT_MUTED),
                         );
                     });
 

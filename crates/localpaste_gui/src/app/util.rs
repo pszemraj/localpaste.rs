@@ -1,5 +1,18 @@
 //! Small UI helpers for labels and word selection.
 
+/// Formats a count with its noun in the matching grammatical number.
+///
+/// # Arguments
+/// - `count`: Number of items.
+/// - `singular`: Noun phrase used when `count` is one.
+/// - `plural`: Noun phrase used for every other count, including zero.
+///
+/// # Returns
+/// Text such as `1 snapshot` or `3 snapshots`.
+pub(super) fn count_label(count: usize, singular: &str, plural: &str) -> String {
+    format!("{count} {}", if count == 1 { singular } else { plural })
+}
+
 /// Formats the language label shown in the UI, falling back to auto/plain.
 ///
 /// # Arguments
@@ -291,7 +304,7 @@ pub(super) fn word_range_at(text: &str, char_index: usize) -> Option<(usize, usi
 #[cfg(test)]
 mod tests {
     use super::{
-        api_paste_link_for_copy, display_language_label, format_fenced_code_block,
+        api_paste_link_for_copy, count_label, display_language_label, format_fenced_code_block,
         format_markdown_link, parse_tags_csv, word_range_at,
     };
 
@@ -343,6 +356,13 @@ mod tests {
             "abc",
         );
         assert_eq!(v6, "http://[::1]:38411/api/paste/abc");
+    }
+
+    #[test]
+    fn count_label_matches_grammatical_number() {
+        assert_eq!(count_label(0, "snapshot", "snapshots"), "0 snapshots");
+        assert_eq!(count_label(1, "snapshot", "snapshots"), "1 snapshot");
+        assert_eq!(count_label(2, "char", "chars"), "2 chars");
     }
 
     #[test]

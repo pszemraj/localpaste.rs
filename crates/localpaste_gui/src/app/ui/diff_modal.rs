@@ -176,8 +176,9 @@ impl LocalPasteApp {
                                         .color(egui::Color32::YELLOW),
                                     );
                                     right.label(format!(
-                                        "left={} bytes, right={} bytes",
-                                        lhs_bytes, rhs_bytes
+                                        "left={}, right={}",
+                                        count_label(*lhs_bytes, "byte", "bytes"),
+                                        count_label(*rhs_bytes, "byte", "bytes")
                                     ));
                                 }
                                 Some(InlineDiffPreview::NoChanges) => {

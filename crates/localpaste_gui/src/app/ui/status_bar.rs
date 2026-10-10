@@ -57,9 +57,13 @@ impl LocalPasteApp {
                     if self.selected_id.is_some() {
                         ui.separator();
                         ui.label(
-                            egui::RichText::new(format!("{} chars", self.active_text_chars()))
-                                .small()
-                                .color(COLOR_TEXT_MUTED),
+                            egui::RichText::new(count_label(
+                                self.active_text_chars(),
+                                "char",
+                                "chars",
+                            ))
+                            .small()
+                            .color(COLOR_TEXT_MUTED),
                         );
                     }
                 });
