@@ -1,5 +1,6 @@
 //! UI panel modules extracted from the main app update loop.
 
+use super::style::{COLOR_BG_TERTIARY, COLOR_BORDER, COLOR_TEXT_PRIMARY};
 use eframe::egui;
 
 /// Requests query focus only when its widget can join the accessibility tree.
@@ -22,10 +23,31 @@ pub(in crate::app) fn focus_visible_query(ui: &egui::Ui, id: egui::Id) -> bool {
     true
 }
 
+/// Softens pointer feedback for list rows so hover never reads as selection.
+///
+/// The theme's orange hover fill suits toolbar buttons, but on a list row it
+/// outshines the translucent blue selection fill. Rows hover and press with the
+/// neutral [`COLOR_BG_TERTIARY`] fill and a plain border instead; selected rows
+/// keep the selection fill because egui applies it over these visuals.
+///
+/// # Arguments
+/// - `visuals`: Visuals of the scope that renders list rows.
+fn soften_list_row_visuals(visuals: &mut egui::Visuals) {
+    for state in [&mut visuals.widgets.hovered, &mut visuals.widgets.active] {
+        state.bg_fill = COLOR_BG_TERTIARY;
+        state.weak_bg_fill = COLOR_BG_TERTIARY;
+        state.bg_stroke = egui::Stroke::new(1.0, COLOR_BORDER);
+        state.fg_stroke = egui::Stroke::new(1.0, COLOR_TEXT_PRIMARY);
+        state.expansion = 0.0;
+    }
+}
+
 /// Renders a full-width selectable list row.
 ///
-/// The selection and hover highlight span the row. The label is left-aligned
-/// and truncates with an ellipsis; a non-empty `hint` (a shortcut or short
+/// The selection and hover highlight span the row. Selection is the strongest
+/// highlight; hover is a neutral fill (see [`soften_list_row_visuals`]) and
+/// leaves other buttons' hover untouched. The label is left-aligned and
+/// truncates with an ellipsis; a non-empty `hint` (a shortcut or short
 /// description) is right-aligned in the muted text color.
 ///
 /// # Arguments
@@ -48,7 +70,11 @@ pub(in crate::app) fn list_row(
     if !hint.is_empty() {
         row = row.shortcut_text(hint);
     }
-    ui.add(row)
+    ui.scope(|ui| {
+        soften_list_row_visuals(ui.visuals_mut());
+        ui.add(row)
+    })
+    .inner
 }
 
 /// Command palette modal and quick-action behavior.

@@ -129,3 +129,85 @@ fn picker_actions_share_a_right_aligned_column_and_long_names_truncate() {
         assert_eq!(first_text_color(shape), COLOR_TEXT_MUTED);
     }
 }
+
+/// Fills of every rectangle drawn behind `point`.
+fn fills_behind(output: &egui::FullOutput, point: egui::Pos2) -> Vec<egui::Color32> {
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Rect(rect) if rect.rect.contains(point) => Some(rect.fill),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Settles the palette, then rests the pointer on the center of `label`.
+fn hover_palette_label(
+    app: &mut LocalPasteApp,
+    ctx: &egui::Context,
+    label: &str,
+) -> (egui::FullOutput, egui::Pos2) {
+    let settled = render_settled(app, ctx);
+    let center = text_rect(text_shapes(&settled, label).next().expect("row label")).center();
+    let hover = || egui::RawInput {
+        events: vec![egui::Event::PointerMoved(center)],
+        ..discovery_input()
+    };
+    // Hover resolves against the previous frame's widget rects, and the
+    // window's fade-in must finish so fills are fully opaque.
+    let mut output = settled;
+    for _ in 0..12 {
+        output = run_full_update_with_input(app, ctx, hover());
+    }
+    (output, center)
+}
+
+#[test]
+fn palette_hover_is_neutral_and_weaker_than_the_selected_row() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.command_palette_open = true;
+    // The first row is selected, so the second is free to carry only hover.
+    let (output, center) = hover_palette_label(&mut harness.app, &ctx, "Paste as new paste");
+    let fills = fills_behind(&output, center);
+    assert!(
+        fills.contains(&COLOR_BG_TERTIARY),
+        "hovered row should use the neutral fill: {fills:?}"
+    );
+    assert!(
+        !fills.contains(&COLOR_ACCENT_SURFACE_HOVER) && !fills.contains(&COLOR_ACCENT_SURFACE),
+        "list hover must not use the toolbar accent: {fills:?}"
+    );
+    assert_eq!(
+        harness.app.command_palette_selected, 0,
+        "hover keeps selection"
+    );
+
+    // Hovering the selected row leaves it at the selection fill.
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.command_palette_open = true;
+    let (output, center) = hover_palette_label(&mut harness.app, &ctx, "New paste");
+    let fills = fills_behind(&output, center);
+    let selection = ctx.style().visuals.selection.bg_fill;
+    assert!(
+        fills.contains(&selection),
+        "hovered selected row keeps the selection fill: {fills:?}"
+    );
+    assert!(
+        !fills.contains(&COLOR_BG_TERTIARY) && !fills.contains(&COLOR_ACCENT_SURFACE_HOVER),
+        "hover must not replace the selection fill: {fills:?}"
+    );
+}
+
+#[test]
+fn list_hover_scope_leaves_toolbar_button_hover_accented() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.command_palette_open = true;
+    let _ = render_settled(&mut harness.app, &ctx);
+    let hovered = ctx.style().visuals.widgets.hovered;
+    assert_eq!(hovered.weak_bg_fill, COLOR_ACCENT_SURFACE_HOVER);
+    assert_eq!(hovered.bg_fill, COLOR_ACCENT_SURFACE_HOVER);
+}

@@ -6,13 +6,13 @@ The desktop uses a dark palette defined in the theme module: [`../../crates/loca
 | --------------------------- | ----------- | --------------------------------------- |
 | `COLOR_BG_PRIMARY`          | `#0D1117`   | Window background                       |
 | `COLOR_BG_SECONDARY`        | `#161B22`   | Panels, status bar                      |
-| `COLOR_BG_TERTIARY`         | `#212629`   | Editor frames, inputs                   |
+| `COLOR_BG_TERTIARY`         | `#212629`   | Editor frames, inputs, list-row hover   |
 | `COLOR_TEXT_PRIMARY`        | `#C9D1D9`   | Body text                               |
 | `COLOR_TEXT_SECONDARY`      | `#8B949E`   | Secondary text                          |
 | `COLOR_TEXT_MUTED`          | `#6E7681`   | Labels, metadata, input placeholders    |
 | `COLOR_ACCENT_TEXT`         | `#D0843A`   | Accent text and links                   |
 | `COLOR_ACCENT_SURFACE`      | `#B86724`   | Filled controls                         |
-| `COLOR_ACCENT_SURFACE_HOVER` | `#C37431`  | Hovered controls                        |
+| `COLOR_ACCENT_SURFACE_HOVER` | `#C37431`  | Hovered buttons (not list rows)         |
 | `COLOR_MODAL_CHROME`        | `#8A522A`   | Modal title bars                        |
 | `COLOR_SELECTION_STROKE`    | `#3B82F6`   | Selection outline                       |
 | `COLOR_SELECTION_FILL_RGBA` | `#3B82F655` | Selection fill RGBA tuple (`[r,g,b,a]`) |
