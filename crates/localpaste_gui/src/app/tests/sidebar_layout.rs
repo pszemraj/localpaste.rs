@@ -8,8 +8,19 @@ const FILTER_ROWS: [&[&str]; 2] = [
     &["Unfiled", "Documents", "Code", "Config", "Logs", "Links"],
 ];
 
+/// Left edge of sidebar content (8 pt panel margin).
+const SIDEBAR_CONTENT_LEFT: f32 = 8.0;
+
 /// Right edge of sidebar content at the default 300 pt panel width (8 pt side margins).
 const SIDEBAR_CONTENT_RIGHT: f32 = 292.0;
+
+/// Display scales the chip rows must fit at: macOS 1x and 2x, plus the
+/// fractional scales common on Windows and Linux, where text widths snap differently.
+const DISPLAY_SCALES: [f32; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
+
+/// Room each chip row must leave before the sidebar edge at every display scale,
+/// so a small label, font, or scale change cannot silently wrap a row.
+const CHIP_ROW_MIN_SLACK: f32 = 8.0;
 
 /// Raw input for one frame of a `size` window at `pixels_per_point` display scale.
 fn window_input(size: [f32; 2], pixels_per_point: f32) -> egui::RawInput {
@@ -29,11 +40,15 @@ fn window_input(size: [f32; 2], pixels_per_point: f32) -> egui::RawInput {
 }
 
 /// Renders two frames in a fresh context so layout settles, returning the second.
+///
+/// The app installs its theme once per lifetime, so the flag is cleared to give
+/// each fresh context the app's fonts and spacing rather than egui's defaults.
 fn settled_frame(
     app: &mut LocalPasteApp,
     size: [f32; 2],
     pixels_per_point: f32,
 ) -> egui::FullOutput {
+    app.style_applied = false;
     let ctx = egui::Context::default();
     let _ = run_full_update_with_input(app, &ctx, window_input(size, pixels_per_point));
     run_full_update_with_input(app, &ctx, window_input(size, pixels_per_point))
@@ -83,34 +98,47 @@ fn sidebar_visible_label_count(output: &egui::FullOutput, label: &str) -> usize 
         .count()
 }
 
+/// Returns the top and the right chip edge of one rendered smart-filter row.
+///
+/// Chips are left-aligned from the content edge with equal horizontal padding,
+/// so the first label's inset is the padding that also follows the last label.
+fn chip_row_extent(output: &egui::FullOutput, row: &[&str]) -> (f32, f32) {
+    let rects: Vec<egui::Rect> = row
+        .iter()
+        .map(|label| {
+            // "Today" is also a list header; the chip is the first, higher one.
+            *sidebar_text_rects(output, label)
+                .first()
+                .unwrap_or_else(|| panic!("missing filter chip {label}"))
+        })
+        .collect();
+    let top = rects[0].top();
+    assert!(
+        rects.iter().all(|rect| (rect.top() - top).abs() < 1.0),
+        "{row:?} wrapped: {rects:?}"
+    );
+    let padding = rects[0].left() - SIDEBAR_CONTENT_LEFT;
+    (top, rects[rects.len() - 1].right() + padding)
+}
+
 #[test]
 fn every_smart_filter_is_a_visible_chip_without_an_overflow_menu() {
     let mut harness = make_app();
     harness.app.active_collection = crate::backend::SidebarCollection::Links;
-    // Default window at standard and Retina scale: time chips on one row, kinds on the next.
-    for pixels_per_point in [1.0, 2.0] {
+    // Default window at each display scale: time chips on one row, kinds on the next.
+    for pixels_per_point in DISPLAY_SCALES {
         let output = settled_frame(&mut harness.app, DEFAULT_WINDOW_SIZE, pixels_per_point);
         let mut row_tops = Vec::new();
         for row in FILTER_ROWS {
-            let tops: Vec<f32> = row
-                .iter()
-                .map(|label| {
-                    // "Today" is also a list header; the chip is the first, higher one.
-                    let rect = *sidebar_text_rects(&output, label)
-                        .first()
-                        .unwrap_or_else(|| panic!("missing filter chip {label}"));
-                    assert!(
-                        rect.right() <= SIDEBAR_CONTENT_RIGHT,
-                        "{label} overflows the sidebar"
-                    );
-                    rect.top()
-                })
-                .collect();
+            let (top, right) = chip_row_extent(&output, row);
+            let slack = SIDEBAR_CONTENT_RIGHT - right;
             assert!(
-                tops.iter().all(|top| (top - tops[0]).abs() < 1.0),
-                "{row:?} wrapped at {pixels_per_point}x: {tops:?}"
+                slack >= CHIP_ROW_MIN_SLACK,
+                "{row:?} ends at x {right:.1} at {pixels_per_point}x, leaving {slack:.1} pt \
+                 before the sidebar edge at {SIDEBAR_CONTENT_RIGHT}; keep at least \
+                 {CHIP_ROW_MIN_SLACK} pt by shortening a label or tightening chip spacing"
             );
-            row_tops.push(tops[0]);
+            row_tops.push(top);
         }
         assert!(row_tops[0] < row_tops[1], "filter rows: {row_tops:?}");
         assert!(sidebar_text_rects(&output, "...").is_empty());

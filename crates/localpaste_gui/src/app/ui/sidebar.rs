@@ -416,9 +416,10 @@ impl LocalPasteApp {
         ];
         let mut pending_collection: Option<SidebarCollection> = None;
         ui.scope(|ui| {
-            // Compact chips so each group fits one row at the default sidebar width.
+            // Compact chips so each group fits one row at the default sidebar width,
+            // with margin left for text that snaps wider at fractional display scales.
             let spacing = ui.spacing_mut();
-            spacing.button_padding = egui::vec2(4.0, 3.0);
+            spacing.button_padding = egui::vec2(3.0, 3.0);
             spacing.item_spacing = egui::vec2(4.0, 6.0);
             spacing.interact_size.y = 24.0;
             for row in rows {
