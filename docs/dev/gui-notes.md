@@ -180,7 +180,7 @@ Startup reopens the paste that was open when the app last closed, along with the
 
 ![History window with an older snapshot selected and its content previewed beside the version list](../../assets/screenshots/history.png)
 
-![Diff window comparing the open paste against another paste, with removed lines in red](../../assets/screenshots/diff.png)
+![Diff window comparing the open paste against another paste, with removed lines in red and added lines in green](../../assets/screenshots/diff.png)
 
 - Editor toolbar exposes `Diff` and `History` for the selected paste.
 - Command palette exposes `Compare with another paste` (Diff) and `Version history` (History) when a paste is selected; the queries `diff` and `history` find them.
