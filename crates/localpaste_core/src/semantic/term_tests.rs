@@ -395,3 +395,84 @@ fn handles_keep_non_ascii_text_and_cap_on_character_boundaries() {
         format!("{first} {}", "ü".repeat(MAX_HANDLE_CHARS - 41))
     );
 }
+
+#[test]
+fn definition_handles_skip_visibility_and_modifier_qualifiers() {
+    assert_handles(
+        Some("rust"),
+        &[
+            (
+                "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}",
+                "fn add",
+            ),
+            (
+                "pub async fn fetch(url: &str) -> Result<String, Error> {\n    todo!()\n}",
+                "fn fetch",
+            ),
+            (
+                "pub(crate) fn helper(x: &str) -> usize {\n    x.len()\n}",
+                "fn helper",
+            ),
+            (
+                "pub(in crate::db) struct Row {\n    id: u64,\n}",
+                "struct Row",
+            ),
+            ("pub const unsafe fn raw() {}", "fn raw"),
+            (
+                "pub unsafe extern \"C\" fn callback(x: i32) {}",
+                "fn callback",
+            ),
+            ("unsafe impl Send for Handle {}", "impl Send"),
+            ("pub enum Kind {\n    A,\n}", "enum Kind"),
+        ],
+    );
+    assert_handles(
+        Some("typescript"),
+        &[
+            (
+                "export function render(props) {\n  return null;\n}",
+                "export function render",
+            ),
+            ("export async function load() {}", "export function load"),
+            ("export default function App() {}", "export function App"),
+            ("export default class Store {}", "export class Store"),
+            ("export abstract class Base {}", "export class Base"),
+            ("async function main() {}", "function main"),
+            ("declare const VERSION: string;", "const VERSION"),
+        ],
+    );
+    assert_handles(
+        Some("python"),
+        &[
+            (
+                "async def fetch(url):\n    return await get(url)",
+                "def fetch",
+            ),
+            (
+                "@app.get(\"/\")\nasync def root():\n    return {}",
+                "def root",
+            ),
+        ],
+    );
+    assert_handles(
+        Some("go"),
+        &[(
+            "func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {}",
+            "func Handle",
+        )],
+    );
+    // Words that only begin like a qualifier or keyword are not definitions.
+    for (line, language) in [
+        ("public void run() {}", "rust"),
+        ("fnord = 3", "rust"),
+        ("default: return 0;", "javascript"),
+        ("asyncio.run(main())", "python"),
+        ("extern crate serde;", "rust"),
+    ] {
+        assert_eq!(
+            super::extract_definition_handle_from_line(line, Some(language)),
+            None,
+            "{line}"
+        );
+    }
+}
