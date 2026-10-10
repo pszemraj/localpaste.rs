@@ -1,5 +1,6 @@
 //! Diff and History windows stay inside the viewport at every supported window size.
 
+use super::super::ui::WINDOW_EDGE_MARGIN;
 use super::*;
 use localpaste_core::models::paste::{VersionMeta, VersionSnapshot};
 
@@ -82,9 +83,12 @@ fn window_rect(ctx: &egui::Context, modal: Modal) -> egui::Rect {
         .expect("modal window")
 }
 
-/// The window, close button included, must sit inside the viewport with a visible gap.
+/// Slack for the window frame's stroke, which may sit just outside the fitted bounds.
+const STROKE_TOLERANCE: f32 = 1.0;
+
+/// The window, close button included, must keep the promised edge margin inside the viewport.
 fn assert_fits(rect: egui::Rect, size: [f32; 2], what: &str) {
-    let allowed = viewport(size).shrink(8.0);
+    let allowed = viewport(size).shrink(WINDOW_EDGE_MARGIN - STROKE_TOLERANCE);
     assert!(
         allowed.contains_rect(rect),
         "{what}: window {rect:?} must fit inside {allowed:?}"

@@ -24,7 +24,7 @@ pub(in crate::app) fn focus_visible_query(ui: &egui::Ui, id: egui::Id) -> bool {
 }
 
 /// Gap kept between a viewport-fitted floating window and the viewport edges.
-const WINDOW_EDGE_MARGIN: f32 = 12.0;
+pub(in crate::app) const WINDOW_EDGE_MARGIN: f32 = 12.0;
 /// Smallest content area a viewport-fitted window shrinks to.
 const WINDOW_MIN_CONTENT: egui::Vec2 = egui::vec2(320.0, 200.0);
 

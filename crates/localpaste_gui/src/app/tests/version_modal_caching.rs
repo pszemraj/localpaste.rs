@@ -335,24 +335,45 @@ fn diff_candidates_use_the_sidebar_language_labels() {
     };
     let _ = run_full_update_with_input(&mut harness.app, &ctx, input());
     let output = run_full_update_with_input(&mut harness.app, &ctx, input());
+    // The sidebar's own `Alpha` row also reads `auto`, so only Diff window text counts.
+    let window = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("Diff")))
+        .expect("Diff window");
     let texts = output
         .shapes
         .iter()
         .filter_map(|clipped| match &clipped.shape {
-            egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+            egui::Shape::Text(text) => {
+                let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                window
+                    .contains_rect(rect)
+                    .then_some((text.galley.job.text.as_str(), rect))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
-    for candidate in ["Unset", "Table", "Huge"] {
-        assert!(texts.contains(&candidate), "missing {candidate}: {texts:?}");
-    }
+    let rects_of = |label: &str| {
+        texts
+            .iter()
+            .filter(|(text, _)| *text == label)
+            .map(|(_, rect)| *rect)
+            .collect::<Vec<_>>()
+    };
     // Same wording as the sidebar: unresolved is `auto`, large buffers are `plain`.
-    for label in ["auto", "csv", "plain"] {
-        assert!(texts.contains(&label), "missing {label}: {texts:?}");
+    for (candidate, language) in [("Unset", "auto"), ("Table", "csv"), ("Huge", "plain")] {
+        let [name] = rects_of(candidate)[..] else {
+            panic!("expected one {candidate} row in the Diff window: {texts:?}");
+        };
+        assert!(
+            rects_of(language).iter().any(|label| {
+                (label.center().y - name.center().y).abs() < 1.0 && label.left() > name.right()
+            }),
+            "the {candidate} row should end with {language}: {texts:?}"
+        );
     }
     assert!(!texts
         .iter()
-        .any(|text| text.contains("[text]") || text.contains("[csv]")));
+        .any(|(text, _)| text.contains("[text]") || text.contains("[csv]")));
 }
 
 #[test]
