@@ -661,9 +661,9 @@ impl eframe::App for LocalPasteApp {
                     }
                 }
                 RuntimeShortcutAction::PasteIntoEditor => {
-                    // A focused editor receives the native paste itself. Elsewhere
-                    // the payload is redirected into the open paste below. Read
-                    // ownership live: a same-frame dismissal may return focus.
+                    // A focused editor receives the native paste at its caret.
+                    // Elsewhere the payload is appended to the open paste below.
+                    // Read ownership live: a same-frame dismissal may return focus.
                     let editor_focused = self.focus_editor_next
                         || self.virtual_editor_state.has_focus
                         || ctx.memory(|memory| memory.has_focus(focus_id));

@@ -156,10 +156,10 @@ fn native_paste_preserves_focused_metadata_and_shift_paste_targets_editor() {
             .try_iter()
             .any(|command| matches!(command, CoreCmd::CreatePaste { .. })));
         if explicit {
-            // Shift+V targets the open paste rather than the focused field.
+            // Shift+V appends to the open paste rather than the focused field.
             assert_eq!(harness.app.edit_name, before.0, "{input_id}");
             assert_eq!(harness.app.edit_tags, before.1, "{input_id}");
-            assert_eq!(harness.app.active_snapshot(), "clipcontent", "{input_id}");
+            assert_eq!(harness.app.active_snapshot(), "content\nclip", "{input_id}");
         } else {
             if input_id == PROPERTIES_TAGS_INPUT_ID {
                 assert!(harness.app.edit_tags.contains("clip"));

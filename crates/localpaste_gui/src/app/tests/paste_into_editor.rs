@@ -25,7 +25,7 @@ fn drain_cmds(harness: &TestHarness) -> Vec<CoreCmd> {
 }
 
 #[test]
-fn command_shift_v_inserts_at_retained_caret_from_any_focus() {
+fn command_shift_v_uses_caret_only_in_focused_editor_and_appends_elsewhere() {
     for focus in ["editor", "deactivated", "search"] {
         let (mut harness, _events) = make_app_with_event_tx();
         let ctx = egui::Context::default();
@@ -63,7 +63,16 @@ fn command_shift_v_inserts_at_retained_caret_from_any_focus() {
 
         press_paste_into_editor(&mut harness, &ctx, ",");
 
-        assert_eq!(harness.app.active_snapshot(), "hello, world", "{focus}");
+        let expected = match focus {
+            "editor" => "hello, world",
+            _ => "hello world\n,",
+        };
+        assert_eq!(harness.app.active_snapshot(), expected, "{focus}");
+        assert_eq!(
+            harness.app.virtual_editor_state.cursor(),
+            expected.find(',').unwrap() + 1,
+            "{focus}"
+        );
         assert_eq!(harness.app.search_query, "", "{focus}");
         assert!(harness.app.virtual_editor_state.has_focus, "{focus}");
         assert!(
@@ -139,6 +148,46 @@ fn command_shift_v_repeated_before_load_replays_each_payload_in_order() {
             .app
             .apply_virtual_commands(&ctx, &[VirtualInputCommand::Undo]);
         assert_eq!(harness.app.active_snapshot(), expected);
+    }
+}
+
+#[test]
+fn command_shift_v_after_switching_pastes_appends_whether_or_not_loaded() {
+    for loaded_first in [false, true] {
+        let (mut harness, _events) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        harness
+            .app
+            .pastes
+            .push(test_summary("beta", "Beta", None, 9));
+        run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+        assert!(harness.app.select_paste("beta".into()));
+        let load = |harness: &mut TestHarness| {
+            let mut paste = Paste::new("beta body".into(), "Beta".into());
+            paste.id = "beta".into();
+            harness.app.apply_event(CoreEvent::PasteLoaded {
+                paste,
+                selection_epoch: harness.app.active_buffer_epoch,
+            });
+        };
+        if loaded_first {
+            load(&mut harness);
+            run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+            assert!(!harness.app.virtual_editor_state.has_focus);
+        }
+
+        press_paste_into_editor(&mut harness, &ctx, "clip");
+        if !loaded_first {
+            load(&mut harness);
+            run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+        }
+
+        assert_eq!(
+            harness.app.active_snapshot(),
+            "beta body\nclip",
+            "loaded_first={loaded_first}"
+        );
+        assert!(harness.app.virtual_editor_state.has_focus);
     }
 }
 

@@ -184,23 +184,19 @@ impl LocalPasteApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
     }
 
-    /// Inserts clipboard text into the open paste regardless of keyboard focus.
+    /// Appends clipboard text to the end of the open paste.
     ///
-    /// With no loaded paste, the text is appended to the loading selection or,
-    /// failing that, to the top sidebar paste once it loads. An empty list
-    /// leaves nothing to insert into, so the text becomes a new paste.
+    /// Routing only calls this when the editor lacks focus; a focused editor
+    /// receives `Ctrl/Cmd+Shift+V` as an ordinary paste at its caret. With no
+    /// loaded paste, the text waits for the loading selection or, failing
+    /// that, the top sidebar paste. An empty list leaves nothing to append
+    /// to, so the text becomes a new paste.
     ///
     /// # Arguments
     /// - `ctx`: Context used to apply the editor edit and request focus.
     /// - `text`: Clipboard payload observed with `Ctrl/Cmd+Shift+V`.
     pub(super) fn paste_into_editor(&mut self, ctx: &egui::Context, text: String) {
         if text.is_empty() {
-            return;
-        }
-        // Selection switches clear the loaded paste until its replacement arrives.
-        if self.selected_paste.is_some() {
-            self.pending_editor_paste = None;
-            self.apply_editor_paste(ctx, &[VirtualInputCommand::Paste(text)]);
             return;
         }
         let target = self
@@ -223,11 +219,13 @@ impl LocalPasteApp {
                 });
             }
         }
+        // A loaded target takes the text now, so placement never depends on load timing.
+        self.maybe_apply_pending_editor_paste(ctx);
     }
 
-    /// Appends deferred `Ctrl/Cmd+Shift+V` payloads once their target paste loads.
+    /// Appends queued `Ctrl/Cmd+Shift+V` payloads once their target paste is loaded.
     ///
-    /// Payloads replay in press order. The queue is dropped when selection
+    /// Payloads apply in press order. The queue is dropped when selection
     /// moves to a different paste first.
     ///
     /// # Arguments
@@ -267,8 +265,8 @@ impl LocalPasteApp {
             // Appended text starts after the last line rather than extending it.
             text.insert(0, '\n');
         }
-        // Later payloads continue at the caret, as if the paste had already
-        // loaded when they arrived, so each stays a separate undo step.
+        // Later payloads continue at the caret, like presses that arrive after
+        // the first has focused the editor, so each stays a separate undo step.
         let commands: Vec<_> = [
             VirtualInputCommand::MoveDocEnd { select: false },
             VirtualInputCommand::Paste(text),

@@ -1165,7 +1165,7 @@
       }
     },
     {
-      "id": "paste_shift_after_app_switch_retains_caret",
+      "id": "paste_shift_after_app_switch_appends_last_line",
       "platforms": [
         "macos"
       ],
@@ -1193,7 +1193,7 @@
         }
       },
       "expect": {
-        "paste.original_content": "alphaXpaste-probe-clipboard-2609 beta\ngamma delta\n",
+        "paste.original_content": "alphaX beta\ngamma delta\npaste-probe-clipboard-2609",
         "paste.original_name": "Paste probe original",
         "paste.original_tags": [
           "probe"
@@ -1201,8 +1201,8 @@
         "paste.count": 1,
         "paste.restart_equal": true,
         "paste.native_paste_seen": true,
-        "editor.buffer_hash": "209add7a3603e5db",
-        "cursor.char_index": 32,
+        "editor.buffer_hash": "27db2b2672ec9157",
+        "cursor.char_index": 50,
         "selection": null,
         "app.search_query_len": 0,
         "paste.editor_focused": true,
@@ -1239,7 +1239,7 @@
         }
       },
       "expect": {
-        "paste.original_content": "alphaXpaste-probe-clipboard-2609 beta\ngamma delta\n",
+        "paste.original_content": "alphaX beta\ngamma delta\npaste-probe-clipboard-2609",
         "paste.original_name": "Paste probe original",
         "paste.original_tags": [
           "probe"
@@ -1247,8 +1247,8 @@
         "paste.count": 1,
         "paste.restart_equal": true,
         "paste.native_paste_seen": true,
-        "editor.buffer_hash": "209add7a3603e5db",
-        "cursor.char_index": 32,
+        "editor.buffer_hash": "27db2b2672ec9157",
+        "cursor.char_index": 50,
         "selection": null,
         "app.search_query_len": 0,
         "paste.editor_focused": true
@@ -1283,7 +1283,7 @@
         }
       },
       "expect": {
-        "paste.original_content": "alphaXpaste-probe-clipboard-2609 beta\ngamma delta\n",
+        "paste.original_content": "alphaX beta\ngamma delta\npaste-probe-clipboard-2609",
         "paste.original_name": "Paste probe original",
         "paste.original_tags": [
           "probe"
@@ -1291,8 +1291,8 @@
         "paste.count": 1,
         "paste.restart_equal": true,
         "paste.native_paste_seen": true,
-        "editor.buffer_hash": "209add7a3603e5db",
-        "cursor.char_index": 32,
+        "editor.buffer_hash": "27db2b2672ec9157",
+        "cursor.char_index": 50,
         "selection": null,
         "app.search_query_len": 0,
         "paste.editor_focused": true
