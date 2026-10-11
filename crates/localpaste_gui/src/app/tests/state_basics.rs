@@ -54,6 +54,7 @@ fn assert_delete_send_failure_keeps_lock_and_status(
 ) {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
@@ -639,6 +640,7 @@ fn paste_deleted_selects_visible_neighbor_matrix() {
 fn create_new_paste_send_failure_shows_error_status() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
@@ -665,6 +667,7 @@ fn delete_send_failure_keeps_lock_and_shows_error_status_matrix() {
 fn palette_open_failure_keeps_palette_open() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
@@ -687,6 +690,7 @@ fn palette_open_failure_keeps_palette_open() {
 fn palette_copy_send_failure_when_selected_paste_missing_is_cleared() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
@@ -776,6 +780,7 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
 fn palette_copy_send_failure_keeps_active_selection_and_lock() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();

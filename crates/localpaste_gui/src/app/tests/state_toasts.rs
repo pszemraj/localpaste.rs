@@ -460,6 +460,7 @@ fn undo_delete_nonretryable_restore_failure_removes_toast() {
 fn undo_delete_send_failure_keeps_retryable_toast() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();

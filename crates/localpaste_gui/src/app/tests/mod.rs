@@ -12,6 +12,7 @@ use tempfile::TempDir;
 
 struct TestHarness {
     _dir: TempDir,
+    _highlight_requests: Receiver<highlight::HighlightRequest>,
     app: LocalPasteApp,
     cmd_rx: Receiver<CoreCmd>,
 }
@@ -435,6 +436,10 @@ fn run_discovery_frame_with_modifiers(
 fn make_app() -> TestHarness {
     let (cmd_tx, cmd_rx) = unbounded();
     let (_evt_tx, evt_rx) = unbounded();
+    // State and interaction tests do not need hundreds of cold grammar workers.
+    // Retain the receiver so highlight dispatch still succeeds; worker tests opt in.
+    let (highlight_tx, highlight_requests) = unbounded();
+    let (_highlight_evt_tx, highlight_evt_rx) = unbounded();
     let dir = TempDir::new().expect("temp dir");
     let db_path = dir.path().join("db");
     let db_path_str = db_path.to_string_lossy().to_string();
@@ -456,7 +461,7 @@ fn make_app() -> TestHarness {
         &config,
         db.paste_version_retention_limit(),
         BackendHandle::from_test_channels(cmd_tx, evt_rx),
-        spawn_highlight_worker(),
+        highlight::HighlightWorker::from_channels(highlight_tx, highlight_evt_rx),
         locks,
         LockOwnerId::new("test-owner".to_string()),
         server,
@@ -472,6 +477,7 @@ fn make_app() -> TestHarness {
 
     TestHarness {
         _dir: dir,
+        _highlight_requests: highlight_requests,
         app,
         cmd_rx,
     }

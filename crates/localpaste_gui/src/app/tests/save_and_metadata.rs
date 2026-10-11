@@ -858,6 +858,7 @@ fn selection_switch_paths_keep_current_selection_when_new_lock_acquire_fails() {
 fn select_paste_rolls_back_pending_when_metadata_dispatch_fails_with_content_in_flight() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
@@ -937,6 +938,7 @@ fn save_dispatch_send_failure_restores_dirty_state_for_manual_and_autosave_paths
     for case in cases {
         let TestHarness {
             _dir: _guard,
+            _highlight_requests,
             mut app,
             cmd_rx,
         } = make_app();

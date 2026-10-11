@@ -701,6 +701,7 @@ fn queue_highlight_patch_clears_only_matching_pending_request() {
 #[test]
 fn queue_highlight_patch_requires_matching_base_revision_and_text_length() {
     let mut harness = make_app();
+    harness.app.highlight_worker = spawn_highlight_worker();
     let app = &mut harness.app;
     app.virtual_editor_buffer.replace_char_range(0..1, "C");
     let revision = app.active_revision();

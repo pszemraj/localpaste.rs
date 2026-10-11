@@ -8,6 +8,7 @@ fn reloading_same_paste_rejects_highlight_from_previous_buffer() {
 
     for patch_reply in [false, true] {
         let mut harness = make_app();
+        harness.app.highlight_worker = spawn_highlight_worker();
         let app = &mut harness.app;
         let request = |app: &mut LocalPasteApp| {
             app.dispatch_highlight_request(

@@ -398,6 +398,7 @@ fn history_reset_rejects_preexisting_content_save_without_queue() {
 fn history_reset_flush_dispatch_failure_cancels_queue_with_status() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();

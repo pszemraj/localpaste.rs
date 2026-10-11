@@ -6,6 +6,7 @@ use super::*;
 fn on_exit_dispatches_dirty_content_and_metadata_save_and_drop_releases_selected_lock() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
