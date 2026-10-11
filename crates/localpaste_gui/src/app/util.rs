@@ -77,7 +77,8 @@ pub(super) fn display_language_label(
 /// - `language`: Optional code-fence language hint.
 ///
 /// # Returns
-/// Markdown fenced-code representation.
+/// Markdown fenced-code representation. A body that already ends with a line
+/// break closes on the next line, so the block gains no trailing blank line.
 pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) -> String {
     let lang = language.unwrap_or("text");
     let fence_len = content
@@ -88,7 +89,8 @@ pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) ->
         .max(2)
         + 1;
     let fence = "`".repeat(fence_len);
-    format!("{fence}{lang}\n{content}\n{fence}")
+    let break_before_fence = if content.ends_with('\n') { "" } else { "\n" };
+    format!("{fence}{lang}\n{content}{break_before_fence}{fence}")
 }
 
 /// Formats selected text as a Markdown link when the clipboard holds one web URL.
@@ -346,6 +348,23 @@ mod tests {
         assert_eq!(
             format_fenced_code_block("print('hi')", None),
             "```text\nprint('hi')\n```"
+        );
+    }
+
+    #[test]
+    fn format_fenced_code_block_adds_no_blank_line_after_a_final_line_break() {
+        assert_eq!(
+            format_fenced_code_block("replicas: 3\n", Some("yaml")),
+            "```yaml\nreplicas: 3\n```"
+        );
+        assert_eq!(
+            format_fenced_code_block("dir\r\n", None),
+            "```text\ndir\r\n```"
+        );
+        assert_eq!(
+            format_fenced_code_block("trailing blank\n\n", None),
+            "```text\ntrailing blank\n\n```",
+            "a blank line that is part of the body stays"
         );
     }
 
