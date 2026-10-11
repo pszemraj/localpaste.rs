@@ -70,10 +70,8 @@ impl LocalPasteApp {
     /// Callers are the two places that rebuild the rows for the current state:
     /// the unsearched list recompute and an applied search reply, whose query,
     /// scope, and filters were checked against the active ones. The sidebar
-    /// reveals the selection once when this record changes. The rebuild time
-    /// is recorded too, as the clock the sidebar's cluster gaps are measured by.
+    /// reveals the selection once when this record changes.
     pub(in crate::app) fn note_sidebar_rows_filter(&mut self) {
-        self.sidebar_rows_built_at = chrono::Utc::now();
         self.sidebar_rows_filter = Some(super::super::SidebarRowsFilter {
             query: self.search_query.trim().to_string(),
             scope: self.search_scope,

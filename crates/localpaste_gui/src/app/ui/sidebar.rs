@@ -229,12 +229,8 @@ impl LocalPasteApp {
                 let mut pending_select: Option<String> = None;
                 let selection_blocked = self.selection_transition_block_reason().is_some();
                 let metrics = SidebarListMetrics::from_spacing(ui.spacing());
-                let sidebar_list = SidebarList::build(
-                    &self.pastes,
-                    self.search_query.as_str(),
-                    Local::now(),
-                    self.sidebar_rows_built_at,
-                );
+                let sidebar_list =
+                    SidebarList::build(&self.pastes, self.search_query.as_str(), Local::now());
                 let mut rows_scroll = egui::ScrollArea::vertical()
                     .id_salt(SIDEBAR_ROWS_SCROLL_SALT)
                     .auto_shrink([false; 2]);

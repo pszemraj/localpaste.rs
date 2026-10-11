@@ -1,6 +1,6 @@
 //! Sidebar list model: date headers, paste rows, cluster gaps, and their geometry.
 
-use super::clusters::is_cluster_break;
+use super::clusters::relative_time_gaps;
 use crate::backend::PasteSummary;
 use chrono::{DateTime, Duration as ChronoDuration, Local, TimeZone, Utc};
 use eframe::egui;
@@ -66,14 +66,14 @@ pub(super) struct SidebarListMetrics {
     pub(super) item_height: f32,
     /// Space between neighbouring items.
     pub(super) item_spacing: f32,
-    /// Extra space above a row that starts a new cluster.
+    /// Maximum extra space above a row separated from its neighbours in time.
     pub(super) cluster_gap: f32,
 }
 
 impl SidebarListMetrics {
     /// Metrics for the sidebar's style: items as tall as an interactive widget,
-    /// the theme's item spacing between them, and that spacing once more above
-    /// a row that starts a new cluster.
+    /// the theme's item spacing between them, and up to one row of extra space
+    /// above rows separated from their neighbours in time.
     ///
     /// # Arguments
     /// - `spacing`: Spacing of the UI that renders the list.
@@ -84,7 +84,7 @@ impl SidebarListMetrics {
         Self {
             item_height: spacing.interact_size.y,
             item_spacing: spacing.item_spacing.y,
-            cluster_gap: spacing.item_spacing.y,
+            cluster_gap: spacing.interact_size.y,
         }
     }
 }
@@ -92,14 +92,14 @@ impl SidebarListMetrics {
 /// Items the sidebar list shows, top to bottom, with the cluster gaps between them.
 ///
 /// Items share one height and spacing; the only irregularity is a cluster gap
-/// above some rows. Keeping the running gap count per item makes any item's
+/// above some rows. Keeping the cumulative gap weight per item makes any item's
 /// position a closed-form expression, so the list finds the items in view
 /// with a binary search instead of measuring every item above them.
 #[derive(Debug)]
 pub(super) struct SidebarList {
     items: Vec<SidebarListItem>,
-    /// Cluster gaps at or above each item; a row that starts a cluster counts its own gap.
-    gaps_above: Vec<u32>,
+    /// Cumulative extra spacing weight at or above each item.
+    gaps_above: Vec<f32>,
 }
 
 impl SidebarList {
@@ -114,20 +114,17 @@ impl SidebarList {
     /// - `pastes`: Visible rows in display order.
     /// - `search_query`: Active sidebar query; non-blank means `pastes` are search results.
     /// - `now`: Local time that dates the headers.
-    /// - `rows_built_at`: When `pastes` were built, against which cluster gaps measure ages.
     ///
     /// # Returns
     /// The list items with their cluster gaps.
-    pub(super) fn build(
-        pastes: &[PasteSummary],
-        search_query: &str,
-        now: DateTime<Local>,
-        rows_built_at: DateTime<Utc>,
-    ) -> Self {
+    ///
+    /// # Panics
+    /// Date-group indexing requires nonempty groups, as guaranteed by `slice::chunk_by`.
+    pub(super) fn build(pastes: &[PasteSummary], search_query: &str, now: DateTime<Local>) -> Self {
         if !search_query.trim().is_empty() {
             return Self {
                 items: (0..pastes.len()).map(SidebarListItem::Row).collect(),
-                gaps_above: vec![0; pastes.len()],
+                gaps_above: vec![0.0; pastes.len()],
             };
         }
 
@@ -135,23 +132,22 @@ impl SidebarList {
             items: Vec::with_capacity(pastes.len().saturating_add(4)),
             gaps_above: Vec::with_capacity(pastes.len().saturating_add(4)),
         };
-        let mut gaps = 0;
-        let mut current_bucket = None;
-        let mut previous: Option<&PasteSummary> = None;
-        for (idx, paste) in pastes.iter().enumerate() {
-            let bucket = sidebar_time_bucket(paste.updated_at, now);
-            if current_bucket != Some(bucket) {
-                list.items.push(SidebarListItem::Header(bucket));
-                list.gaps_above.push(gaps);
-                current_bucket = Some(bucket);
-            } else if previous.is_some_and(|previous| {
-                is_cluster_break(previous.updated_at, paste.updated_at, rows_built_at)
-            }) {
-                gaps += 1;
-            }
-            list.items.push(SidebarListItem::Row(idx));
+        let mut gaps = 0.0;
+        let mut row = 0;
+        for group in pastes.chunk_by(|left, right| {
+            sidebar_time_bucket(left.updated_at, now) == sidebar_time_bucket(right.updated_at, now)
+        }) {
+            list.items.push(SidebarListItem::Header(sidebar_time_bucket(
+                group[0].updated_at,
+                now,
+            )));
             list.gaps_above.push(gaps);
-            previous = Some(paste);
+            for weight in relative_time_gaps(group.iter().map(|paste| paste.updated_at)) {
+                gaps += weight;
+                list.items.push(SidebarListItem::Row(row));
+                list.gaps_above.push(gaps);
+                row += 1;
+            }
         }
         list
     }
@@ -177,7 +173,7 @@ impl SidebarList {
     /// Panics if `index` is out of range.
     pub(super) fn item_top(&self, index: usize, metrics: SidebarListMetrics) -> f32 {
         index as f32 * (metrics.item_height + metrics.item_spacing)
-            + self.gaps_above[index] as f32 * metrics.cluster_gap
+            + self.gaps_above[index] * metrics.cluster_gap
     }
 
     /// Height of the whole list, from the top of its first item to the bottom of its last.
@@ -258,7 +254,7 @@ mod tests {
             .enumerate()
             .map(|(idx, age)| summary(&format!("row-{idx}"), (now - *age).with_timezone(&Utc)))
             .collect();
-        SidebarList::build(&pastes, "", now, now.with_timezone(&Utc))
+        SidebarList::build(&pastes, "", now)
     }
 
     /// Row indices that start a new cluster, in display order.
@@ -340,7 +336,6 @@ mod tests {
     #[test]
     fn sidebar_list_items_matrix_covers_headers_and_search_density() {
         let now = Local.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
-        let built_at = now.with_timezone(&Utc);
         let pastes = vec![
             summary("today", (now - Duration::hours(1)).with_timezone(&Utc)),
             summary("yesterday", (now - Duration::days(1)).with_timezone(&Utc)),
@@ -349,7 +344,7 @@ mod tests {
         ];
 
         assert_eq!(
-            SidebarList::build(&pastes, "", now, built_at).items(),
+            SidebarList::build(&pastes, "", now).items(),
             [
                 SidebarListItem::Header(SidebarTimeBucket::Today),
                 SidebarListItem::Row(0),
@@ -362,7 +357,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            SidebarList::build(&pastes, "needle", now, built_at).items(),
+            SidebarList::build(&pastes, "needle", now).items(),
             [
                 SidebarListItem::Row(0),
                 SidebarListItem::Row(1),
@@ -413,14 +408,18 @@ mod tests {
         let now = Local.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
         let pastes = vec![
             summary("recent", (now - Duration::days(14)).with_timezone(&Utc)),
+            summary(
+                "nearby",
+                (now - Duration::days(14) - Duration::minutes(1)).with_timezone(&Utc),
+            ),
             summary("old", (now - Duration::days(90)).with_timezone(&Utc)),
         ];
-        let list = SidebarList::build(&pastes, "needle", now, now.with_timezone(&Utc));
+        let list = SidebarList::build(&pastes, "needle", now);
         assert!(cluster_starts(&list).is_empty());
-        assert_eq!(list.content_height(METRICS), 2.0 * 34.0 + 8.0);
+        assert_eq!(list.content_height(METRICS), 3.0 * 34.0 + 2.0 * 8.0);
         // The same rows unsearched do break.
-        let list = SidebarList::build(&pastes, " ", now, now.with_timezone(&Utc));
-        assert_eq!(cluster_starts(&list), [1]);
+        let list = SidebarList::build(&pastes, " ", now);
+        assert_eq!(cluster_starts(&list), [2]);
     }
 
     #[test]
@@ -458,8 +457,9 @@ mod tests {
         let tops: Vec<f32> = (0..list.items().len())
             .map(|index| list.item_top(index, METRICS))
             .collect();
-        assert_eq!(tops, [0.0, 42.0, 84.0, 126.0, 176.0]);
-        assert_eq!(list.content_height(METRICS), 176.0 + 34.0);
+        assert_eq!(tops[..4], [0.0, 42.0, 84.0, 126.0]);
+        assert!((tops[4] - 176.0).abs() < 0.01);
+        assert!((list.content_height(METRICS) - (176.0 + 34.0)).abs() < 0.01);
     }
 
     #[test]

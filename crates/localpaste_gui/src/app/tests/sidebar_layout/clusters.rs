@@ -44,12 +44,12 @@ fn row_metrics(frames: &SidebarFrames) -> (f32, f32) {
     let spacing = frames.ctx.style().spacing.clone();
     (
         spacing.interact_size.y + spacing.item_spacing.y,
-        spacing.item_spacing.y,
+        spacing.interact_size.y,
     )
 }
 
 /// Asserts that neighbouring rows in view sit one row apart, plus one cluster gap
-/// exactly where `gap_above` says the lower row starts a new cluster.
+/// where `gap_above` says the lower row starts a widely separated cluster.
 ///
 /// # Returns
 /// How many gaps and how many gapless neighbours were checked.
@@ -64,9 +64,14 @@ fn assert_row_spacing(
     for pair in rows.windows(2) {
         let (upper, lower) = (&pair[0], &pair[1]);
         let has_gap = gap_above(row_number(&lower.0));
+        let extra = lower.1 - upper.1 - stride;
         let expected = if has_gap { stride + gap } else { stride };
         assert!(
-            (lower.1 - upper.1 - expected).abs() < 0.5,
+            if has_gap {
+                extra > gap * 0.9 && extra <= gap + 0.5
+            } else {
+                extra.abs() < 0.5
+            },
             "{} to {}: {} pt apart, expected {expected} (gap: {has_gap}); rows {rows:?}",
             upper.0,
             lower.0,
@@ -125,6 +130,65 @@ fn click(frames: &mut SidebarFrames, app: &mut LocalPasteApp, pos: egui::Pos2) {
         );
     }
     frames.render(app, vec![]);
+}
+
+#[test]
+fn yesterday_editing_sessions_get_visible_space_instead_of_one_uniform_block() {
+    use chrono::{Local, TimeZone};
+
+    let yesterday = Local::now().date_naive().pred_opt().unwrap();
+    // The observed sidebar pattern: small bursts separated by hours, all yesterday.
+    let times = [
+        (23, 58),
+        (23, 57),
+        (22, 10),
+        (17, 27),
+        (16, 57),
+        (14, 53),
+        (5, 36),
+        (4, 42),
+        (3, 47),
+        (3, 46),
+    ];
+    let rows = times
+        .iter()
+        .enumerate()
+        .map(|(index, &(hour, minute))| {
+            let timestamp = Local
+                .from_local_datetime(&yesterday.and_hms_opt(hour, minute, 0).unwrap())
+                .single()
+                .unwrap()
+                .with_timezone(&Utc);
+            test_summary_at(
+                &format!("paste-{index}"),
+                &format!("Sidebar row {index}"),
+                None,
+                1,
+                timestamp,
+            )
+        })
+        .collect();
+    let (mut harness, _events, mut frames) = sidebar_from_backend(rows);
+    let output = frames.render(&mut harness.app, vec![]);
+    assert_eq!(sidebar_visible_label_count(&output, "Yesterday"), 1);
+    let y = |index| rendered_label_center(&output, &format!("Sidebar row {index}")).y;
+    let (stride, max_extra) = row_metrics(&frames);
+    assert!(
+        (y(1) - y(0) - stride).abs() < 0.5,
+        "back-to-back edits stay compact"
+    );
+    assert!(
+        y(3) - y(2) > stride + max_extra * 0.6,
+        "separate sessions get visible space"
+    );
+    assert!(harness.app.select_paste("paste-6".to_string()));
+    let output = frames.render(&mut harness.app, vec![]);
+    let upper = rendered_label_center(&output, "Sidebar row 5");
+    let lower = rendered_label_center(&output, "Sidebar row 6");
+    assert!(
+        lower.y - upper.y > stride + max_extra * 0.8,
+        "the reported nine-hour pause is visibly separated"
+    );
 }
 
 #[test]
