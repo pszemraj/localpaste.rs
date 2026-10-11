@@ -707,16 +707,21 @@ impl eframe::App for LocalPasteApp {
                 }
             }
         });
-        if paste_into_editor_pressed {
-            if let Some(text) = pasted_text.take() {
-                // The payload belongs to the open paste, not a focused field.
-                ctx.input_mut(|input| {
-                    input
-                        .events
-                        .retain(|event| !matches!(event, egui::Event::Paste(_)));
+        if paste_into_editor_pressed && pasted_text.take().is_some() {
+            // The payloads belong to the open paste, not a focused field. Each
+            // press delivers its own, so a batch of presses appends every one.
+            let texts = ctx.input_mut(|input| {
+                let mut texts = Vec::new();
+                input.events.retain(|event| match event {
+                    egui::Event::Paste(text) => {
+                        texts.push(text.clone());
+                        false
+                    }
+                    _ => true,
                 });
-                self.paste_into_editor(ctx, text);
-            }
+                texts
+            });
+            self.paste_into_editor(ctx, texts);
         }
         if self.paste_as_new_pending_frames > 0 {
             // The explicit payload was captured above. It belongs to the new

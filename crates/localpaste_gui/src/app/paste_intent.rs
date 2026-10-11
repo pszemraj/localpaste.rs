@@ -195,9 +195,11 @@ impl LocalPasteApp {
     ///
     /// # Arguments
     /// - `ctx`: Context used to apply the editor edit and request focus.
-    /// - `text`: Clipboard payload observed with `Ctrl/Cmd+Shift+V`.
-    pub(super) fn paste_into_editor(&mut self, ctx: &egui::Context, text: String) {
-        if text.is_empty() {
+    /// - `texts`: Clipboard payloads of the `Ctrl/Cmd+Shift+V` presses in one
+    ///   input batch, in press order.
+    pub(super) fn paste_into_editor(&mut self, ctx: &egui::Context, mut texts: Vec<String>) {
+        texts.retain(|text| !text.is_empty());
+        if texts.is_empty() {
             return;
         }
         // A switch deferred behind a save already belongs to the paste the user
@@ -208,7 +210,7 @@ impl LocalPasteApp {
             .or_else(|| self.selected_id.clone())
             .or_else(|| self.pastes.first().map(|paste| paste.id.clone()));
         let Some(id) = target else {
-            self.create_new_paste_with_content(text);
+            self.create_new_paste_with_content(texts.concat());
             return;
         };
         if self.selected_id.as_deref() != Some(id.as_str())
@@ -218,13 +220,8 @@ impl LocalPasteApp {
             return;
         }
         match self.pending_editor_paste.as_mut() {
-            Some(pending) if pending.id == id => pending.texts.push(text),
-            _ => {
-                self.pending_editor_paste = Some(PendingEditorPaste {
-                    id,
-                    texts: vec![text],
-                });
-            }
+            Some(pending) if pending.id == id => pending.texts.extend(texts),
+            _ => self.pending_editor_paste = Some(PendingEditorPaste { id, texts }),
         }
         // A loaded target takes the text now, so placement never depends on load timing.
         self.maybe_apply_pending_editor_paste(ctx);

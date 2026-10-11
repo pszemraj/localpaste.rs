@@ -187,31 +187,62 @@ fn command_shift_v_on_load_keeps_the_caret_after_the_text_with_find_open() {
 }
 
 #[test]
-fn command_shift_v_repeated_before_load_replays_each_payload_in_order() {
-    let (mut harness, _events) = make_app_with_event_tx();
-    let ctx = egui::Context::default();
-    harness.app.selected_id = None;
-    harness.app.selected_paste = None;
-    harness.app.reset_virtual_editor("");
+fn command_shift_v_repeated_presses_append_each_payload_in_order() {
+    // Loaded or still loading, with presses in separate frames or in one native batch.
+    for (loaded_first, same_batch) in [(false, false), (false, true), (true, false), (true, true)] {
+        let case = format!("loaded_first={loaded_first} same_batch={same_batch}");
+        let (mut harness, _events) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        let load = |harness: &mut TestHarness| {
+            let mut loaded = Paste::new("existing".into(), "Alpha".into());
+            loaded.id = "alpha".into();
+            harness.app.apply_event(CoreEvent::PasteLoaded {
+                paste: loaded,
+                selection_epoch: harness.app.active_buffer_epoch,
+            });
+        };
+        harness.app.selected_id = None;
+        harness.app.selected_paste = None;
+        harness.app.reset_virtual_editor("");
+        if loaded_first {
+            assert!(harness.app.select_paste("alpha".into()));
+            load(&mut harness);
+            run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+        }
 
-    press_paste_into_editor(&mut harness, &ctx, "first");
-    press_paste_into_editor(&mut harness, &ctx, "second");
-    let mut loaded = Paste::new("existing".into(), "Alpha".into());
-    loaded.id = "alpha".into();
-    harness.app.apply_event(CoreEvent::PasteLoaded {
-        paste: loaded,
-        selection_epoch: harness.app.active_buffer_epoch,
-    });
-    run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+        if same_batch {
+            run_discovery_frame_with_modifiers(
+                &mut harness.app,
+                &ctx,
+                vec![
+                    egui::Event::Paste("first".into()),
+                    egui::Event::Paste("second".into()),
+                ],
+                command_shift(),
+            );
+            run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+        } else {
+            press_paste_into_editor(&mut harness, &ctx, "first");
+            press_paste_into_editor(&mut harness, &ctx, "second");
+        }
+        if !loaded_first {
+            load(&mut harness);
+            run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+        }
 
-    // Matches the result had the paste loaded between the two presses.
-    assert_eq!(harness.app.active_snapshot(), "existing\nfirstsecond");
-    assert!(harness.app.pending_editor_paste.is_none());
-    for expected in ["existing\nfirst", "existing"] {
-        harness
-            .app
-            .apply_virtual_commands(&ctx, &[VirtualInputCommand::Undo]);
-        assert_eq!(harness.app.active_snapshot(), expected);
+        // Every case matches the paste loading before the first press.
+        assert_eq!(
+            harness.app.active_snapshot(),
+            "existing\nfirstsecond",
+            "{case}"
+        );
+        assert!(harness.app.pending_editor_paste.is_none(), "{case}");
+        for expected in ["existing\nfirst", "existing"] {
+            harness
+                .app
+                .apply_virtual_commands(&ctx, &[VirtualInputCommand::Undo]);
+            assert_eq!(harness.app.active_snapshot(), expected, "{case}");
+        }
     }
 }
 
