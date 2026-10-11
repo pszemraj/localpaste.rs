@@ -1,6 +1,6 @@
 # GUI Highlight Pipeline
 
-Notes on how the editor computes, stages, and displays syntax highlighting. User-visible behavior and the mapping from language labels to grammars are described in [Language Detection And Highlighting](../language-detection.md#gui-highlight-resolution).
+User-visible highlighting and the mapping from language labels to grammars are in [Language Detection And Highlighting](../language-detection.md#gui-highlight-resolution).
 
 Source map:
 
@@ -28,7 +28,7 @@ A request carries a cheap clone of the editor's rope and the identity the UI nee
 
 Each applied edit records a hint holding the start of the edit, the number of lines it touched, and the characters inserted and deleted. The start is a UTF-8 byte offset taken before the edit, not a character index. The worker maps it to a line through the rope, so line numbers agree with the editor's own lines: Ropey treats LF, CRLF, bare CR, VT, FF, NEL, and the Unicode line and paragraph separators as line breaks. The worker begins one byte before the offset, because an edit can move a CRLF boundary behind the edit position and the preceding line then needs to be rechecked.
 
-Syntect grammars expect LF-terminated lines. The parser is given a copy of each line whose non-LF terminator is replaced with LF, and the resulting spans are mapped back onto the original bytes, including the terminator.
+Syntect grammars expect LF-terminated lines. A line ending in a bare CR, VT, FF, NEL, or a Unicode separator is given to the parser with that terminator replaced by LF, while LF and CRLF lines pass unchanged, and the resulting spans are mapped back onto the original bytes, including the terminator.
 
 ## Worker
 
@@ -62,7 +62,7 @@ While a staged render is held back for `HIGHLIGHT_APPLY_IDLE`, the frame schedul
 
 ## Large Buffers
 
-The editor compares the buffer's byte length with `HIGHLIGHT_PLAIN_THRESHOLD`. At or above it, no requests are sent, any pending, staged, and current highlight state is cleared the moment a buffer crosses the threshold, and the buffer is drawn plain. The sidebar and paste picker apply the same threshold when choosing to display `plain` as a paste's language.
+The editor compares the buffer's byte length with `HIGHLIGHT_PLAIN_THRESHOLD`. At or above it, no requests are sent, any pending, staged, and current highlight state is cleared the moment a buffer crosses the threshold, and the buffer is drawn plain. The [user-visible rule](../language-detection.md#virtual-editor-async-highlight-flow) covers the sidebar and picker labels.
 
 ## Markdown Grammar
 

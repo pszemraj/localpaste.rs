@@ -1,14 +1,14 @@
 # Storage Contract
 
-LocalPaste keeps pastes, folders, and version history in one redb database under `DB_PATH`. This page states what that database keeps, how it is laid out, and what to expect when it is shared or upgraded.
+LocalPaste keeps pastes, folders, and version history in one redb database under `DB_PATH`.
 
 ## What Survives What
 
 Pastes, folders, and version history are committed durably and survive restarts. Delete undo does not.
 
 - **Version history** is stored with the paste and persists across restarts. When a paste's content changes, the previous content is saved as a snapshot, subject to the interval and retention limits in [Version History Storage](#version-history-storage). Deleting a paste deletes its history, so history cannot bring a deleted paste back.
-- **Delete undo** is a short GUI affordance, not a recovery mechanism. The GUI holds a deleted paste for about ten seconds so Undo can restore it. Any database startup discards what is still held, and a delete through the API or CLI is permanent immediately.
-- **Backups** are separate database files, created on request or before a startup repair and never on a schedule ([deployment.md](deployment.md#backups)). Restoring a backup taken before the deletion is the only way to recover a deleted paste. A backup holds the pastes and history that existed when it was taken; undo data inside a backup is discarded when it is opened.
+- **Delete undo** is a short GUI affordance, not a recovery mechanism. The GUI holds a deleted paste for about ten seconds so Undo can restore it. Database startup and GUI backend reinitialization discard everything still held, including live undo tokens, and a delete through the API or CLI is permanent immediately.
+- **Backups** are separate database files, created by `localpaste --backup`, at each server start when `AUTO_BACKUP` is set, or before a startup repair, and never on a schedule ([deployment.md](deployment.md#backups)). Restoring a backup taken before the deletion is the only way to recover a deleted paste. A backup holds the pastes and history that existed when it was taken; undo data inside a backup is discarded when it is opened.
 
 ## Backend And File Layout
 
@@ -26,7 +26,7 @@ Authoritative tables:
 - `folders`: folder rows.
 - `folders_deleting`: in-progress delete markers for folder-tree operations.
 
-Rebuildable projections and indexes:
+Derived projections and indexes (`pastes_meta` can be rebuilt from the paste rows; `pastes_by_updated` is kept current by each write and never rebuilt):
 
 - `pastes_meta`: list/search/filter projection, including derived retrieval metadata (`kind`, compact `handle`, top `terms`).
 - `pastes_meta_state`: projection schema marker; startup rebuilds `pastes_meta` from authoritative paste rows when the marker is missing or stale.
@@ -48,15 +48,15 @@ A hard reset to a snapshot removes the snapshots newer than it. The GUI first ke
 
 ### Delete Undo Staging
 
-A GUI delete moves the paste and its snapshots into the `deleted_*` tables in the same transaction that removes the active rows and updates folder projections. Undo restores them by token. The GUI worker discards tokens that expire or exceed its undo limit. Database startup and GUI backend reinitialization discard every staged row, including live tokens, because the undo action does not survive a restart. Discarding a token removes the paste and its snapshots permanently.
+A GUI delete moves the paste and its snapshots into the `deleted_*` tables in the same transaction that removes the active rows and updates folder projections. Undo restores them by token. The GUI worker discards tokens that expire or exceed its undo limit, and startup discards the rest as described in [What Survives What](#what-survives-what). Discarding a token removes the paste and its snapshots permanently.
 
 ## Compatibility Policy
 
-LocalPaste is pre-stable: a database written by an earlier version is not guaranteed to open in a later one, and no migrations are provided. Derived data (`pastes_meta`, `pastes_by_updated`) is rebuilt at startup, but paste rows written in an older layout can make startup fail or leave the affected pastes unreadable, and a legacy sled directory (no `data.redb`) is refused with an error. If an existing database is rejected, point `DB_PATH` at a fresh directory.
+LocalPaste is pre-stable: a database written by an earlier version is not guaranteed to open in a later one, and no migrations are provided. Startup rebuilds `pastes_meta` when its schema marker is missing or stale, but paste rows written in an older layout can make startup fail or leave the affected pastes unreadable, and a legacy sled directory (no `data.redb`) is refused with an error. If an existing database is rejected, point `DB_PATH` at a fresh directory.
 
 ### Startup Repair
 
-When an existing database needs schema or projection repair, startup first writes a backup using the [backup layout](deployment.md#backups); if that backup fails, startup aborts instead of repairing in place. Repair rebuilds an outdated or missing `pastes_meta` projection from the paste rows, so content, language, and manual-language flags are preserved. The projection implements the [detection and retrieval rules](language-detection.md#filter-and-search-semantics) and its version is `CURRENT_PASTES_META_SCHEMA_VERSION` in `crates/localpaste_core/src/db/paste/mod.rs`.
+When an existing database needs schema or projection repair, startup first writes a backup using the [backup layout](deployment.md#backups); if that backup fails, startup aborts instead of repairing in place. Repair rebuilds an outdated or missing `pastes_meta` projection from the paste rows, so content, language, and manual-language flags are preserved. Every startup also clears folder delete markers and repairs orphaned folder references in place, without a backup; a failed folder repair is logged and startup continues. The projection implements the [detection and retrieval rules](language-detection.md#filter-and-search-semantics) and its version is `CURRENT_PASTES_META_SCHEMA_VERSION` in `crates/localpaste_core/src/db/paste/mod.rs`.
 
 ### For Contributors
 

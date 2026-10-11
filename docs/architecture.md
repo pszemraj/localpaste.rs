@@ -16,20 +16,15 @@
 
 ## 1) System At A Glance
 
-LocalPaste is a local-first paste manager with a shared core and multiple frontends:
+LocalPaste is a local-first paste manager: one core library shared by several frontends.
 
-- Desktop GUI (`localpaste-gui`) is the primary UX.
-- Headless HTTP API server (`localpaste`) supports automation and integrations.
-- CLI (`lpaste`) calls HTTP endpoints and can auto-discover the GUI embedded API.
-- Tools (`generate-test-data`, `check-loc`, `check-ast-dupes`) support fixtures and repository hygiene.
-
-Workspace crates:
-
-- [`../crates/localpaste_core`](../crates/localpaste_core): config, models, storage, transaction helpers, invariants.
-- [`../crates/localpaste_server`](../crates/localpaste_server): Axum routing, middleware, handlers, embedded server helper.
-- [`../crates/localpaste_gui`](../crates/localpaste_gui): native app shell, backend worker, editor flows.
-- [`../crates/localpaste_cli`](../crates/localpaste_cli): HTTP client and endpoint discovery logic.
-- [`../crates/localpaste_tools`](../crates/localpaste_tools): test data generation and repo hygiene checks (`check-loc`, `check-ast-dupes`).
+| Crate | Binaries | Role |
+| --- | --- | --- |
+| [`localpaste_core`](../crates/localpaste_core) | library only | Config, models, storage, transaction helpers, invariants, detection and classification |
+| [`localpaste_gui`](../crates/localpaste_gui) | `localpaste-gui` | Desktop app and primary interface: app shell, backend worker, editor flows, embedded API |
+| [`localpaste_server`](../crates/localpaste_server) | `localpaste` | Headless HTTP API for automation; Axum routing, middleware, handlers, and the embedded server helper |
+| [`localpaste_cli`](../crates/localpaste_cli) | `lpaste` | HTTP client that can discover the GUI's embedded API |
+| [`localpaste_tools`](../crates/localpaste_tools) | `generate-test-data`, `check-loc`, `check-ast-dupes` | Test fixtures, line-count policy, duplicate and dead-symbol audit |
 
 ```mermaid
 flowchart LR
@@ -54,7 +49,7 @@ flowchart LR
 
 1. Acquires the process-lifetime owner lock at `DB_PATH`.
 2. Opens the database.
-3. Starts an embedded API server on loopback.
+3. Starts the embedded API on `BIND` or loopback `PORT`, falling back to a free port when that one is taken.
 4. Writes embedded API endpoint to `DB_PATH/.api-addr`.
 5. Runs UI and backend worker in-process.
 
@@ -111,7 +106,7 @@ Read behavior:
 
 - List and search responses contain metadata rows; fetch `/api/paste/:id` for full content.
 - Lists read metadata and recency projections backed by atomic write consistency.
-- Title and Metadata searches use the projection; All fields and Body searches also read authoritative paste content. Metadata ranking uses `name`, derived handle/terms, tags, and normalized language. Every scope filters and ranks the full store before applying the result limit.
+- The API searches All fields (`/api/search`) or Metadata (`/api/search/meta`); the GUI adds Title and Body scopes. Title and Metadata read only the projection, while All fields and Body also read paste bodies. Every scope filters and ranks the full store before applying the result limit; metadata matching follows [filter and search semantics](language-detection.md#filter-and-search-semantics).
 - Projection updates commit with authoritative writes; reads need no stale-index fallback.
 
 ## 6) Locking And Concurrency
@@ -166,7 +161,7 @@ sequenceDiagram
 
 ## 10) Discovery And Trust
 
-`lpaste` resolves endpoints as follows. `--no-discovery` skips `.api-addr` probing and uses explicit/env/default resolution.
+`lpaste` resolves its endpoint as follows; [CLI workflows](cli-gui-workflows.md#connect-to-the-running-gui) covers the flags that pin or disable discovery.
 
 ```mermaid
 sequenceDiagram

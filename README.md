@@ -15,9 +15,9 @@ It is local-first by design. The desktop app is the main workspace, backed by an
 
 ## Quick Start
 
-Download the latest binary for your system from [GitHub Releases](https://github.com/pszemraj/localpaste.rs/releases), then install and run LocalPaste. Release downloads install the desktop GUI; build from source for `lpaste` or the standalone server. See [GUI releases](docs/release-gui.md) for artifact names and platform installation details.
+Download the latest binary for your system from [GitHub Releases](https://github.com/pszemraj/localpaste.rs/releases), then install and run LocalPaste; [GUI releases](docs/release-gui.md) lists artifact names and platform installation details.
 
-Source builds need Git, Rust 1.89 or newer with Cargo, and a native C/C++ build toolchain. Linux builds also need `pkg-config` and OpenSSL development headers (`libssl-dev` on Debian and Ubuntu, `openssl-devel` on Fedora).
+Source builds need Git, Rust with Cargo (with rustup, the checkout's `rust-toolchain.toml` selects and installs 1.89.0), and a native C/C++ build toolchain. Linux builds also need `pkg-config` and OpenSSL development headers (`libssl-dev` on Debian and Ubuntu, `openssl-devel` on Fedora).
 
 ```bash
 git clone https://github.com/pszemraj/localpaste.rs.git
@@ -36,8 +36,8 @@ Default GUI/server builds use Magika; see [detection build options](docs/languag
 `lpaste` and the standalone server are not part of the release downloads. From a source checkout, install both into Cargo's binary directory (`~/.cargo/bin` by default):
 
 ```bash
-cargo install --path crates/localpaste_server --bin localpaste
-cargo install --path crates/localpaste_cli --bin lpaste
+cargo install --locked --path crates/localpaste_server --bin localpaste
+cargo install --locked --path crates/localpaste_cli --bin lpaste
 ```
 
 With no GUI open on the same database, run the server in one terminal and use the CLI from another:
@@ -55,19 +55,7 @@ An open GUI serves the same API itself, so run only `lpaste`. See [CLI workflows
 
 ## Documentation
 
-Start here:
-
-- Terminal workflows with the GUI: [`docs/cli-gui-workflows.md`](docs/cli-gui-workflows.md)
-- Language detection and highlighting: [`docs/language-detection.md`](docs/language-detection.md#feature-topology)
-- Storage and durability: [`docs/storage.md`](docs/storage.md)
-- Security, exposure, and configuration: [`docs/security.md`](docs/security.md#environment-variables)
-- Deployment and service operations: [`docs/deployment.md`](docs/deployment.md)
-- Full documentation map: [`docs/README.md`](docs/README.md)
-
-For development:
-
-- Build, validation, and smoke-test workflow: [`docs/dev/devlog.md`](docs/dev/devlog.md)
-- GUI behavior notes, navigation probe, and manual test checklist: [`docs/dev/gui-notes.md`](docs/dev/gui-notes.md)
+The [documentation map](docs/README.md) links the guides for CLI workflows, storage, security, deployment, and development.
 
 ## License
 

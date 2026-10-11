@@ -30,10 +30,7 @@ It reports timings and rendered span counts at 1,000, 5,000, and 10,000 spans. C
 
 ## Prereqs
 
-Use the build matrix in [devlog.md](devlog.md). Minimum binaries required for this protocol:
-
-- `localpaste_tools` / `generate-test-data`
-- `localpaste_gui` / `localpaste-gui`
+The runbook builds `generate-test-data` (`localpaste_tools`) and `localpaste-gui` (`localpaste_gui`) through `cargo run`; other build commands are in [devlog.md](devlog.md#build-and-run).
 
 ## Runbook
 
@@ -67,7 +64,28 @@ foreach ($fixture in $fixtures.GetEnumerator()) {
 }
 ```
 
-Run this seed block once per fresh dataset; the random generator does not create these fixed names.
+On macOS or Linux, the same runbook in bash or zsh, with the fixtures seeded from a second terminal once the GUI shows its endpoint:
+
+```bash
+mkdir -p target
+export DB_PATH="$(mktemp -d "$PWD/target/lpaste-perf-XXXXXX")"
+export PORT=38973
+export LP_SERVER="http://127.0.0.1:$PORT"
+export LOCALPASTE_EDITOR_PERF_LOG=1 LOCALPASTE_BACKEND_PERF_LOG=1
+export LOCALPASTE_EDITOR_INPUT_TRACE=1 LOCALPASTE_HIGHLIGHT_TRACE=1
+
+cargo run -p localpaste_tools --bin generate-test-data -- --clear --yes --count 10000 --folders 50
+cargo run -p localpaste_gui --bin localpaste-gui --release
+
+# Second terminal, with LP_SERVER set to the GUI status-bar endpoint:
+seed() { yes "$2" | head -n "$3" | cargo run --quiet -p localpaste_cli --bin lpaste -- new --name "$1"; }
+seed perf-medium-python "print('fixture')" 100
+seed perf-100kb-python "print('fixture')" 6400
+seed perf-300kb-rust "fn sample() {}" 21000
+seed perf-scroll-5k-lines "fn sample() {}" 5000
+```
+
+Run the seed commands once per fresh dataset; the random generator does not create these fixed names.
 
 For standalone server-only smoke/perf validation, use [devlog.md#runtime-smoke-test-server-cli](devlog.md#runtime-smoke-test-server-cli).
 
@@ -79,7 +97,7 @@ This runbook seeds a large mixed dataset via `generate-test-data`:
 - weighted content-size distribution (small/medium/large/very large)
 - language-diverse snippets plus folder/tag metadata
 
-Check the [GUI list limits and search scopes](gui-notes.md#stable-behavior-notes).
+The sidebar lists a capped number of the newest rows, so older generated pastes are reached through search ([Sidebar and filters](gui-notes.md#sidebar-and-filters)).
 
 ## Manual Verification Checklist
 

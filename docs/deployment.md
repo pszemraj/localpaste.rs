@@ -18,13 +18,11 @@ These instructions apply to the headless `localpaste` server. The desktop GUI (`
 
 Install the server with the `cargo install` commands in the [README](../README.md#server-and-cli). The examples below assume the server binary is available at `$HOME/.cargo/bin/localpaste` (the default `cargo install` location on Unix-like systems).
 
-Security defaults and public-bind policy live in [security.md](security.md).
-
-Storage compatibility and single-writer rules live in [storage.md](storage.md).
+Before exposing the server or pointing it at an existing store, see the [security defaults](security.md) and the [single-writer rule](storage.md#operational-expectations).
 
 ```bash
 mkdir -p ~/.cache/localpaste
-nohup "$HOME/.cargo/bin/localpaste" > ~/.cache/localpaste/server.log 2>&1 &
+nohup "$HOME/.cargo/bin/localpaste" >> ~/.cache/localpaste/server.log 2>&1 &
 echo $! > ~/.cache/localpaste/localpaste.pid
 ```
 
@@ -51,7 +49,7 @@ lsof -i :38411
 # lsof -t -i :38411 | xargs kill -9 2>/dev/null
 ```
 
-Use graceful shutdown first. Forced termination skips orderly request completion; the OS releases the database owner lock when the process exits. The name-based fallback also matches a GUI started from a release archive, whose executable is likewise named `localpaste`, so prefer the PID file when both may be running.
+Use graceful shutdown first. Forced termination skips orderly request completion; the OS releases the database owner lock when the process exits. The name-based fallback also matches a GUI installed from any release download, whose executable is likewise named `localpaste`, so prefer the PID file when both may be running.
 
 ### Lock Safety
 
@@ -172,7 +170,7 @@ cp path/to/snapshot.redb "$HOME/localpaste-restored/data.redb"
 DB_PATH="$HOME/localpaste-restored" localpaste
 ```
 
-To inspect the copy in the GUI instead, launch it with the same `DB_PATH`. Opening a snapshot from an older build can run a startup [compatibility repair](storage.md#compatibility-policy), which writes a backup of its own next to the copy. Once the contents look right, keep using the new directory as `DB_PATH`, or move it into the original location after setting the old directory aside.
+To inspect the copy in the GUI instead, launch it with the same `DB_PATH`. Opening a snapshot from an older build can run a [startup repair](storage.md#startup-repair), which writes a backup of its own next to the copy. Once the contents look right, keep using the new directory as `DB_PATH`, or move it into the original location after setting the old directory aside.
 
 ### Auto-restart on Crash
 
@@ -192,6 +190,8 @@ With cron:
 
 ### Log Rotation
 
+The server keeps its log file open, so rotate it in place with `copytruncate`; with the default rename, the server keeps writing to the rotated file.
+
 ```text
 # /etc/logrotate.d/localpaste
 /home/username/.cache/localpaste/*.log {
@@ -200,6 +200,7 @@ With cron:
     compress
     missingok
     notifempty
+    copytruncate
 }
 ```
 

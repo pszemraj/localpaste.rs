@@ -59,7 +59,7 @@ Poison handling:
 
 Single-paste mutation paths:
 
-- API update/delete acquire `begin_mutation` before storage mutation.
+- API update, delete, and reset-hard take a mutation guard before writing, after the folder transaction lock when the folder changes.
   - [`../../crates/localpaste_server/src/handlers/paste.rs`](../../crates/localpaste_server/src/handlers/paste.rs)
 - GUI worker mutations use the owner-aware guard while retaining the active edit hold.
 - Folder-scoped mutations acquire the folder transaction lock before reserving paste IDs. Shared guard helpers in [`locks.rs`](../../crates/localpaste_server/src/locks.rs) preserve this order across API and GUI paths.

@@ -14,9 +14,9 @@ The headless server (`localpaste`) and the API embedded in the GUI read the same
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `DB_PATH` | `~/.cache/localpaste/db` (Windows: `%LOCALAPPDATA%\localpaste\db`) | Database directory containing `data.redb`, lock files, and GUI discovery metadata |
+| `DB_PATH` | `~/.cache/localpaste/db` (Windows: `%LOCALAPPDATA%\localpaste\db`) | Database directory; [storage.md](storage.md#backend-and-file-layout) lists the files it holds |
 | `PORT` | `38411` | Listener port used when `BIND` is unset |
-| `BIND` | unset | Listen address as `host:port`; takes precedence over `PORT`. A non-loopback address requires `ALLOW_PUBLIC_ACCESS=1` |
+| `BIND` | unset | Listen address as `IP:port`, such as `127.0.0.1:3055` or `[::1]:3055` (hostnames are rejected); takes precedence over `PORT`. A non-loopback address requires `ALLOW_PUBLIC_ACCESS=1` |
 | `ALLOW_PUBLIC_ACCESS` | disabled | Allow a non-loopback `BIND` and CORS from any origin; see [Public Exposure](#public-exposure-not-recommended) |
 | `MAX_PASTE_SIZE` | `10485760` | Maximum paste size in bytes, for API and GUI writes |
 | `AUTO_SAVE_INTERVAL` | `2000` | GUI autosave delay in milliseconds |
@@ -25,12 +25,15 @@ The headless server (`localpaste`) and the API embedded in the GUI read the same
 | `LOCALPASTE_VERSION_INTERVAL_SECS` | `300` | Minimum seconds between saved history snapshots of a paste (`>= 1`) |
 | `LOCALPASTE_VERSION_RETENTION_LIMIT` | `200` | Maximum history snapshots kept per paste (`1..=1000`) |
 | `LOCALPASTE_PASTE_VERSION_INTERVAL_SECS` | unset | Legacy fallback for `LOCALPASTE_VERSION_INTERVAL_SECS` |
+| `MAGIKA_FORCE_CPU` | `true` | With Magika enabled, run ONNX Runtime on the CPU execution provider; a falsey value (`0`, `false`, `no`, `off`) allows the runtime's provider defaults |
+| `RUST_LOG` | server `localpaste=info,tower_http=warn`, GUI `localpaste=warn,localpaste_gui=info` | Tracing filter |
+| `LP_SERVER` | unset | `lpaste` only: the API endpoint, skipping [discovery](cli-gui-workflows.md#connect-to-the-running-gui) |
 
-`localpaste` refuses to start when `BIND`, `PORT`, or a numeric, boolean, or version setting is malformed. [`.env.example`](../.env.example) lists the defaults.
+`localpaste` refuses to start when `BIND`, `PORT`, or a numeric, boolean, or version setting is malformed, and when `BIND` is non-loopback without `ALLOW_PUBLIC_ACCESS`. The GUI instead logs a warning and uses the default for a malformed value, and binds a non-loopback `BIND` to `127.0.0.1`. [`.env.example`](../.env.example) lists the defaults; LocalPaste reads only the process environment, not a `.env` file.
 
-`MAX_PASTE_SIZE` applies to decoded paste content. The HTTP request limit is larger, because JSON escaping can make a body several times bigger than the text it carries, but the paste size limit is still enforced on the decoded content.
+`MAX_PASTE_SIZE` applies to decoded paste content. The HTTP request limit is six times `MAX_PASTE_SIZE` plus 16 KiB, because JSON escaping can make a body several times bigger than the text it carries, capped at 256 MiB, so with a `MAX_PASTE_SIZE` above about 42 MiB, heavily escaped content can reach the request cap first.
 
-Only one process may write to a `DB_PATH` at a time; see [storage.md](storage.md#operational-expectations) for the contract and [deployment.md](deployment.md#lock-safety) for lock recovery.
+The single-writer rule for `DB_PATH` is in [storage.md](storage.md#operational-expectations), and lock recovery in [deployment.md](deployment.md#lock-safety).
 
 ## Public Exposure (Not Recommended)
 
@@ -66,7 +69,7 @@ server {
 
 ### When `ALLOW_PUBLIC_ACCESS` is needed
 
-`ALLOW_PUBLIC_ACCESS=1` is required in two cases: the server itself must accept non-loopback connections (a non-loopback `BIND`, for example when the proxy runs on another host or in a separate container network), or web pages from other origins must call the API directly from a browser. Without it, `localpaste` exits at startup when `BIND` is a non-loopback address.
+For the headless server, `ALLOW_PUBLIC_ACCESS=1` is required in two cases: the server itself must accept non-loopback connections (a non-loopback `BIND`, for example when the proxy runs on another host or in a separate container network), or web pages from other origins must call the API directly from a browser. Without it, `localpaste` exits at startup when `BIND` is a non-loopback address.
 
 > [!WARNING]
 > `ALLOW_PUBLIC_ACCESS=1` lifts the loopback-only restrictions and allows CORS from any origin. It adds no authentication.
@@ -81,6 +84,7 @@ LocalPaste is designed for trusted local environments. Its limits:
 - No HTML sanitization guarantee: paste content is preserved as written, and a client that renders it as HTML must escape it.
 - No guarantee against denial of service from a trusted local caller.
 - No rate limiting; add it at a reverse proxy if needed.
+- No `Host` header check, so the API does not itself defend against DNS rebinding, where a web page re-points its own hostname at `127.0.0.1` and then reads the API as a same-origin page.
 - No encryption at rest; use disk encryption.
 - No audit logging; diagnostic tracing can be enabled with `RUST_LOG`.
 

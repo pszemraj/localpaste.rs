@@ -2,11 +2,11 @@
 
 `lpaste` is the terminal-side companion to the desktop app. It talks to the same localhost API that the GUI exposes (the standalone server serves it too), so you can inspect, export, diff, or automate work without leaving the editor.
 
-Install `lpaste` with the `cargo install` commands in the [README](../README.md#server-and-cli). [Release archives](release-gui.md#install-a-release) contain the GUI only. The examples below assume `lpaste` is on `PATH`.
+Install `lpaste` from source with the [`cargo install` commands](../README.md#server-and-cli). The examples below assume it is on `PATH`; `lpaste --help` and `lpaste <command> --help` list every command and option.
 
 ## Connect to the running GUI
 
-By default the GUI serves its API on `127.0.0.1:38411`, or on a free port if that one is taken, and writes the address it ended up with to a `.api-addr` file in its database directory. Unless told otherwise, `lpaste` reads that file from the directory named by its own `DB_PATH` (the default location when unset) and sends a probe request to the recorded address, giving up after 250 ms. It uses the address only if the answer identifies a LocalPaste API on a loopback host. A missing, stale, or unrelated entry falls back to the default endpoint, `http://localhost:38411`. The probe's exact checks are described in [architecture.md#10-discovery-and-trust](architecture.md#10-discovery-and-trust).
+By default the GUI serves its API on `127.0.0.1:38411`, or on a free port if that one is taken, and writes the address it ended up with to a `.api-addr` file in its database directory. Unless told otherwise, `lpaste` reads that file from the directory named by its own `DB_PATH` (the default location when unset) and sends a short probe request to the recorded address. It uses the address only if the answer identifies a LocalPaste API on a loopback host. A missing, stale, or unrelated entry falls back to the default endpoint, `http://127.0.0.1:38411`. The probe's exact checks are described in [architecture.md#10-discovery-and-trust](architecture.md#10-discovery-and-trust).
 
 So when the GUI runs on the default `DB_PATH`, `lpaste` works without extra flags. If the GUI was started with a different `DB_PATH`, set the same value in the shell that runs `lpaste`:
 
@@ -45,14 +45,14 @@ lpaste search-meta validation
 lpaste search-meta cublaslt
 ```
 
-Search inherits the server's default case behavior, including `LOCALPASTE_SEARCH_CASE_SENSITIVE`. Use an explicit flag when a script needs deterministic matching:
+`search` and `search-meta` print metadata rows, at most 50. They inherit the server's default case behavior, set by [`LOCALPASTE_SEARCH_CASE_SENSITIVE`](security.md#environment-variables). Use an explicit flag when a script needs deterministic matching:
 
 ```bash
 lpaste search --case-sensitive Needle
 lpaste search-meta --case-insensitive needle
 ```
 
-Fetch the current content of a paste into a local file:
+Fetch the current content of a paste into a local file. `get` prints the content followed by a newline; for a byte-exact copy, take the `content` field from `lpaste --json get`.
 
 ```bash
 lpaste get "<paste-id>" > recovered.txt
@@ -89,7 +89,7 @@ Reset a paste to a stored historical version:
 lpaste reset-hard "<paste-id>" "<version-id-ms>" --yes
 ```
 
-`reset-hard` is destructive: it rewrites the paste to the chosen snapshot and discards newer history for that paste.
+`reset-hard` is destructive: it rewrites the paste to the chosen snapshot, discards newer history, and keeps no copy of the replaced content ([Version History Storage](storage.md#version-history-storage)).
 
 ## Scripted export of recent pastes
 

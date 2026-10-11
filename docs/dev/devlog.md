@@ -1,34 +1,13 @@
 # Development Guide
 
-Build and run the workspace binaries with the commands below. See [runtime architecture](../architecture.md) for process topology.
+[Architecture](../architecture.md#1-system-at-a-glance) maps each crate to its binaries and runtime role.
 
-## Binary Map
-
-| Crate under `crates/` | Binaries | Purpose |
-| --- | --- | --- |
-| `localpaste_core` | Library only | Config, models, storage, shared operations |
-| `localpaste_gui` | `localpaste-gui` | Native desktop app |
-| `localpaste_server` | `localpaste` | Headless HTTP API |
-| `localpaste_cli` | `lpaste` | HTTP client and endpoint discovery |
-| `localpaste_tools` | `generate-test-data`, `check-loc`, `check-ast-dupes` | Fixtures, line-count policy, duplicate/dead-symbol audit |
-
-## Build Matrix
+## Build And Run
 
 ```bash
 # Build all workspace binaries.
 cargo build --workspace --release
-```
 
-For service and shell use, install the server and CLI into Cargo's binary directory:
-
-```bash
-cargo install --path crates/localpaste_server --bin localpaste
-cargo install --path crates/localpaste_cli --bin lpaste
-```
-
-## Run Matrix
-
-```bash
 # GUI
 cargo run -p localpaste_gui --bin localpaste-gui
 
@@ -39,9 +18,9 @@ cargo run -p localpaste_server --bin localpaste --release
 ./target/release/lpaste --help
 ```
 
-For editor-mode flags and tracing env vars, see [gui-notes.md](gui-notes.md).
+A build started without `DB_PATH` opens the default store, the same one an installed LocalPaste uses, and a pre-stable build may run [startup repair](../storage.md#startup-repair) on it. For experiments, export a temporary `DB_PATH`, an unused `PORT`, and a matching `LP_SERVER` as the [smoke test](#runtime-smoke-test-server-cli) does.
 
-For repeatable GUI perf validation, see [gui-perf-protocol.md](gui-perf-protocol.md).
+The `cargo install` commands for the server and CLI are in the [README](../../README.md#server-and-cli). GUI runtime flags and tracing variables are in [gui-notes.md](gui-notes.md#runtime-flags), and repeatable perf validation is in [gui-perf-protocol.md](gui-perf-protocol.md).
 
 ## Validation Loop
 
@@ -60,7 +39,7 @@ cargo check --workspace --all-targets --all-features
 # 4) LoC policy check
 cargo run -p localpaste_tools --bin check-loc -- --max-lines 1000 --warn-lines 900
 
-# 5) duplicate/dead-symbol audit
+# 5) duplicate/dead-symbol audit (reports findings; --fail-on-findings makes them fail the run)
 cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
 
 # For broad refactors or test-suite consolidation, include tests in the audit.
@@ -72,7 +51,7 @@ cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates --include-t
 # 7) full build
 cargo build --workspace --all-targets --all-features
 
-# 8) docs contract check
+# 8) docs contract check (rustdoc-checker is a separate tool, not part of this workspace)
 rustdoc-checker crates --strict
 ```
 
@@ -80,14 +59,13 @@ After these checks, run the [server/CLI smoke test](#runtime-smoke-test-server-c
 
 Documentation-only changes need checks for the content changed, not the full Rust loop.
 
-For changes to `.github/workflows/*`, `.github/scripts/*`, or GUI packaging, run these checks locally. See [workflow triggers](release-pipeline.md#workflow-triggers) for automated runs.
+For changes to `.github/workflows/*` or `.github/scripts/*`, run these checks locally; [Workflows](release-pipeline.md#workflows) lists when CI runs them. They do not exercise `packaging/`, so rehearse packaging changes with a manual `release-gui` or `verify-gui-packaging` run.
 
 ```bash
 # release helper regression tests
 python -m unittest discover -s .github/scripts -p 'test_*.py'
 
 # workflow YAML + shell/release invariant validation
-# requires yamllint in PATH
 python .github/scripts/validate_workflow.py .github/workflows
 ```
 
@@ -108,9 +86,12 @@ export LP_SERVER="http://127.0.0.1:$PORT"
 cargo build -p localpaste_server --bin localpaste
 cargo build -p localpaste_cli --bin lpaste
 
+# Wait until the server answers; fail if it exits first.
+wait_ready() { until ./target/debug/lpaste list --limit 1 >/dev/null 2>&1; do kill -0 "$SERVER_PID" || return 1; sleep 0.2; done; }
+
 ./target/debug/localpaste &
 SERVER_PID=$!
-sleep 1
+wait_ready
 
 echo "smoke hello" | ./target/debug/lpaste new --name "smoke-test"
 ID="$(./target/debug/lpaste list --limit 1 | awk '{print $1}')"
@@ -122,10 +103,10 @@ kill "$SERVER_PID"
 wait "$SERVER_PID" || true
 ./target/debug/localpaste &
 SERVER_PID=$!
-sleep 1
+wait_ready
 ./target/debug/lpaste get "$ID"
 ./target/debug/lpaste delete "$ID"
-! ./target/debug/lpaste get "$ID"
+if ./target/debug/lpaste get "$ID" >/dev/null 2>&1; then echo "deleted paste still exists" >&2; fi
 ./target/debug/lpaste list --limit 10
 
 kill "$SERVER_PID"
@@ -142,7 +123,7 @@ cargo build -p localpaste_server --bin localpaste
 cargo build -p localpaste_cli --bin lpaste
 
 $proc = Start-Process -FilePath .\target\debug\localpaste.exe -WindowStyle Hidden -PassThru
-Start-Sleep -Seconds 1
+do { Start-Sleep -Milliseconds 200; .\target\debug\lpaste.exe list --limit 1 *> $null } until ($LASTEXITCODE -eq 0 -or $proc.HasExited)
 
 "smoke hello" | .\target\debug\lpaste.exe new --name "smoke-test"
 $id = (.\target\debug\lpaste.exe list --limit 1) -split ' ' | Select-Object -First 1
@@ -152,7 +133,7 @@ $id = (.\target\debug\lpaste.exe list --limit 1) -split ' ' | Select-Object -Fir
 # Restart persistence check
 Stop-Process -Id $proc.Id
 $proc = Start-Process -FilePath .\target\debug\localpaste.exe -WindowStyle Hidden -PassThru
-Start-Sleep -Seconds 1
+do { Start-Sleep -Milliseconds 200; .\target\debug\lpaste.exe list --limit 1 *> $null } until ($LASTEXITCODE -eq 0 -or $proc.HasExited)
 .\target\debug\lpaste.exe get $id
 .\target\debug\lpaste.exe delete $id
 .\target\debug\lpaste.exe get $id; if ($LASTEXITCODE -eq 0) { throw "deleted paste still exists" }
@@ -161,7 +142,7 @@ Start-Sleep -Seconds 1
 Stop-Process -Id $proc.Id
 ```
 
-The isolated test database remains under `target/` for inspection. The final list must exclude the deleted paste. Use an unused `PORT` if 3055 is occupied.
+The isolated test database remains under `target/` for inspection. The final list must exclude the deleted paste. Use an unused `PORT` if 3055 is occupied. The binary paths assume Cargo's default `target/` directory; if a Cargo config redirects it, use `target_directory` from `cargo metadata --no-deps --format-version 1`.
 
 ## Tooling CLI Contracts
 
@@ -170,11 +151,11 @@ The isolated test database remains under `target/` for inspection. The final lis
 ### `generate-test-data`
 
 - Database target policy:
-  - requires explicit database intent via `--db-path` or `DB_PATH`
-  - platform-default `DB_PATH` use is rejected unless `--allow-default-db` is supplied
+  - requires explicit database intent via `--db-path` or `DB_PATH`; with neither set, it refuses to fall back to the platform default unless `--allow-default-db` is supplied
+  - an explicit path that names the default store is not detected, so never point it at a real store
   - blank `DB_PATH` is rejected
 - Destructive clear policy:
-  - `--clear` requires `--yes`
+  - `--clear` and `--yes` must be passed together
 - Side effects:
   - opens the chosen database path as a writer and mutates paste/folder data
 
