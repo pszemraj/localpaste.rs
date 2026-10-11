@@ -246,6 +246,10 @@ impl LocalPasteApp {
         if !self.discovery_open() || !discovery_escape(event) {
             return false;
         }
+        // An open popup, such as the picker's scope menu, closes first.
+        if egui::Popup::is_any_open(ctx) {
+            return false;
+        }
         if self.picker_delete_transition_active() {
             ctx.input_mut(|input| {
                 input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);

@@ -294,6 +294,71 @@ fn palette_actions_keep_their_focus_destination_and_picker_cancel_returns_to_ope
 }
 
 #[test]
+fn open_picker_scope_menu_owns_arrows_enter_and_escape() {
+    for closing_key in [egui::Key::Enter, egui::Key::Escape] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        harness.app.open_paste_picker();
+        harness.app.all_pastes = vec![
+            test_summary("alpha", "First paste", None, 1),
+            test_summary("beta", "Second paste", None, 1),
+        ];
+        let mut output = frame(&mut harness.app, &ctx, Vec::new());
+        for _ in 0..4 {
+            output = frame(&mut harness.app, &ctx, Vec::new());
+        }
+        // The picker's scope menu button draws above the sidebar's.
+        let scope_button = label_rects(&output, "All fields", |_| true)
+            .last()
+            .expect("picker scope menu button")
+            .center();
+        for pressed in [true, false] {
+            frame(
+                &mut harness.app,
+                &ctx,
+                primary_pointer_events(scope_button, pressed),
+            );
+        }
+        assert!(egui::Popup::is_any_open(&ctx), "the scope menu is open");
+
+        frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        assert_eq!(harness.app.paste_picker_scope, SearchScope::Title);
+        assert_eq!(
+            harness.app.paste_picker_selected, 0,
+            "Down moves within the menu, not the results"
+        );
+
+        frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(closing_key, egui::Modifiers::NONE)],
+        );
+        assert!(
+            !egui::Popup::is_any_open(&ctx),
+            "{closing_key:?} closes the menu"
+        );
+        assert!(
+            harness.app.paste_picker_open,
+            "{closing_key:?} leaves the picker open"
+        );
+        assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+        assert_eq!(harness.app.paste_picker_scope, SearchScope::Title);
+
+        // With the menu closed, the keys reach the results again.
+        frame(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+        );
+        assert_eq!(harness.app.paste_picker_selected, 1);
+    }
+}
+
+#[test]
 fn failed_picker_search_stays_visible_until_explicit_retry() {
     let (mut harness, _events) = make_app_with_event_tx();
     let ctx = egui::Context::default();
