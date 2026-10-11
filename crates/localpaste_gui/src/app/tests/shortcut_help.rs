@@ -511,6 +511,7 @@ struct RenderedHelpRow {
     key: egui::Rect,
     key_lines: usize,
     description: egui::Rect,
+    description_lines: usize,
 }
 
 /// The help rows painted in `output`, in paint order.
@@ -549,6 +550,7 @@ fn rendered_help_rows(
                 key: egui::Rect::from_min_size(key.pos, key.galley.size()),
                 key_lines: key.galley.rows.len(),
                 description: egui::Rect::from_min_size(description.pos, description.galley.size()),
+                description_lines: description.galley.rows.len(),
             })
         })
         .collect()
@@ -559,9 +561,9 @@ const HELP_DISPLAY_SCALES: [f32; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
 
 /// Renders help in the app's default-size window and checks every row it lists.
 ///
-/// Each key label must be one line, its description must start level with it,
-/// and each row must keep the row gap below the previous one, wrapped
-/// description included. The list is taller than its scroll area, so the check
+/// Each key label and its description must be one line, the description must
+/// start level with the key, and each row must keep the row gap below the
+/// previous one. The list is taller than its scroll area, so the check
 /// wheels through it until every key label has been drawn.
 ///
 /// # Arguments
@@ -638,6 +640,11 @@ fn check_help_rows_at_default_window_size(
                     row.key_lines, 1,
                     "{what}: {} should not wrap in the key column ({:?})",
                     row.label, row.key
+                );
+                assert_eq!(
+                    row.description_lines, 1,
+                    "{what}: the {} description should fit on one line ({:?})",
+                    row.label, row.description
                 );
                 assert!(
                     (row.description.top() - row.key.top()).abs() <= 0.5,

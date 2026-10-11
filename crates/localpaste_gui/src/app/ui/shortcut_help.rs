@@ -324,10 +324,10 @@ impl LocalPasteApp {
         egui::Window::new("Keyboard Shortcuts")
             .open(&mut open)
             .resizable(false)
-            .default_width(600.0)
+            .default_width(HELP_WINDOW_WIDTH)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show_modal(ctx, |ui| {
-                ui.set_width(600.0);
+                ui.set_width(HELP_WINDOW_WIDTH);
                 let previous_query = self.shortcut_help_query.clone();
                 ui.horizontal(|ui| {
                     let focus_requested = self.shortcut_help_focus_requested
@@ -410,6 +410,10 @@ fn discovery_escape(event: &egui::Event) -> bool {
     } if modifiers.is_none())
 }
 
+/// Width of the help window, wide enough that every description fits on one
+/// line beside the widest key label while staying inside the 900 pt minimum
+/// app window.
+const HELP_WINDOW_WIDTH: f32 = 640.0;
 /// Gap between the key and description columns.
 const HELP_COLUMN_GAP: f32 = 16.0;
 /// Gap between one row's taller cell and the next row.
