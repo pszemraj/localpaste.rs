@@ -15,6 +15,31 @@ fn click_field(app: &mut LocalPasteApp, ctx: &egui::Context, id: &str) {
     assert!(field_focused(ctx, id), "{id} has focus after a click");
 }
 
+/// Clicks the field `id` with `typed` in the same input batch, as a fast typist's
+/// first keystroke can arrive with the click that focuses the field.
+fn click_field_typing(app: &mut LocalPasteApp, ctx: &egui::Context, id: &str, typed: &str) {
+    let _ = render_at(app, ctx, LANGUAGE_COMBO_FRAME_WIDTH);
+    let center = ctx
+        .read_response(egui::Id::new(id))
+        .unwrap_or_else(|| panic!("{id} is rendered"))
+        .rect
+        .center();
+    let mut events = primary_pointer_events(center, true);
+    events.push(egui::Event::Text(typed.to_string()));
+    for events in [events, primary_pointer_events(center, false)] {
+        let _ = run_full_update_with_input(
+            app,
+            ctx,
+            egui::RawInput {
+                events,
+                ..input_at(LANGUAGE_COMBO_FRAME_WIDTH)
+            },
+        );
+    }
+    let _ = render_at(app, ctx, LANGUAGE_COMBO_FRAME_WIDTH);
+    assert!(field_focused(ctx, id), "{id} has focus after a click");
+}
+
 fn field_focused(ctx: &egui::Context, id: &str) -> bool {
     ctx.memory(|memory| memory.has_focus(egui::Id::new(id)))
 }
@@ -115,17 +140,26 @@ fn escape_in_the_title_keeps_earlier_metadata_edits_staged() {
 }
 
 #[test]
-fn escape_in_drawer_name_and_tags_restores_them() {
-    for (id, typed) in [
-        (PROPERTIES_NAME_INPUT_ID, "Z"),
-        (PROPERTIES_TAGS_INPUT_ID, "x"),
+fn escape_in_title_name_and_tags_restores_them() {
+    for (id, typed, same_batch) in [
+        (TITLE_INPUT_ID, "Z", false),
+        (PROPERTIES_NAME_INPUT_ID, "Z", false),
+        (PROPERTIES_TAGS_INPUT_ID, "x", false),
+        // Typing that arrives with the focusing click is part of the edit Escape cancels.
+        (TITLE_INPUT_ID, "Z", true),
+        (PROPERTIES_NAME_INPUT_ID, "Z", true),
+        (PROPERTIES_TAGS_INPUT_ID, "x", true),
     ] {
         let mut harness = make_app();
         let app = &mut harness.app;
         let ctx = egui::Context::default();
         app.properties_drawer_open = true;
-        click_field(app, &ctx, id);
-        let _ = type_keys(app, &ctx, typed, KEYSTROKE_GAP);
+        if same_batch {
+            click_field_typing(app, &ctx, id, typed);
+        } else {
+            click_field(app, &ctx, id);
+            let _ = type_keys(app, &ctx, typed, KEYSTROKE_GAP);
+        }
         assert!(app.metadata_dirty, "{id}");
         assert!(
             app.edit_name == "AlphaZ" || app.edit_tags == "x",

@@ -409,7 +409,8 @@ impl LocalPasteApp {
         style: impl for<'t> FnOnce(egui::TextEdit<'t>) -> egui::TextEdit<'t>,
     ) -> (egui::Response, bool) {
         let draft_id = id.with("focus_draft");
-        let cancelled = ui.memory(|memory| memory.had_focus_last_frame(id))
+        let had_focus = ui.memory(|memory| memory.had_focus_last_frame(id));
+        let cancelled = had_focus
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         if cancelled {
             let restored = ui
@@ -422,13 +423,16 @@ impl LocalPasteApp {
                 self.refresh_metadata_dirty();
             }
         }
+        // The field applies this frame's typing before it reports gaining focus,
+        // so the value Escape returns to is read before the field runs.
+        let before_input = (!had_focus).then(|| self.metadata_text_mut(field).clone());
         let response = ui.add(style(
             egui::TextEdit::singleline(self.metadata_text_mut(field)).id(id),
         ));
-        if response.gained_focus() {
+        if let Some(value) = before_input.filter(|_| response.gained_focus()) {
             let draft = FieldDraft {
                 paste_id: self.selected_id.clone(),
-                value: self.metadata_text_mut(field).clone(),
+                value,
             };
             ui.data_mut(|data| data.insert_temp(draft_id, draft));
         }
