@@ -195,6 +195,7 @@ GUI state belongs to the database it was saved with: the open paste and filters 
   - the selected paste is temporarily read-only until reset success/error arrives.
 - Diff preview generation runs on the backend worker against frozen left/right text snapshots; the UI only renders cached results.
 - Removed and added rows in the line diff sit on full-width red and green tints (`COLOR_DIFF_REMOVED_BG`, `COLOR_DIFF_ADDED_BG` in [ui-palette.md](ui-palette.md)) that cover the row gap, so a run of changes reads as one band.
+- Each diff row is one unwrapped line: a line wider than the preview ends in an ellipsis instead of wrapping or scrolling sideways, and only its first `MAX_RENDER_CHARS_PER_LINE` characters are laid out. When the two sides together exceed `MAX_DIFF_INPUT_BYTES`, or the diff has more than `MAX_INLINE_DIFF_LINES` rows, the window shows a capped-preview message with the sizes instead of rows.
 - Reset and snapshot loading clear their in-flight UI state only for matching version-load/reset failures so unrelated backend errors cannot tear down the modal context.
 
 ## Language/Highlight QA (Magika + Fallback)
