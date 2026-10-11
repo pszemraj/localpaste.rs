@@ -5,7 +5,10 @@ Invoked by nav_probe_run_macos.sh. API calls only create fixtures and read back
 state; all editing, selection, focus transfer and pasting use native events.
 """
 
+from __future__ import annotations
+
 import argparse
+from collections.abc import Callable
 import json
 import os
 from pathlib import Path
@@ -15,11 +18,14 @@ import socket
 import subprocess
 import tempfile
 import time
+from types import FrameType
+from typing import Any
 import urllib.error
 import urllib.request
 
 
-def wait_for(predicate, description, timeout=15):
+def wait_for(predicate: Callable[[], Any], description: str, timeout: float = 15) -> Any:
+    """Poll predicate until it returns a truthy value, or raise RuntimeError after timeout."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         value = predicate()
@@ -29,8 +35,10 @@ def wait_for(predicate, description, timeout=15):
     raise RuntimeError(f"timed out waiting for {description}")
 
 
-def main():
-    def terminate(signum, _frame):
+def main() -> None:
+    """Run one native paste scenario against an isolated GUI and append its result to the log."""
+    def terminate(signum: int, _frame: FrameType | None) -> None:
+        """Exit with 128 plus the signal number so the cleanup in finally still runs."""
         raise SystemExit(128 + signum)
     signal.signal(signal.SIGTERM, terminate)
     parser = argparse.ArgumentParser(description=__doc__)
@@ -64,28 +72,33 @@ def main():
     backup = scratch / "clipboard.json"
     stdout_path = args.log.parent / f"{args.scenario}.stdout.log"
 
-    def driver(command, *rest, pid=None):
+    def driver(command: str, *rest: object, pid: int | None = None) -> str:
+        """Run a native driver subcommand, optionally targeting a pid, and return its stdout."""
         command_args = [str(args.driver), command]
         if pid is not None:
             command_args += ["--pid", str(pid)]
         return subprocess.check_output(command_args + list(map(str, rest)), env=env, text=True)
 
-    def key(code, *modifiers, pid=None):
+    def key(code: int, *modifiers: str, pid: int | None = None) -> None:
+        """Press a native key chord in the target process (default: the GUI) and pause briefly."""
         driver("key", "--key-code", code, "--modifiers", ",".join(modifiers),
                "--key-delay-ms", args.key_delay_ms, pid=pid or process.pid)
         time.sleep(0.12)
 
-    def native_text(text, pid=None):
+    def native_text(text: str, pid: int | None = None) -> None:
+        """Type text natively into the target process (default: the GUI) and pause briefly."""
         driver("type", "--text", text, pid=pid or process.pid)
         time.sleep(0.2)
 
-    def api(path="/api/pastes", payload=None):
+    def api(path: str = "/api/pastes", payload: dict[str, Any] | None = None) -> Any:
+        """Call the isolated GUI API (POST when payload is given) and return the decoded JSON."""
         data = json.dumps(payload).encode() if payload is not None else None
         request = urllib.request.Request(endpoint + path, data=data, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=2) as response:
             return json.load(response)
 
-    def ready():
+    def ready() -> bool:
+        """Return whether the GUI API answers, raising if the GUI process has already exited."""
         if process.poll() is not None:
             raise RuntimeError("GUI exited before API readiness")
         try:
@@ -94,10 +107,16 @@ def main():
         except (OSError, urllib.error.URLError):
             return False
 
-    def all_pastes():
+    def all_pastes() -> list[Any]:
+        """Fetch the full record of every stored paste through the API."""
         return [api("/api/paste/" + row["id"]) for row in api()]
 
-    def start(restart=False, clear_selection=False):
+    def start(restart: bool = False, clear_selection: bool = False) -> None:
+        """Launch the GUI on the isolated database and wait for its API and native window.
+
+        restart logs under the scenario id suffixed with __restart, and clear_selection starts the
+        GUI with no paste selected.
+        """
         nonlocal process
         launch_env = dict(env)
         if restart:
@@ -107,13 +126,15 @@ def main():
         with stdout_path.open("ab") as stdout:
             process = subprocess.Popen([str(args.exe)], env=launch_env, stdout=stdout, stderr=stdout)
         wait_for(ready, "isolated GUI API")
-        def native_ready():
+        def native_ready() -> bool:
+            """Return whether the native driver can activate the GUI window."""
             return subprocess.run([str(args.driver), "activate", "--pid", str(process.pid)],
                                   env=env, capture_output=True).returncode == 0
         wait_for(native_ready, "native window activation")
         time.sleep(0.5)
 
-    def stop():
+    def stop() -> None:
+        """Terminate the GUI process if one is running and wait for it to exit."""
         nonlocal process
         if process is not None:
             if process.poll() is None:
@@ -121,7 +142,8 @@ def main():
             process.wait(timeout=10)
             process = None
 
-    def frames():
+    def frames() -> list[dict[str, Any]]:
+        """Return the nav_probe_frame records logged for this scenario, skipping partial lines."""
         if not args.log.exists():
             return []
         records = []
@@ -134,13 +156,16 @@ def main():
                 records.append(frame)
         return records
 
-    def snapshot():
+    def snapshot() -> list[dict[str, Any]]:
+        """Return the native accessibility snapshot rows of the GUI window."""
         return json.loads(driver("snapshot", pid=process.pid))
 
-    def latest():
+    def latest() -> dict[str, Any]:
+        """Return the most recent logged frame for this scenario."""
         return frames()[-1]
 
-    def capture_result(result):
+    def capture_result(result: dict[str, Any]) -> None:
+        """Under --capture, write result for a screenshot and wait for the resume marker."""
         if not args.capture:
             return
         capture = args.log.with_suffix(".capture.json")
@@ -260,7 +285,8 @@ def main():
         start(restart=True)
         restored = all_pastes()
         # Compare every field except timestamps, which are not content semantics.
-        def stable(items):
+        def stable(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            """Return items sorted by id with the created_at and updated_at timestamps removed."""
             return sorted([{k: v for k, v in item.items() if k not in ("updated_at", "created_at")} for item in items], key=lambda x: x["id"])
         result["restart_equal"] = stable(rows) == stable(restored)
         observed.update(event="nav_probe_paste_result", paste=result)
