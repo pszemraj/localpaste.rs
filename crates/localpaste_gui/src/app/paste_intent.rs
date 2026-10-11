@@ -424,6 +424,8 @@ impl LocalPasteApp {
             self.create_new_paste_with_content(text);
             return true;
         }
+        // A shortcut that does nothing visible would read as a broken paste.
+        self.notify("Clipboard holds only whitespace; no paste created.");
         false
     }
 

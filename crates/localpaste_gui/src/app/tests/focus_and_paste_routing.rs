@@ -372,6 +372,26 @@ fn clipboard_create_policy_distinguishes_explicit_and_global_shortcuts() {
 }
 
 #[test]
+fn unfocused_whitespace_paste_says_why_nothing_was_created() {
+    let mut harness = make_app();
+    assert!(!harness.app.maybe_route_implicit_global_clipboard_create(
+        Some(" \t\n ".to_string()),
+        false,
+        false,
+        false,
+    ));
+    assert!(harness.cmd_rx.try_recv().is_err(), "no paste is created");
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Clipboard holds only whitespace; no paste created.")
+    );
+}
+
+#[test]
 fn merge_pasted_text_prefers_fuller_duplicate_payload() {
     let full_payload = "def sample():\n\treturn foobar";
     let short_payload = "def sample():\n\treturn";
