@@ -158,7 +158,9 @@ def main():
         # Refresh through the picker and open the actual stored body.
         key(40, "command", "shift")
         native_text(original["name"])
-        wait_for(lambda: any(row.get("title") == original["name"] for row in snapshot()), "picker fixture result")
+        # A picker row's accessible title joins the paste name and its language label.
+        fixture_row = f'{original["name"]} markdown'
+        wait_for(lambda: any(row.get("title") == fixture_row for row in snapshot()), "picker fixture result")
         key(36)
         wait_for(lambda: latest().get("focus", {}).get("virtual_editor"), "editor focus")
         key(126, "command")
