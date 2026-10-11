@@ -18,11 +18,8 @@ pub(crate) const DELETE_UNDO_LIMIT: usize = 8;
 /// Commands issued by the UI thread for the backend worker to execute.
 #[derive(Debug)]
 pub enum CoreCmd {
-    /// Fetch a snapshot of the most recent pastes, capped by `limit`.
-    ListPastes {
-        limit: usize,
-        folder_id: Option<String>,
-    },
+    /// Fetch metadata for every paste, newest first, optionally in one folder.
+    ListPastes { folder_id: Option<String> },
     /// Search pastes with optional folder/language filters.
     SearchPastes {
         collection: SidebarCollection,

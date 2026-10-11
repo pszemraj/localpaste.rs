@@ -21,7 +21,7 @@ use crate::{
     naming,
     validation::ensure_paste_content_size,
 };
-use redb::{ReadTransaction, ReadableDatabase, ReadableTable};
+use redb::{ReadTransaction, ReadableDatabase, ReadableTable, ReadableTableMetadata};
 use std::sync::Arc;
 
 use self::helpers::{
@@ -672,11 +672,11 @@ impl PasteDb {
     /// List paste metadata using the recency index.
     ///
     /// # Arguments
-    /// - `limit`: Maximum rows to return.
+    /// - `limit`: Maximum rows to return; `usize::MAX` lists every row.
     /// - `folder_id`: Optional folder filter.
     ///
     /// # Returns
-    /// Up to `limit` metadata rows in index order.
+    /// Up to `limit` metadata rows in index order, newest first.
     ///
     /// # Errors
     /// Returns an error when storage access or deserialization fails.
@@ -693,7 +693,9 @@ impl PasteDb {
         let updated_table = read_txn.open_table(PASTES_BY_UPDATED)?;
         let meta_table = read_txn.open_table(PASTES_META)?;
 
-        let mut metas = Vec::with_capacity(limit);
+        // The index length bounds the allocation, so an unbounded `limit` is safe.
+        let indexed = usize::try_from(updated_table.len()?).unwrap_or(usize::MAX);
+        let mut metas = Vec::with_capacity(limit.min(indexed));
         for item in updated_table.iter()? {
             let (key, _) = item?;
             let (_, paste_id) = key.value();

@@ -62,13 +62,10 @@ fn worker_cache_separates_scopes_and_searches_beyond_the_loaded_list() {
     let backend = spawn_backend(db, 10 * 1024 * 1024);
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 1,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .unwrap();
     assert!(
-        matches!(recv_event(&backend.evt_rx), CoreEvent::PasteList { items } if items.len() == 1)
+        matches!(recv_event(&backend.evt_rx), CoreEvent::PasteList { items } if items.len() == 3)
     );
     for (scope, expected) in [
         (SearchScope::Title, vec![&title.id]),

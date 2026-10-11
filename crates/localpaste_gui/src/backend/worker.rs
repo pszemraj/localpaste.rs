@@ -260,8 +260,8 @@ fn send_error(evt_tx: &Sender<CoreEvent>, source: CoreErrorSource, message: Stri
 
 fn dispatch_command(state: &mut WorkerState, cmd: CoreCmd) -> bool {
     match cmd {
-        CoreCmd::ListPastes { limit, folder_id } => {
-            query::handle_list_pastes(state, limit, folder_id);
+        CoreCmd::ListPastes { folder_id } => {
+            query::handle_list_pastes(state, folder_id);
             true
         }
         CoreCmd::SearchPastes {

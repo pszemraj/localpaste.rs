@@ -11,7 +11,6 @@ use tracing::{error, info};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ListCacheKey {
-    limit: usize,
     folder_id: Option<String>,
 }
 
@@ -316,16 +315,14 @@ pub(super) enum SearchRoute {
     Palette,
 }
 
-/// Loads paste metadata list results, using cache when the key is still fresh.
+/// Loads metadata for every paste, using cache when the key is still fresh.
 ///
 /// # Arguments
 /// - `state`: Worker state containing db/cache/event handles.
-/// - `limit`: Maximum number of rows to return.
 /// - `folder_id`: Optional folder filter.
-pub(super) fn handle_list_pastes(state: &mut WorkerState, limit: usize, folder_id: Option<String>) {
+pub(super) fn handle_list_pastes(state: &mut WorkerState, folder_id: Option<String>) {
     let started = Instant::now();
     let key = ListCacheKey {
-        limit,
         folder_id: folder_id.clone(),
     };
     if let Some(items) = state.query_cache.list.fresh_items(&key) {
@@ -343,7 +340,9 @@ pub(super) fn handle_list_pastes(state: &mut WorkerState, limit: usize, folder_i
     }
 
     state.query_cache.list_misses = state.query_cache.list_misses.saturating_add(1);
-    match state.db.pastes.list_meta(limit, folder_id) {
+    // Metadata only, read through the recency index: no bodies, and less work
+    // than a metadata-scope search, which also visits every row.
+    match state.db.pastes.list_meta(usize::MAX, folder_id) {
         Ok(metas) => {
             let items: Vec<PasteSummary> = metas.iter().map(PasteSummary::from_meta).collect();
             state.query_cache.list.store(key, items.clone());

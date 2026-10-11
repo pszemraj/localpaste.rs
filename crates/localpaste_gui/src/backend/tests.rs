@@ -171,10 +171,7 @@ fn backend_lists_pastes() {
     let backend = spawn_backend(db, 10 * 1024 * 1024);
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 10,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("send list");
 
     match recv_event(&backend.evt_rx) {
@@ -199,10 +196,7 @@ fn backend_list_cache_refreshes_after_external_update() {
     let backend = spawn_backend(db, 10 * 1024 * 1024);
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 10,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("send initial list");
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteList { items } => assert_eq!(items.len(), 1),
@@ -222,10 +216,7 @@ fn backend_list_cache_refreshes_after_external_update() {
 
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 10,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("send refreshed list");
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteList { items } => {

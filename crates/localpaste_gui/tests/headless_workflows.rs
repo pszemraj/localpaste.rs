@@ -33,10 +33,7 @@ fn api_updates_are_visible_to_backend_list() {
     let backend = env.spawn_backend();
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 10,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("send list");
 
     match recv_event(&backend.evt_rx) {
@@ -666,14 +663,11 @@ fn list_and_search_latency_stay_within_reasonable_headless_budget() {
     let list_start = Instant::now();
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 512,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("send list");
     let list_elapsed = list_start.elapsed();
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteList { items } => assert_eq!(items.len(), 512),
+        CoreEvent::PasteList { items } => assert_eq!(items.len(), 1500, "every paste is listed"),
         other => panic!("unexpected event: {:?}", other),
     }
 

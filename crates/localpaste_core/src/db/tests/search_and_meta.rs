@@ -31,6 +31,11 @@ fn paste_list_and_list_meta_order_by_updated_and_honor_limit() {
     assert_eq!(metas.len(), 1);
     assert_eq!(metas[0].id, newer_id);
     assert_ne!(metas[0].id, older_id);
+
+    // The GUI lists every row this way.
+    let every = db.pastes.list_meta(usize::MAX, None).expect("list all");
+    let ids: Vec<&str> = every.iter().map(|meta| meta.id.as_str()).collect();
+    assert_eq!(ids, [newer_id.as_str(), older_id.as_str()]);
 }
 
 #[test]

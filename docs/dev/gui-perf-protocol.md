@@ -97,7 +97,7 @@ This runbook seeds a large mixed dataset via `generate-test-data`:
 - weighted content-size distribution (small/medium/large/very large)
 - language-diverse snippets plus folder/tag metadata
 
-The sidebar lists a capped number of the newest rows, so older generated pastes are reached through search ([Sidebar and filters](gui-notes.md#sidebar-and-filters)).
+The sidebar lists every paste, so this dataset also checks that scrolling and filtering a 10k-row list stay responsive ([Sidebar and filters](gui-notes.md#sidebar-and-filters)).
 
 ## Manual Verification Checklist
 

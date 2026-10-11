@@ -111,10 +111,7 @@ fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
 
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 20,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("list after race");
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteList { items } => {
@@ -266,7 +263,6 @@ fn api_folder_changes_are_visible_to_backend_state() {
     backend
         .cmd_tx
         .send(CoreCmd::ListPastes {
-            limit: 10,
             folder_id: Some(folder_id.clone()),
         })
         .expect("list folder");

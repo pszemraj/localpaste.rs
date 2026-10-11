@@ -14,9 +14,7 @@ use super::{
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use eframe::egui;
-use localpaste_core::{
-    models::paste::Paste, DEFAULT_LIST_PASTES_LIMIT, DEFAULT_SEARCH_PASTES_LIMIT,
-};
+use localpaste_core::{models::paste::Paste, DEFAULT_SEARCH_PASTES_LIMIT};
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 use tracing::warn;
@@ -222,8 +220,8 @@ impl LocalPasteApp {
                     self.ensure_selection_after_list_update();
                 } else {
                     // External API/CLI writes arrive via list refresh, not local save events.
-                    // The list is capped, so an unchanged list can hide a write to an older
-                    // match. Force one fresh backend search so active query results stay in sync.
+                    // Results also match bodies, which the list does not carry, so force one
+                    // fresh backend search to keep active query results in sync.
                     self.search_last_sent.clear();
                     self.search_last_input_at = Some(Instant::now() - SEARCH_DEBOUNCE);
                 }
@@ -580,10 +578,7 @@ impl LocalPasteApp {
     /// Requests a fresh paste list from the backend and updates query perf counters.
     pub(super) fn request_refresh(&mut self) {
         let sent_at = Instant::now();
-        if !self.dispatch_backend_cmd(CoreCmd::ListPastes {
-            limit: DEFAULT_LIST_PASTES_LIMIT,
-            folder_id: None,
-        }) {
+        if !self.dispatch_backend_cmd(CoreCmd::ListPastes { folder_id: None }) {
             self.notify("List failed: backend unavailable.");
             return;
         }
