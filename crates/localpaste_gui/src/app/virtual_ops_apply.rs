@@ -100,6 +100,7 @@ impl LocalPasteApp {
         let inserted_chars = replacement.chars().count();
         let before_cursor =
             self.clamp_virtual_cursor_for_render(self.virtual_editor_state.cursor());
+        let before_anchor = self.virtual_editor_state.anchor();
         let perf_enabled = self.perf_log_enabled;
         let rope_started = perf_enabled.then(Instant::now);
         let delta = self
@@ -155,6 +156,7 @@ impl LocalPasteApp {
                 inserted: replacement.to_string(),
                 intent,
                 before_cursor,
+                before_anchor,
                 after_cursor,
                 at: now,
             });

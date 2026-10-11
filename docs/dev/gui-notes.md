@@ -30,7 +30,7 @@ Shortcut contract:
 - `Ctrl/Cmd+Shift+K`: toggle the separate paste picker.
 - `Ctrl/Cmd+I`: toggle Properties drawer.
 - `F1`: toggle shortcut help; search descriptions or key combinations (for example `picker` or `Cmd+Shift+K`).
-- `Ctrl/Cmd+A/C/X/Z/Y`: standard virtual-editor select-all/copy/cut/undo/redo when editor owns focus.
+- `Ctrl/Cmd+A/C/X/Z/Y`: standard virtual-editor select-all/copy/cut/undo/redo when editor owns focus. Undoing a cut, a deletion, or text typed or pasted over a selection reselects the restored text in its original direction.
 - `Ctrl/Cmd+Shift+Z`: redo editor edit when editor owns focus.
 - Windows `Shift+Delete`, including `Ctrl+Shift+Delete`, cuts the editor selection; with no selection it leaves the buffer unchanged. `Ctrl+Delete` deletes the next word. The pinned [egui-winit 0.33.3 clipboard mapping](https://github.com/emilk/egui/blob/0.33.3/crates/egui-winit/src/lib.rs#L1088-L1092) consumes the shifted Delete press as a Cut event; Linux retains forward word deletion for `Ctrl+Shift+Delete`.
 - `Ctrl/Cmd+V`: pastes into the focused editor or text field. With nothing focused, the clipboard becomes a new paste and the editor takes focus with the caret after the text, so a second paste goes into it. Clipboard text that is only whitespace creates nothing, and a toast says so. Switching away from the app releases editor focus, so the first paste after switching back creates a new paste.

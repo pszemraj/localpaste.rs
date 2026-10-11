@@ -847,10 +847,22 @@ fn undo_restores_full_cursor_for_long_lines() {
     assert_eq!(harness.app.virtual_editor_buffer.to_string(), long_line);
 
     assert_eq!(harness.app.virtual_editor_state.cursor(), long_line_end);
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(0..long_line_end),
+        "undo reselects the replaced line"
+    );
 
-    let insert_result = harness
-        .app
-        .apply_virtual_commands(&ctx, &[VirtualInputCommand::InsertText("y".to_string())]);
+    let insert_result = harness.app.apply_virtual_commands(
+        &ctx,
+        &[
+            VirtualInputCommand::MoveRight {
+                select: false,
+                word: false,
+            },
+            VirtualInputCommand::InsertText("y".to_string()),
+        ],
+    );
     assert!(insert_result.changed);
     assert_eq!(
         harness.app.virtual_editor_buffer.to_string(),

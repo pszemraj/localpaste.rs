@@ -495,6 +495,46 @@ fn long_wrapped_document_reveals_jumps_eof_edits_and_distant_find_without_focus(
 }
 
 #[test]
+fn undo_reselects_text_removed_by_cut_delete_or_replacement() {
+    let ctx = egui::Context::default();
+    for command in [
+        VirtualInputCommand::Cut,
+        VirtualInputCommand::Backspace { word: false },
+        VirtualInputCommand::InsertText("z".to_string()),
+        VirtualInputCommand::Paste("pasted".to_string()),
+    ] {
+        let mut harness = make_app();
+        harness.app.reset_virtual_editor("abcdef");
+        let len = harness.app.virtual_editor_buffer.len_chars();
+        // A backward selection, as Shift+Left leaves it.
+        harness.app.virtual_editor_state.set_cursor(4, len);
+        harness.app.virtual_editor_state.move_cursor(1, len, true);
+
+        assert!(
+            harness
+                .app
+                .apply_virtual_commands(&ctx, std::slice::from_ref(&command))
+                .changed
+        );
+        assert!(
+            harness
+                .app
+                .apply_virtual_commands(&ctx, &[VirtualInputCommand::Undo])
+                .changed
+        );
+        assert_eq!(harness.app.virtual_editor_buffer.to_string(), "abcdef");
+        assert_eq!(
+            (
+                harness.app.virtual_editor_state.cursor(),
+                harness.app.virtual_editor_state.anchor()
+            ),
+            (1, Some(4)),
+            "{command:?}: undo restores the selection and its direction"
+        );
+    }
+}
+
+#[test]
 fn indentation_preserves_direction_excludes_next_line_and_is_one_undo_step() {
     for (ending, reverse) in ["\n", "\r\n", "\r", "\u{2028}", "\u{85}"]
         .into_iter()

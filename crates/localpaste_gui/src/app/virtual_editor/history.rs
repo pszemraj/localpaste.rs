@@ -42,6 +42,8 @@ pub(crate) struct RecordedEdit {
     pub(crate) inserted: String,
     pub(crate) intent: EditIntent,
     pub(crate) before_cursor: usize,
+    /// Selection anchor before the edit, so undo reselects replaced text.
+    pub(crate) before_anchor: Option<usize>,
     pub(crate) after_cursor: usize,
     pub(crate) at: Instant,
 }
@@ -116,7 +118,7 @@ impl VirtualEditorHistory {
             intent: edit.intent,
             before_cursor: edit.before_cursor,
             after_cursor: edit.after_cursor,
-            before_anchor: None,
+            before_anchor: edit.before_anchor,
             after_anchor: None,
             at: edit.at,
         };
@@ -319,6 +321,7 @@ mod tests {
                 inserted: String::new(),
                 intent,
                 before_cursor,
+                before_anchor: None,
                 after_cursor,
                 at: now + Duration::from_millis((index as u64) * 10),
             });
@@ -339,6 +342,7 @@ mod tests {
             inserted: "h".to_string(),
             intent: EditIntent::Insert,
             before_cursor: 0,
+            before_anchor: None,
             after_cursor: 1,
             at: now,
         });
@@ -348,6 +352,7 @@ mod tests {
             inserted: "i".to_string(),
             intent: EditIntent::Insert,
             before_cursor: 1,
+            before_anchor: None,
             after_cursor: 2,
             at: now + Duration::from_millis(10),
         });
@@ -367,6 +372,7 @@ mod tests {
             inserted: "XYZ".to_string(),
             intent: EditIntent::Other,
             before_cursor: 1,
+            before_anchor: None,
             after_cursor: 4,
             at: now,
         });
@@ -395,6 +401,7 @@ mod tests {
             inserted: "X".to_string(),
             intent: EditIntent::Other,
             before_cursor: 1,
+            before_anchor: None,
             after_cursor: 2,
             at: now,
         });
@@ -406,6 +413,7 @@ mod tests {
             inserted: "y".to_string(),
             intent: EditIntent::Insert,
             before_cursor: 1,
+            before_anchor: None,
             after_cursor: 2,
             at: now + Duration::from_millis(5),
         });
@@ -438,6 +446,7 @@ mod tests {
             inserted: String::new(),
             intent: EditIntent::DeleteBackward,
             before_cursor: 5,
+            before_anchor: None,
             after_cursor: 4,
             at: now,
         });
@@ -447,6 +456,7 @@ mod tests {
             inserted: String::new(),
             intent: EditIntent::DeleteBackward,
             before_cursor: 2,
+            before_anchor: None,
             after_cursor: 1,
             at: now + Duration::from_millis(10),
         });
@@ -471,6 +481,7 @@ mod tests {
                 inserted: inserted.to_string(),
                 intent: EditIntent::Other,
                 before_cursor: start,
+                before_anchor: None,
                 after_cursor: start + 1,
                 at: now + Duration::from_millis(index as u64),
             });
