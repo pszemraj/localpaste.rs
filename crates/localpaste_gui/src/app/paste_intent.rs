@@ -235,21 +235,34 @@ impl LocalPasteApp {
     /// # Arguments
     /// - `ctx`: Context used to apply the editor edit and request focus.
     pub(super) fn maybe_apply_pending_editor_paste(&mut self, ctx: &egui::Context) {
+        if self.pending_editor_paste_target_loaded() && !self.editor_shortcuts_blocked() {
+            self.apply_pending_editor_paste(ctx);
+        }
+    }
+
+    /// Drops queued `Ctrl/Cmd+Shift+V` payloads whose target lost the selection.
+    ///
+    /// # Returns
+    /// `true` when payloads remain and their target paste is loaded in the editor.
+    pub(super) fn pending_editor_paste_target_loaded(&mut self) -> bool {
         let Some(pending) = self.pending_editor_paste.as_ref() else {
-            return;
+            return false;
         };
         let target = Some(pending.id.as_str());
         if self.selected_id.as_deref() != target {
             if self.pending_selection_id.as_deref() != target {
                 self.pending_editor_paste = None;
             }
-            return;
+            return false;
         }
-        if self.selected_paste.as_ref().map(|paste| paste.id.as_str()) != target
-            || self.editor_shortcuts_blocked()
-        {
-            return;
-        }
+        self.selected_paste.as_ref().map(|paste| paste.id.as_str()) == target
+    }
+
+    /// Appends the queued payloads to the end of the loaded target paste.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context used to apply the editor edit and request focus.
+    pub(super) fn apply_pending_editor_paste(&mut self, ctx: &egui::Context) {
         let Some(pending) = self.pending_editor_paste.take() else {
             return;
         };

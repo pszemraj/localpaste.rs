@@ -266,3 +266,62 @@ fn on_exit_forces_final_dirty_snapshots_even_when_acks_never_arrive() {
         "expected shutdown to force a final metadata save without waiting for ack"
     );
 }
+
+#[test]
+fn on_exit_saves_input_accepted_while_its_paste_loads() {
+    for case in ["append", "picker text", "picker paste"] {
+        let mut harness = make_app();
+        let dir = TempDir::new().expect("temp dir");
+        let db_path = dir.path().join("db").to_string_lossy().into_owned();
+        let db = Database::new(&db_path).expect("db");
+        let mut alpha = Paste::new("existing".into(), "Alpha".into());
+        alpha.id = "alpha".into();
+        db.pastes.create(&alpha).expect("create alpha");
+        harness.app.clear_selection();
+        harness.app.backend = crate::backend::spawn_backend_with_locks_and_owner(
+            db.share().expect("share db"),
+            10 * 1024 * 1024,
+            harness.app.locks.clone(),
+            harness.app.lock_owner_id.clone(),
+        );
+        let ctx = egui::Context::default();
+
+        // No frame runs between accepting the input and exit, so the load
+        // reply is still queued when the shutdown flush starts.
+        let expected = match case {
+            "append" => {
+                harness.app.paste_into_editor(&ctx, vec!["appended".into()]);
+                "existing\nappended"
+            }
+            _ => {
+                harness.app.open_palette_selection("alpha".into());
+                let (event, expected) = if case == "picker text" {
+                    (egui::Event::Text("typed ".into()), "typed existing")
+                } else {
+                    (egui::Event::Paste("pasted ".into()), "pasted existing")
+                };
+                let mut input = egui::RawInput {
+                    events: vec![event],
+                    ..Default::default()
+                };
+                harness.app.stage_discovery_input(&ctx, &mut input);
+                assert!(
+                    input.events.is_empty(),
+                    "{case}: the opening paste holds the input"
+                );
+                expected
+            }
+        };
+        assert!(
+            harness.app.selected_paste.is_none(),
+            "{case}: the paste is still loading"
+        );
+
+        eframe::App::on_exit(&mut harness.app, None);
+        drop(harness);
+        drop(db);
+        let reopened = Database::new(&db_path).expect("reopen db");
+        let saved = reopened.pastes.get("alpha").expect("read alpha");
+        assert_eq!(saved.expect("alpha").content, expected, "{case}");
+    }
+}

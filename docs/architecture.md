@@ -133,7 +133,7 @@ Key properties:
 
 - autosave and keyboard-triggered manual saves dispatch through backend commands,
 - metadata save path is separate from content save path,
-- shutdown attempts to drain saves, enqueue final dirty snapshots, and wait for the backend to finish; failures and timeouts are logged, so this is best effort.
+- shutdown attempts to drain saves, enqueue final dirty snapshots, and wait for the backend to finish; editor input accepted for a paste that is still loading waits for that load and is saved with the rest. Failures and timeouts are logged, so this is best effort.
 
 Relevant code:
 

@@ -124,25 +124,30 @@ impl LocalPasteApp {
 
     /// Replays a loaded picker's input only after all backend outcomes are reconciled.
     pub(in crate::app) fn replay_pending_picker_input(&mut self, ctx: &egui::Context) {
+        let Some(events) = self.take_ready_pending_picker_input() else {
+            return;
+        };
+        self.focus_editor_next = true;
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
+        ctx.input_mut(|input| input.events.splice(0..0, events).for_each(drop));
+    }
+
+    /// Takes the editor input retained with a picker open once its paste has loaded.
+    ///
+    /// # Returns
+    /// The retained events in arrival order, or `None` while the load is outstanding.
+    pub(in crate::app) fn take_ready_pending_picker_input(&mut self) -> Option<Vec<egui::Event>> {
         let ready = self.pending_picker_open.as_ref().is_some_and(|opening| {
             opening.input_ready
                 && self.selected_id.as_deref() == Some(opening.id.as_str())
                 && self.selected_paste.is_some()
         });
         if !ready {
-            return;
+            return None;
         }
-        let Some(opening) = self.pending_picker_open.take() else {
-            return;
-        };
-        self.focus_editor_next = true;
-        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
-        ctx.input_mut(|input| {
-            input
-                .events
-                .splice(0..0, opening.input_events)
-                .for_each(drop)
-        });
+        self.pending_picker_open
+            .take()
+            .map(|opening| opening.input_events)
     }
 
     /// Whether a discovery query owns keyboard input independently of version dialogs.
