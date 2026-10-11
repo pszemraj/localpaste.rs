@@ -732,3 +732,48 @@ fn a_long_sidebar_name_ends_in_an_ellipsis_just_before_its_language_label() {
     );
     assert!(short_rect.right() < row_language_rect(&output, short, &language).left());
 }
+
+#[test]
+fn an_empty_search_or_filter_result_says_why_the_list_is_empty() {
+    let mut harness = make_app();
+    let app = &mut harness.app;
+    assert_eq!(app.sidebar_empty_note(), None, "rows are listed");
+
+    app.pastes.clear();
+    assert_eq!(
+        app.sidebar_empty_note(),
+        None,
+        "an empty store has the welcome text"
+    );
+    app.search_query = "zzz".to_string();
+    assert_eq!(
+        app.sidebar_empty_note(),
+        None,
+        "the query has not been sent yet"
+    );
+    app.search_last_sent = "zzz".to_string();
+    assert_eq!(app.sidebar_empty_note(), Some("No matching pastes"));
+    app.search_error = Some("Search failed".to_string());
+    assert_eq!(
+        app.sidebar_empty_note(),
+        None,
+        "the retry control explains a failure"
+    );
+
+    app.search_error = None;
+    app.search_query.clear();
+    app.search_last_sent.clear();
+    app.active_collection = SidebarCollection::Logs;
+    assert_eq!(
+        app.sidebar_empty_note(),
+        Some("No pastes match these filters")
+    );
+
+    // The note renders in the list area while no rows match.
+    app.active_collection = SidebarCollection::All;
+    app.search_query = "zzz".to_string();
+    app.search_last_sent = "zzz".to_string();
+    app.search_last_input_at = Some(Instant::now());
+    let output = settled_frame(app, [1100.0, 800.0], 1.0);
+    assert!(sidebar_label_is_visible(&output, "No matching pastes"));
+}

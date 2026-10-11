@@ -223,6 +223,9 @@ impl LocalPasteApp {
 
                 ui.separator();
                 ui.add_space(4.0);
+                if let Some(note) = self.sidebar_empty_note() {
+                    ui.label(RichText::new(note).small().color(COLOR_TEXT_MUTED));
+                }
                 let mut pending_select: Option<String> = None;
                 let selection_blocked = self.selection_transition_block_reason().is_some();
                 let metrics = SidebarListMetrics::from_spacing(ui.spacing());
@@ -483,6 +486,29 @@ impl LocalPasteApp {
             .on_hover_text("Filter by language");
         if selected_language != self.active_language_filter {
             self.set_active_language_filter(selected_language);
+        }
+    }
+
+    /// Explains an empty paste list, so it never reads as a blank or broken sidebar.
+    ///
+    /// # Returns
+    /// `None` while rows exist, while the current query has not been sent yet or
+    /// failed (the retry control covers that), and for an empty store, which the
+    /// editor panel's welcome text already covers.
+    pub(in crate::app) fn sidebar_empty_note(&self) -> Option<&'static str> {
+        if !self.pastes.is_empty() {
+            return None;
+        }
+        let query = self.search_query.trim();
+        if !query.is_empty() {
+            (self.search_error.is_none() && self.search_last_sent == query)
+                .then_some("No matching pastes")
+        } else if self.active_collection != SidebarCollection::All
+            || self.active_language_filter.is_some()
+        {
+            Some("No pastes match these filters")
+        } else {
+            None
         }
     }
 }
