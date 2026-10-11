@@ -359,6 +359,72 @@ fn open_picker_scope_menu_owns_arrows_enter_and_escape() {
 }
 
 #[test]
+fn opening_discovery_closes_a_menu_left_open_behind_it() {
+    let chords = [
+        (egui::Key::K, false),
+        (egui::Key::K, true),
+        (egui::Key::F1, false),
+    ];
+    for (key, shift) in chords {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        harness.app.all_pastes = vec![
+            test_summary("alpha", "First paste", None, 1),
+            test_summary("beta", "Second paste", None, 1),
+        ];
+        let output = frame(&mut harness.app, &ctx, Vec::new());
+        let sidebar_scope = label_rects(&output, "All fields", |pos| pos.x < 300.0)
+            .first()
+            .expect("sidebar scope menu button")
+            .center();
+        for pressed in [true, false] {
+            frame(
+                &mut harness.app,
+                &ctx,
+                primary_pointer_events(sidebar_scope, pressed),
+            );
+        }
+        assert!(
+            egui::Popup::is_any_open(&ctx),
+            "the sidebar scope menu is open"
+        );
+
+        let modifiers = if key == egui::Key::F1 {
+            egui::Modifiers::NONE
+        } else {
+            egui::Modifiers {
+                shift,
+                ..primary_command_modifiers()
+            }
+        };
+        frame(&mut harness.app, &ctx, vec![key_event(key, modifiers)]);
+        for _ in 0..3 {
+            frame(&mut harness.app, &ctx, Vec::new());
+        }
+        assert!(
+            !egui::Popup::is_any_open(&ctx),
+            "{key:?} shift={shift}: the surface closes the menu behind it"
+        );
+        if harness.app.paste_picker_open {
+            frame(
+                &mut harness.app,
+                &ctx,
+                vec![key_event(egui::Key::ArrowDown, egui::Modifiers::NONE)],
+            );
+            assert_eq!(
+                harness.app.paste_picker_selected, 1,
+                "Down reaches the picker"
+            );
+            assert_eq!(
+                harness.app.search_scope,
+                SearchScope::All,
+                "the sidebar scope is unchanged"
+            );
+        }
+    }
+}
+
+#[test]
 fn failed_picker_search_stays_visible_until_explicit_retry() {
     let (mut harness, _events) = make_app_with_event_tx();
     let ctx = egui::Context::default();

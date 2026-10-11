@@ -209,6 +209,9 @@ impl LocalPasteApp {
         } else {
             return;
         };
+        // A menu left open behind the new surface would draw over it, and an
+        // open scope menu would keep claiming its arrows, Enter, and Escape.
+        egui::Popup::close_all(ctx);
         if self.cancel_virtual_ime_preedit_if_active(Instant::now()) {
             self.mark_dirty();
         }
