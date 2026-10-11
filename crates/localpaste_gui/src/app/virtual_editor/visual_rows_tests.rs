@@ -156,10 +156,13 @@ fn splice_vec_by_delta_preserves_unaffected_prefix_and_suffix() {
 
 #[test]
 fn unicode_columns_measurement_uses_wide_char_width() {
-    let (_buffer, cache) = rebuild_cache_for("abc\n你好\n🦀\n", 200.0, 10.0, 5.0);
+    let (_buffer, cache) = rebuild_cache_for("abc\n你好\n🦀\n\t\tx\n", 200.0, 10.0, 5.0);
     assert_eq!(cache.line_metrics[0].columns, 3);
     assert_eq!(cache.line_metrics[1].columns, 4);
     assert_eq!(cache.line_metrics[2].columns, 2);
+    // epaint draws a tab as four spaces, so a tab line is not 1:1.
+    assert_eq!(cache.line_metrics[3].columns, 9);
+    assert!(!cache.line_metrics[3].ascii_only);
 }
 
 #[test]
@@ -179,6 +182,13 @@ fn line_column_conversions_round_trip_for_wide_content() {
     assert_eq!(cache.line_display_column_to_char(&buffer, 0, 4), 2);
     assert_eq!(cache.line_display_column_to_char(&buffer, 0, 6), 4);
     assert_eq!(cache.line_display_column_to_char(&buffer, 0, 7), 4);
+
+    let (buffer, cache) = rebuild_cache_for("\t\t\tfoo\n", 200.0, 10.0, 5.0);
+    assert_eq!(cache.line_columns(&buffer, 0), 15);
+    assert_eq!(cache.line_char_to_display_column(&buffer, 0, 3), 12);
+    assert_eq!(cache.line_display_column_to_char(&buffer, 0, 12), 3);
+    // A column inside a tab rounds down, like one inside a wide character.
+    assert_eq!(cache.line_display_column_to_char(&buffer, 0, 6), 1);
 }
 
 #[test]
@@ -300,6 +310,8 @@ fn deep_ascii_wrapped_rows_map_directly_to_char_ranges() {
 #[test]
 fn word_wrap_prefers_whitespace_boundaries_before_mid_word_splits() {
     assert_row_segments("alpha beta gamma\n", 35.0, 7, &["alpha ", "beta ", "gamma"]);
+    // Each tab takes four of the ten columns, so the third starts the next row.
+    assert_row_segments("\t\t\tfoo\n", 50.0, 10, &["\t\t", "\tfoo"]);
 }
 
 #[test]

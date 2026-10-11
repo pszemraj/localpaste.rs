@@ -48,6 +48,7 @@ Navigation/selection contract:
 - Virtual wrapped-row navigation preserves wrap-boundary intent across vertical movement (boundary affinity handling).
 - CRLF is one navigation boundary: Left/Right and shifted selection cross both characters without placing the caret between them. Edits and undo/redo keep the caret on a visible position and preserve unedited line endings.
 - Over-wide glyph wrapping (emoji/CJK in very narrow viewports) consumes at least one glyph per row to avoid blank visual rows.
+- A tab is drawn four spaces wide with no tab stops, and wrapping, column mapping, and vertical caret movement count it the same way, so a tab-indented line wraps inside the editor instead of running past its right edge.
 
 ## Navigation Probe
 
