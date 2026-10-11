@@ -491,6 +491,22 @@ fn maybe_dispatch_search_flows_require_debounce_and_dedupe_matrix() {
                     } => assert_eq!(query, "rust"),
                     other => panic!("unexpected command: {:?}", other),
                 }
+
+                // The list is capped, so an external write to an older match can
+                // leave it unchanged; an identical refresh still reruns the search.
+                let unchanged = harness.app.all_pastes.clone();
+                harness
+                    .app
+                    .apply_event(CoreEvent::PasteList { items: unchanged });
+                assert!(
+                    harness.app.search_last_sent.is_empty(),
+                    "an unchanged list refresh should still invalidate the cached query"
+                );
+                harness.app.maybe_dispatch_search();
+                match recv_cmd(&harness.cmd_rx) {
+                    CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "rust"),
+                    other => panic!("unexpected command: {:?}", other),
+                }
             }
         }
     }
