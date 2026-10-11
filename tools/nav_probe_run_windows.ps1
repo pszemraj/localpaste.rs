@@ -189,17 +189,17 @@ function Invoke-NavProbeManifestAssertions {
 
 function Write-NavProbeManifest {
     param([string]$Status, [string]$ErrorMessage = "")
-    $manifest["status"] = $Status
-    $manifest["completed_at"] = (Get-Date).ToUniversalTime().ToString("o")
+    $runManifest["status"] = $Status
+    $runManifest["completed_at"] = (Get-Date).ToUniversalTime().ToString("o")
     if ([string]::IsNullOrWhiteSpace($ErrorMessage)) {
-        if ($manifest.Contains("error")) {
-            $manifest.Remove("error")
+        if ($runManifest.Contains("error")) {
+            $runManifest.Remove("error")
         }
     }
     else {
-        $manifest["error"] = $ErrorMessage
+        $runManifest["error"] = $ErrorMessage
     }
-    $manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+    $runManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 }
 
 Assert-RepoPath $specPath "Spec"
@@ -222,7 +222,7 @@ $manifestParent = Split-Path -Parent $manifestPath
 New-Item -ItemType Directory -Force -Path $manifestParent | Out-Null
 $manifestRuns = @()
 $completedRuns = @()
-$manifest = [ordered]@{
+$runManifest = [ordered]@{
     event = "nav_probe_windows_run"
     status = "started"
     started_at = (Get-Date).ToUniversalTime().ToString("o")
@@ -244,7 +244,7 @@ $manifest = [ordered]@{
     current_run = $null
     completed_runs = $completedRuns
 }
-$manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+$runManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
 try {
 Assert-PositiveInt "RepeatCount" $RepeatCount
@@ -304,10 +304,10 @@ for ($manifestRepeatIndex = 1; $manifestRepeatIndex -le $RepeatCount; $manifestR
         }
     }
 }
-$manifest["scenario_count"] = $scenarios.Count
-$manifest["run_count"] = $manifestRuns.Count
-$manifest["runs"] = $manifestRuns
-$manifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+$runManifest["scenario_count"] = $scenarios.Count
+$runManifest["run_count"] = $manifestRuns.Count
+$runManifest["runs"] = $manifestRuns
+$runManifest | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
 if (-not ("LocalPasteNavProbeWindowV2" -as [type]) -or -not ("LocalPasteNavProbeInputV2" -as [type])) {
 Add-Type @'
@@ -385,6 +385,17 @@ public static class LocalPasteNavProbeInputV2 {
     struct InputUnion {
         [FieldOffset(0)]
         public KEYBDINPUT keyboard;
+        [FieldOffset(0)]
+        public MOUSEINPUT mouse;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    struct MOUSEINPUT {
+        public int dx;
+        public int dy;
+        public uint mouseData;
+        public uint dwFlags;
+        public uint time;
+        public UIntPtr dwExtraInfo;
     }
     [StructLayout(LayoutKind.Sequential)]
     struct KEYBDINPUT {
@@ -559,7 +570,7 @@ foreach ($scenario in $scenarios) {
         log_scenario_id = $scenarioLogId
         repeat_index = $repeatIndex
     }
-    $manifest["current_run"] = $runManifestEntry
+    $runManifest["current_run"] = $runManifestEntry
     $safeScenario = ConvertTo-SafeName $scenarioLogId
     $dbPath = Resolve-RepoPath "target/nav-probe-db-$safeScenario-$([guid]::NewGuid().ToString('N'))"
     Assert-RepoPath $dbPath "DB_PATH"
@@ -601,7 +612,8 @@ foreach ($scenario in $scenarios) {
             if ($proc.HasExited) {
                 throw "localpaste-gui exited early for $scenarioId with code $($proc.ExitCode)"
             }
-            if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+            # An untitled startup helper can precede the real app window.
+            if ($proc.MainWindowHandle -ne [IntPtr]::Zero -and $proc.MainWindowTitle -eq "LocalPaste.rs") {
                 $handle = $proc.MainWindowHandle
                 break
             }
@@ -653,8 +665,8 @@ foreach ($scenario in $scenarios) {
         Invoke-NavProbeAssertions -ScenarioIds @($scenarioId) -ScenarioAliases @($scenarioAlias) -IncludeSummary ([bool]$Summary)
     }
     $completedRuns += $runManifestEntry
-    $manifest["completed_runs"] = $completedRuns
-    $manifest["current_run"] = $null
+    $runManifest["completed_runs"] = $completedRuns
+    $runManifest["current_run"] = $null
 }
 }
 
@@ -668,12 +680,12 @@ elseif ($Assert) {
 }
 
 if ($Assert) {
-    $manifest["current_run"] = $null
+    $runManifest["current_run"] = $null
     Write-NavProbeManifest "assertions_passed"
     Invoke-NavProbeManifestAssertions
 }
 else {
-    $manifest["current_run"] = $null
+    $runManifest["current_run"] = $null
     Write-NavProbeManifest "completed_without_assertions"
 }
 Write-Host "nav probe manifest: $manifestPath"

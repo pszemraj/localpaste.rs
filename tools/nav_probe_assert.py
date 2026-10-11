@@ -232,7 +232,7 @@ def parse_scenario_aliases(values: list[str]) -> dict[str, str]:
 def load_json_file(path: Path, label: str) -> Any:
     """Load a JSON file, printing an error and returning None when it is unreadable or invalid."""
     try:
-        return json.loads(path.read_text("utf-8"))
+        return json.loads(path.read_text("utf-8-sig"))
     except OSError as exc:
         print(f"failed to read navigation probe {label} {path}: {exc}", file=sys.stderr)
     except json.JSONDecodeError as exc:
