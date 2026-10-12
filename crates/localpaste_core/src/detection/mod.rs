@@ -9,6 +9,8 @@ mod python;
 mod rust;
 pub(crate) use heuristic::looks_like_python_source;
 #[cfg(test)]
+mod batch_tests;
+#[cfg(test)]
 mod classification_tests;
 #[cfg(feature = "magika")]
 mod magika;
