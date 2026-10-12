@@ -2,11 +2,9 @@
 
 use super::{send_error, WorkerState};
 use crate::backend::{CoreErrorSource, CoreEvent, PasteSummary, SidebarCollection};
+use crate::text_search::search_match_ranges;
 use localpaste_core::models::paste::{PasteMeta, ScopedSearchFilter, SearchOptions, SearchScope};
-use std::{
-    ops::Range,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 use tracing::{error, info};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -462,7 +460,7 @@ const MATCH_EXCERPT_MATCH_CHARS: usize =
 /// The case policy mirrors canonical scoped search. The returned text is capped
 /// by character count so slicing never splits a Unicode scalar value.
 fn body_match_excerpt(content: &str, query: &str, case_sensitive: bool) -> Option<String> {
-    let range = find_search_range(content, query.trim(), case_sensitive)?;
+    let range = search_match_ranges(content, query.trim(), case_sensitive).next()?;
     let before = &content[..range.start];
     let matched = &content[range.clone()];
     let after = &content[range.end..];
@@ -492,55 +490,6 @@ fn body_match_excerpt(content: &str, query: &str, case_sensitive: bool) -> Optio
         excerpt.push('…');
     }
     Some(excerpt)
-}
-
-/// Finds the source-text byte range that canonical body search treats as a match.
-fn find_search_range(content: &str, query: &str, case_sensitive: bool) -> Option<Range<usize>> {
-    if query.is_empty() {
-        return None;
-    }
-    if case_sensitive {
-        return content.find(query).map(|start| start..start + query.len());
-    }
-
-    let normalized_query = query.to_lowercase();
-    if normalized_query.is_ascii() {
-        return localpaste_core::text::find_ascii_case_insensitive_range(
-            content,
-            &normalized_query,
-        );
-    }
-
-    let normalized_content = content.to_lowercase();
-    let normalized_start = normalized_content.find(normalized_query.as_str())?;
-    let normalized_end = normalized_start + normalized_query.len();
-    Some(source_range_for_normalized_match(
-        content,
-        normalized_start,
-        normalized_end,
-    ))
-}
-
-/// Maps a lowercased string range back to source-character boundaries.
-fn source_range_for_normalized_match(
-    content: &str,
-    normalized_start: usize,
-    normalized_end: usize,
-) -> Range<usize> {
-    let mut normalized_offset = 0;
-    let mut source_start = None;
-    for (source_offset, ch) in content.char_indices() {
-        let normalized_width = ch.to_lowercase().map(char::len_utf8).sum::<usize>();
-        let next_normalized_offset = normalized_offset + normalized_width;
-        if source_start.is_none() && normalized_start < next_normalized_offset {
-            source_start = Some(source_offset);
-        }
-        if normalized_end <= next_normalized_offset {
-            return source_start.unwrap_or(source_offset)..source_offset + ch.len_utf8();
-        }
-        normalized_offset = next_normalized_offset;
-    }
-    content.len()..content.len()
 }
 
 /// Returns the final `max_chars` Unicode scalar values from `text`.
@@ -573,7 +522,7 @@ fn append_compact_text(output: &mut String, text: &str) {
 
 #[cfg(test)]
 mod excerpt_tests {
-    use super::{body_match_excerpt, find_search_range, MATCH_EXCERPT_MAX_CHARS};
+    use super::{body_match_excerpt, search_match_ranges, MATCH_EXCERPT_MAX_CHARS};
 
     #[test]
     fn body_excerpt_preserves_unicode_case_and_compacts_newlines() {
@@ -582,7 +531,7 @@ mod excerpt_tests {
         assert!(excerpt.contains("ÉCOLE"));
         assert!(!excerpt.contains('\n'));
         assert_eq!(
-            find_search_range("before İ after", "i\u{307}", false),
+            search_match_ranges("before İ after", "i\u{307}", false).next(),
             Some(7..9)
         );
     }
@@ -592,7 +541,7 @@ mod excerpt_tests {
         assert!(body_match_excerpt("İstanbul", "i", false).is_none());
         assert!(body_match_excerpt("Needle", " ", false).is_none());
         assert_eq!(
-            find_search_range("é NeEdLe needle", "needle", false),
+            search_match_ranges("é NeEdLe needle", "needle", false).next(),
             Some(3..9)
         );
     }

@@ -349,51 +349,17 @@ enum EditorFindUpdate {
 }
 
 fn find_text_ranges(text: &str, query: &str, case_sensitive: bool) -> Vec<Range<usize>> {
-    let needle: Vec<char> = query.chars().collect();
-    if needle.is_empty() {
-        return Vec::new();
-    }
-    let haystack: Vec<char> = text.chars().collect();
-    if needle.len() > haystack.len() {
-        return Vec::new();
-    }
-
-    let mut matches = Vec::new();
-    let mut start = 0;
-    while start + needle.len() <= haystack.len() {
-        if chars_match_at(&haystack, &needle, start, case_sensitive) {
-            matches.push(start..start + needle.len());
-            start += needle.len();
-        } else {
-            start += 1;
-        }
-    }
-    matches
-}
-
-fn chars_match_at(haystack: &[char], needle: &[char], start: usize, case_sensitive: bool) -> bool {
-    needle.iter().enumerate().all(|(offset, needle_ch)| {
-        chars_equal(haystack[start + offset], *needle_ch, case_sensitive)
-    })
-}
-
-fn chars_equal(left: char, right: char, case_sensitive: bool) -> bool {
-    if case_sensitive || left == right {
-        return left == right;
-    }
-    lower_chars_equal(left, right)
-}
-
-fn lower_chars_equal(left: char, right: char) -> bool {
-    let mut left_lower = left.to_lowercase();
-    let mut right_lower = right.to_lowercase();
-    loop {
-        match (left_lower.next(), right_lower.next()) {
-            (Some(left), Some(right)) if left == right => continue,
-            (None, None) => return true,
-            _ => return false,
-        }
-    }
+    let mut byte_offset = 0;
+    let mut char_offset = 0;
+    crate::text_search::search_match_ranges(text, query, case_sensitive)
+        .map(|range| {
+            char_offset += text[byte_offset..range.start].chars().count();
+            let start = char_offset;
+            char_offset += text[range.clone()].chars().count();
+            byte_offset = range.end;
+            start..char_offset
+        })
+        .collect()
 }
 
 fn editor_find_button(label: impl Into<egui::WidgetText>) -> egui::Button<'static> {
@@ -418,6 +384,19 @@ mod tests {
     fn find_text_ranges_returns_char_offsets_for_unicode_text() {
         let matches = find_text_ranges("aé needle\né needle", "needle", false);
         assert_eq!(matches, vec![3..9, 12..18]);
+        for (text, query, expected) in [
+            ("é İ İ", "i\u{307}", vec![2..3, 4..5]),
+            ("i\u{307} İ", "İ", vec![0..2, 3..4]),
+            ("İ İ", "\u{307}", vec![0..1, 2..3]),
+            ("ΟΣ ΟΣ", "ος", vec![0..2, 3..5]),
+            ("İ K k K", "k", vec![4..5, 6..7]),
+        ] {
+            assert_eq!(
+                find_text_ranges(text, query, false),
+                expected,
+                "{text} / {query}"
+            );
+        }
     }
 
     #[test]

@@ -45,60 +45,68 @@ fn opening_picker_result_focuses_editor_for_typing_and_paste() {
 
 #[test]
 fn picker_find_uses_the_opening_query_and_reveals_a_distant_match() {
-    let mut harness = make_app();
-    harness.app.search_query = "sidebar".into();
-    harness.app.editor_find.query = "previous".into();
-    harness.app.editor_find.open = true;
-    harness.app.editor_find.case_sensitive = true;
-    harness.app.open_paste_picker();
-    harness.app.set_paste_picker_query("needle_at_end".into());
-    harness.app.set_paste_picker_scope(SearchScope::Body);
-    harness.app.open_palette_selection("picked".into());
-    assert!(matches!(recv_cmd(&harness.cmd_rx), CoreCmd::GetPaste { id, .. } if id == "picked"));
-    harness.app.set_paste_picker_query("next search".into());
-    harness.app.set_paste_picker_scope(SearchScope::Title);
-
-    let content = format!(
-        "{}NEEDLE_AT_END: relevant context\n",
-        "unrelated line\n".repeat(100)
-    );
-    let match_start = "unrelated line\n".chars().count() * 100;
-    let mut paste = Paste::new(content, "Picked".into());
-    paste.id = "picked".into();
-    harness.app.apply_event(CoreEvent::PasteLoaded {
-        paste,
-        selection_epoch: harness.app.active_buffer_epoch,
-    });
-
-    assert_eq!(harness.app.editor_find.query, "needle_at_end");
-    assert!(!harness.app.editor_find.case_sensitive);
-    assert!(harness.app.editor_find.open);
-    assert!(!harness.app.editor_find.focus_requested);
-    assert_eq!(
-        harness.app.virtual_editor_state.selection_range(),
-        Some(match_start..match_start + 13)
-    );
-    assert!(matches!(
-        harness.app.virtual_cursor_reveal,
-        Some(CursorReveal::Center)
-    ));
-
-    let ctx = egui::Context::default();
-    for _ in 0..3 {
-        run_full_update_with_input(
-            &mut harness.app,
-            &ctx,
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1100.0, 720.0),
-                )),
-                ..Default::default()
-            },
+    for (query, matched) in [
+        ("needle_at_end", "NEEDLE_AT_END"),
+        ("i\u{307}", "İ"),
+        ("ος", "ΟΣ"),
+    ] {
+        let mut harness = make_app();
+        harness.app.search_query = "sidebar".into();
+        harness.app.editor_find.query = "previous".into();
+        harness.app.editor_find.open = true;
+        harness.app.editor_find.case_sensitive = true;
+        harness.app.open_paste_picker();
+        harness.app.set_paste_picker_query(query.into());
+        harness.app.set_paste_picker_scope(SearchScope::Body);
+        harness.app.open_palette_selection("picked".into());
+        assert!(
+            matches!(recv_cmd(&harness.cmd_rx), CoreCmd::GetPaste { id, .. } if id == "picked")
         );
+        harness.app.set_paste_picker_query("next search".into());
+        harness.app.set_paste_picker_scope(SearchScope::Title);
+
+        let content = format!(
+            "{}{matched}: relevant context\n",
+            "unrelated line\n".repeat(100)
+        );
+        let match_start = "unrelated line\n".chars().count() * 100;
+        let mut paste = Paste::new(content, "Picked".into());
+        paste.id = "picked".into();
+        harness.app.apply_event(CoreEvent::PasteLoaded {
+            paste,
+            selection_epoch: harness.app.active_buffer_epoch,
+        });
+
+        assert_eq!(harness.app.editor_find.query, query);
+        assert!(!harness.app.editor_find.case_sensitive);
+        assert!(harness.app.editor_find.open);
+        assert!(!harness.app.editor_find.focus_requested);
+        assert_eq!(
+            harness.app.virtual_editor_state.selection_range(),
+            Some(match_start..match_start + matched.chars().count())
+        );
+        assert!(matches!(
+            harness.app.virtual_cursor_reveal,
+            Some(CursorReveal::Center)
+        ));
+
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            run_full_update_with_input(
+                &mut harness.app,
+                &ctx,
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1100.0, 720.0),
+                    )),
+                    ..Default::default()
+                },
+            );
+        }
+        assert!(harness.app.virtual_viewport.offset_y > 0.0);
+        assert!(harness.app.virtual_viewport.caret_visible());
     }
-    assert!(harness.app.virtual_viewport.offset_y > 0.0);
-    assert!(harness.app.virtual_viewport.caret_visible());
 }
 
 #[test]
