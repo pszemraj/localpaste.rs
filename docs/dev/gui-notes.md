@@ -208,13 +208,13 @@ Run this checklist when touching detection/highlight/filter code.
 
 1. Start GUI with default features (Magika enabled): `cargo run -p localpaste_gui --bin localpaste-gui`.
 2. Create new pastes with representative snippets and confirm the detected language chip (auto mode). Use actual line breaks where `\n` is shown:
-   - Rust: `fn main() {\n    println!("hi");\n}` -> `rust`
-   - Python: `import os\nimport sys\nprint(os.getcwd(), sys.argv)` -> `python`
-   - Shell: `#!/bin/bash\nset -e\necho hi` -> `shell`
-   - JSON: `{\n  "key": "value"\n}` -> `json`
-   - Short: `fn main() { println!("hi"); }` on one line -> stays `auto`, below the [detection minimum](../language-detection.md#detection-flow); add a third line and it resolves to `rust`.
+   - Rust: `fn main() {\n    let greeting = "hello from LocalPaste";\n    println!("{greeting}");\n}` -> `rust`
+   - Python: `import os\nimport sys\nprint('working directory:', os.getcwd(), 'arguments:', sys.argv)` -> `python`
+   - Shell: `#!/bin/bash\nset -e\necho "Building the LocalPaste release package"\ncargo build --release` -> `shell`
+   - JSON: `{\n  "name": "localpaste",\n  "description": "Local-first paste manager"\n}` -> `json`
+   - Short: `fn main() { println!("hi"); }` on one line -> stays `auto`, below the [detection minimum](../language-detection.md#detection-flow). Splitting it into three lines still stays `auto`; replace it with the Rust example above to reach both minimums and resolve to `rust`. A source line longer than 64 characters also stays `auto` until it has at least three non-blank lines.
 3. Open Properties drawer, set language to `Plain text`, save, and verify chip reads `plain` (not `auto`).
-4. With that same paste still manual plain, edit content into obvious Rust of at least three lines and verify language remains `plain`.
+4. With that same paste still manual plain, edit content into the Rust example above and verify language remains `plain`.
 5. Switch language back to `Auto`, save, and verify the language chip shows unresolved auto state.
 6. Make a content edit and verify auto-detection resolves and locks to `rust`.
 7. Validate alias interoperability in UI filtering:

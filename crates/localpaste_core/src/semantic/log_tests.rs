@@ -83,7 +83,7 @@ fn delimited_records_and_dated_prose_are_not_timestamp_logs() {
             assert_ne!(stored_kind(&content), PasteKind::Log, "{content}");
         }
     }
-    let table = "ts,count\n2026-10-10 06:00:01,42\n2026-10-10 06:00:02,17";
+    let table = "ts,count\n2026-10-10 06:00:01,42\n2026-10-10 06:00:02,17\n2026-10-10 06:00:03,23";
     for language in [None, Some("csv")] {
         assert_eq!(
             derive(table, language).kind,

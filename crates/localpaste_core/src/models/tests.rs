@@ -63,7 +63,7 @@ mod model_tests {
     #[test]
     fn test_paste_new_stores_detected_language_as_locked() {
         let paste = paste::Paste::new(
-            "fn main() {\n    let value = 5;\n    println!(\"{value}\");\n}".to_string(),
+            "fn main() {\n    let greeting = \"hello from LocalPaste\";\n    println!(\"{greeting}\");\n}".to_string(),
             "rust".to_string(),
         );
         assert_eq!(paste.language.as_deref(), Some("rust"));
@@ -83,7 +83,7 @@ mod model_tests {
     }
 
     #[test]
-    fn test_auto_detect_language_waits_for_64_chars_or_3_non_blank_lines() {
+    fn test_auto_detect_language_requires_64_chars_and_3_non_blank_lines() {
         use crate::detection::{auto_detect_language, detect_language};
         // A one-line Rust item whose string literal pads it to `len` characters.
         let rust_line = |len: usize, pad: char| {
@@ -91,11 +91,21 @@ mod model_tests {
             let padding = pad.to_string().repeat(len - base.chars().count());
             format!("fn f() -> &'static str {{ \"{padding}\" }}")
         };
+        let rust_block = |len: usize, pad: char| {
+            let base = "fn f() -> &'static str {\n    \"\"\n}";
+            let padding = pad.to_string().repeat(len - base.chars().count());
+            format!("fn f() -> &'static str {{\n    \"{padding}\"\n}}")
+        };
         for unresolved in [
             rust_line(63, 'x'),
-            format!("\n  {}\t\n", rust_line(63, 'x')),
-            rust_line(63, 'é'),
+            rust_line(64, 'x'),
+            rust_line(128, 'x'),
+            rust_block(63, 'x'),
+            format!("\n  {}\t\n", rust_block(63, 'x')),
+            rust_block(63, 'é'),
+            format!("{}\n\n  \n// second nonblank line", rust_line(64, 'x')),
             "fn main() {\n\n  \n    println!(\"hi\"); }".to_string(),
+            "fn main() {\n    println!(\"hi\");\n}".to_string(),
         ] {
             assert_eq!(
                 detect_language(&unresolved).as_deref(),
@@ -105,8 +115,10 @@ mod model_tests {
             assert_eq!(auto_detect_language(&unresolved), None, "{unresolved:?}");
         }
         for detected in [
-            rust_line(64, 'x'),
-            "fn main() {\n    println!(\"hi\");\n}".to_string(),
+            rust_block(64, 'x'),
+            rust_block(64, 'é'),
+            format!("\n  {}\t\n", rust_block(64, 'x')),
+            rust_block(64, 'x').replace('\n', "\r\n"),
         ] {
             assert_eq!(
                 auto_detect_language(&detected).as_deref(),
@@ -151,7 +163,8 @@ mod model_tests {
     #[test]
     fn test_paste_meta_from_populates_derived_retrieval_fields() {
         let code = paste::Paste::new(
-            "fn handle_request() {\n    let fsdp2 = \"cublaslt\";\n}\n".to_string(),
+            "fn handle_request() {\n    let fsdp2 = \"cublaslt\";\n    println!(\"{fsdp2}\");\n}\n"
+                .to_string(),
             "random-slug".to_string(),
         );
         let config = paste::Paste::new(

@@ -190,10 +190,18 @@ mod tests {
                 assert_eq!(derive(&body, Some("rust")).kind, PasteKind::Code, "{body}");
             }
         }
-        let meta = PasteMeta::from(&Paste::new(FUNCTION.into(), "handler".into()));
+        let short = Paste::new(FUNCTION.into(), "handler".into());
+        assert_eq!(short.language, None);
+        assert_eq!(PasteMeta::from(&short).derived.kind, PasteKind::Short);
+
+        let automatic_source = "fn handle_request(input: &str) -> usize {\n    let length = input.len();\n    length\n}";
+        let automatic = Paste::new(automatic_source.into(), "handler".into());
+        assert_eq!(automatic.language.as_deref(), Some("rust"));
+        let meta = PasteMeta::from(&automatic);
+        assert_eq!(meta.derived.kind, PasteKind::Code);
         assert_eq!(meta.derived.handle.as_deref(), Some("fn handle_request"));
         // An unlabeled fence is classified by its heuristic body language.
-        let fence = Paste::new(format!("```\n{FUNCTION}\n```"), "fence".into());
+        let fence = Paste::new(format!("```\n{automatic_source}\n```"), "fence".into());
         assert_eq!(fence.language.as_deref(), Some("markdown"));
         assert_eq!(PasteMeta::from(&fence).derived.kind, PasteKind::Code);
     }

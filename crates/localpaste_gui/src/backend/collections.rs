@@ -545,52 +545,52 @@ mod tests {
     fn detected_fenced_snippets_and_documents_reach_their_semantic_collections() {
         let mut cases = [
             (
-                "```python\nprint('hello')\n```",
+                "```python\nprint('hello from the LocalPaste classification fixture')\n```",
                 PasteKind::Code,
                 SidebarCollection::Code,
             ),
             (
-                "```json\n{\"name\":\"Ada\"}\n```",
+                "```json\n{\"name\":\"Ada\",\"description\":\"LocalPaste classification fixture\"}\n```",
                 PasteKind::Config,
                 SidebarCollection::Config,
             ),
             (
-                "~~~sh\necho hello world\n~~~",
+                "~~~sh\necho \"hello from the LocalPaste semantic classification fixture\"\n~~~",
                 PasteKind::Code,
                 SidebarCollection::Code,
             ),
             (
-                "```\necho hello world\n```",
+                "```\necho \"hello from the LocalPaste semantic classification fixture\"\n```",
                 PasteKind::Code,
                 SidebarCollection::Code,
             ),
             (
-                "# Notes\n```python\nprint('hello')\n```",
+                "# Notes about the example\n```python\nprint('hello from LocalPaste')\n```",
                 PasteKind::Document,
                 SidebarCollection::Documents,
             ),
             (
-                "```markdown\n# Read me\n```",
+                "```markdown\n# Read me before running the LocalPaste classification fixture\n```",
                 PasteKind::Document,
                 SidebarCollection::Documents,
             ),
             (
-                "[INFO] Server started\nINFO Starting worker\nWARN Queue full",
+                "[INFO] Server started on port 3055\nINFO Starting background worker\nWARN Queue full",
                 PasteKind::Log,
                 SidebarCollection::Logs,
             ),
             (
-                "thread 'main' panicked at src/main.rs:12:5",
+                "thread 'main' panicked at src/main.rs:12:5:\ncalled `Option::unwrap()` on a `None` value\nnote: run with `RUST_BACKTRACE=1` to display a backtrace",
                 PasteKind::Log,
                 SidebarCollection::Logs,
             ),
             (
-                "```\nhello world this is a plain note\n```",
+                "```\nhello world this is a plain note about the LocalPaste fixture\n```",
                 PasteKind::Document,
                 SidebarCollection::Documents,
             ),
             (
-                "```text\nhello world\n```",
+                "```text\nhello world this is a plain note about the LocalPaste fixture\n```",
                 PasteKind::Document,
                 SidebarCollection::Documents,
             ),

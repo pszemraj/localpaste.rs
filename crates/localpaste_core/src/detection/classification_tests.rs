@@ -7,15 +7,15 @@ use crate::test_support::kind_unless_short;
 
 const MAKEFILES: &[&str] = &[
     "# Build the project\nSRCS = a.c \\\n       b.c\nall: $(SRCS)\n\t$(CC) $(SRCS) -o app\n",
-    "# Build\nCC = gcc\noverride CFLAGS += -g\nall:\n\t$(CC) main.c\n",
-    "# Search paths\nvpath %.c src\nall: main.c\n\tcc $< -o $@\n",
-    "# Build\nall:\n\t$(call compile,main.c)\n",
-    "# Build\nall:\n\t[ -d out ] || mkdir out\n",
-    "# Build\n$(info Building the project)\nall:\n\tcc main.c\n",
-    "# Build\nall:\n\tproject-builder --release\n",
-    "# Build\nall:\n\t./build\n",
-    "# Build\nall:\n\tproject-builder $FLAGS\n",
-    "# Build\nall:\n\trsync ./source ./dest\n",
+    "# Build with debug symbols\nCC = gcc\noverride CFLAGS += -g\nall:\n\t$(CC) main.c\n",
+    "# Search source directories for compilation inputs\nvpath %.c src\nall: main.c\n\tcc $< -o $@\n",
+    "# Build the application through the compile macro\nall:\n\t$(call compile,main.c)\n",
+    "# Build output directory before generating artifacts\nall:\n\t[ -d out ] || mkdir out\n",
+    "# Build the application\n$(info Building the project)\nall:\n\tcc main.c\n",
+    "# Build the application with release optimizations\nall:\n\tproject-builder --release\n",
+    "# Build the application using the repository script\nall:\n\t./build\n",
+    "# Build the application with the selected flags\nall:\n\tproject-builder $FLAGS\n",
+    "# Build artifacts are copied to the destination directory\nall:\n\trsync ./source ./dest\n",
 ];
 const NOTES: &[&str] = &[
     "# Shopping\nDairy:\n\tmilk\n\teggs\n",
@@ -69,9 +69,9 @@ fn unknown_make_tools_and_documentary_command_examples_stay_distinct() {
                 Some("makefile"),
                 "{body}"
             );
-            let paste = Paste::new(body.clone(), "build".into());
-            assert_eq!(paste.language.as_deref(), Some("makefile"), "{body}");
-            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Config);
+            let language = detect_language(&body);
+            assert_eq!(language.as_deref(), Some("makefile"), "{body}");
+            assert_eq!(derive(&body, language.as_deref()).kind, PasteKind::Config);
             assert!(matches!(
                 heuristic::detect(&body).as_deref(),
                 Some("makefile" | "shell")
@@ -116,9 +116,9 @@ fn unknown_make_tools_and_documentary_command_examples_stay_distinct() {
                 Some("markdown"),
                 "{body}"
             );
-            let paste = Paste::new(body.clone(), "instructions".into());
-            assert_eq!(paste.language.as_deref(), Some("markdown"), "{body}");
-            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document);
+            let language = detect_language(&body);
+            assert_eq!(language.as_deref(), Some("markdown"), "{body}");
+            assert_eq!(derive(&body, language.as_deref()).kind, PasteKind::Document);
         }
     }
 }
@@ -510,8 +510,7 @@ fn invocation_shaped_recipes_remain_makefiles_under_note_words() {
                 Some("makefile"),
                 "{body}"
             );
-            let paste = Paste::new(body.clone(), "build".into());
-            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Config);
+            assert_eq!(derive(&body, Some("makefile")).kind, PasteKind::Config);
         }
     }
     // The note word counts only when the label itself carries it.
@@ -540,9 +539,7 @@ fn capitalized_labels_under_markdown_headings_stay_documents() {
                 Some("markdown"),
                 "{body}"
             );
-            let paste = Paste::new(body.clone(), "instructions".into());
-            assert_eq!(paste.language.as_deref(), Some("markdown"), "{body}");
-            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document);
+            assert_eq!(derive(&body, Some("markdown")).kind, PasteKind::Document);
         }
     }
     // Lowercase targets, special targets, and directives are Make structure.

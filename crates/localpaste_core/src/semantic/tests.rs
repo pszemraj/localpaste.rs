@@ -217,7 +217,7 @@ fn unlisted_or_prefixed_commands_do_not_become_prose_documents() {
             );
         }
     }
-    let long_prose = "This is a long ordinary prose note about the release. ".repeat(2_000);
+    let long_prose = "This is a long ordinary prose note about the release.\n".repeat(2_000);
     assert_eq!(derive(&long_prose, None).kind, PasteKind::Document);
 }
 

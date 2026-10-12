@@ -11,7 +11,6 @@ use crate::semantic::logs::looks_like_runtime_log;
 
 #[test]
 fn review_regression_commented_python_and_unlabeled_fences() {
-    use crate::models::paste::{Paste, PasteMeta};
     use crate::semantic::{derive, PasteKind};
 
     for source in [
@@ -44,9 +43,10 @@ fn review_regression_commented_python_and_unlabeled_fences() {
             assert_eq!(refine_magika_label("markdown", &source).as_deref(), Some("python"));
             assert_eq!(detect_language(&source).as_deref(), Some("python"), "{source}");
             assert_eq!(derive(&source, Some("python")).kind, PasteKind::Code);
-            let fence = Paste::new(format!("```\n{source}\n```"), "Python fence".into());
-            assert_eq!(fence.language.as_deref(), Some("markdown"));
-            assert_eq!(PasteMeta::from(&fence).derived.kind, PasteKind::Code, "{source}");
+            let fence = format!("```\n{source}\n```");
+            let language = detect_language(&fence);
+            assert_eq!(language.as_deref(), Some("markdown"));
+            assert_eq!(derive(&fence, language.as_deref()).kind, PasteKind::Code, "{source}");
         }
     }
     for source in [
@@ -67,7 +67,6 @@ fn review_regression_commented_python_and_unlabeled_fences() {
 
 #[test]
 fn review_regression_shell_control_flow_and_python_tracebacks() {
-    use crate::models::paste::{Paste, PasteMeta};
     use crate::semantic::{derive, PasteKind};
 
     for (content, language, kind) in [
@@ -102,8 +101,10 @@ fn review_regression_shell_control_flow_and_python_tracebacks() {
             assert_eq!(refine_magika_label("markdown", &content).as_deref(), Some(language));
             assert_eq!(detect_language(&content).as_deref(), Some(language), "{content}");
             assert_eq!(derive(&content, Some(language)).kind, kind);
-            let fence = Paste::new(format!("```\n{content}\n```"), "runtime fence".into());
-            assert_eq!(PasteMeta::from(&fence).derived.kind, kind, "{content}");
+            let fence = format!("```\n{content}\n```");
+            let language = detect_language(&fence);
+            assert_eq!(language.as_deref(), Some("markdown"), "{content}");
+            assert_eq!(derive(&fence, language.as_deref()).kind, kind, "{content}");
         }
     }
 }
@@ -158,9 +159,9 @@ fn review_regression_prose_imports_and_command_wrappers_stay_documents() {
         );
     }
     let real_makefiles = [
-        "# Makefile for app\nCC = gcc\napp: main.c\n\t$(CC) main.c -o app",
-        "# Project tasks\ninclude config.mk\nall:\n\t$(MAKE) build",
-        "## Variables\nPREFIX ?= /usr/local\ninstall:\n\tmkdir -p $(PREFIX)/bin",
+        "# Makefile for the application\nCC = gcc\napp: main.c\n\t$(CC) main.c -o app",
+        "# Project tasks use the shared configuration\ninclude config.mk\nall:\n\t$(MAKE) build",
+        "## Installation variables\nPREFIX ?= /usr/local\ninstall:\n\tmkdir -p $(PREFIX)/bin",
         "# OS detection\nifeq ($(OS),Windows_NT)\nEXE := .exe\nelse\nEXE :=\nendif\napp:\n\t$(CC) main.c -o app$(EXE)",
     ];
     for content in [

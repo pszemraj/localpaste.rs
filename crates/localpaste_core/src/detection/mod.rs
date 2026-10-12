@@ -17,17 +17,17 @@ mod magika;
 #[cfg(test)]
 mod tests;
 
-/// Trimmed length, in Unicode characters, at which a paste holds enough text to
-/// classify (see [`too_short_to_classify`]).
+/// Trimmed length, in Unicode characters, required alongside
+/// [`AUTO_DETECT_MIN_LINES`] before a paste holds enough text to classify.
 const AUTO_DETECT_MIN_CHARS: usize = 64;
-/// Non-blank line count at which a paste shorter than [`AUTO_DETECT_MIN_CHARS`]
-/// holds enough text to classify.
+/// Non-blank line count required alongside [`AUTO_DETECT_MIN_CHARS`] before
+/// a paste holds enough text to classify.
 const AUTO_DETECT_MIN_LINES: usize = 3;
 
 /// Whether content holds too little text to classify.
 ///
-/// This is the single definition of the minimum: fewer than
-/// [`AUTO_DETECT_MIN_CHARS`] trimmed characters and fewer than
+/// This is the single definition of the minimum: classification requires both
+/// [`AUTO_DETECT_MIN_CHARS`] trimmed characters and
 /// [`AUTO_DETECT_MIN_LINES`] non-blank lines. A few words are too little
 /// evidence to tell code from prose, so auto mode leaves such content without a
 /// language ([`auto_detect_language`]) and retrieval files unlabeled content
@@ -35,11 +35,11 @@ const AUTO_DETECT_MIN_LINES: usize = 3;
 /// ([`crate::semantic::derive`]).
 ///
 /// # Returns
-/// `true` when the content is below both minimums.
+/// `true` when the content is below either required minimum.
 pub(crate) fn too_short_to_classify(content: &str) -> bool {
     let trimmed = content.trim();
     trimmed.chars().take(AUTO_DETECT_MIN_CHARS).count() < AUTO_DETECT_MIN_CHARS
-        && trimmed
+        || trimmed
             .lines()
             .filter(|line| !line.trim().is_empty())
             .count()

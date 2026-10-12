@@ -69,7 +69,7 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 
 #[test]
 fn semantic_kinds_rebuild_from_prior_versions_and_survive_restart() {
-    for schema_version in [14, 15, 16, 17, 18, 19, 29] {
+    for schema_version in [14, 15, 16, 17, 18, 19, 29, 30] {
         assert_semantic_kinds_rebuild_and_survive_restart(schema_version);
     }
 }
@@ -559,6 +559,26 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
             "",
             PasteKind::Document,
             PasteKind::Short,
+        ),
+        (
+            "These release notes need a careful review before we share them with the team tomorrow.",
+            "",
+            PasteKind::Document,
+            PasteKind::Short,
+        ),
+        (
+            "fn main() {\n    println!(\"hi\");\n}",
+            "",
+            PasteKind::Code,
+            PasteKind::Short,
+        ),
+        // The new minimum only reclassifies unlabeled content, preserving
+        // stored languages and their lock state through both restarts.
+        (
+            "fn main() {\n    println!(\"hi\");\n}",
+            "rust",
+            PasteKind::Code,
+            PasteKind::Code,
         ),
         (
             "https://example.com/some/page",

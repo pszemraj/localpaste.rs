@@ -55,11 +55,11 @@ fn automatic_setup_word_notes_remain_documents() {
     for (short, classified) in [
         (
             "set timer for 10 minutes\r\n",
-            "set timer for 10 minutes before the release review starts this afternoon\r\n",
+            "set timer for 10 minutes before the release review starts this afternoon\r\nThe meeting starts after lunch.\r\nPlease bring your review notes.\r\n",
         ),
         (
             "source code is at https://example.com\r\n",
-            "source code is at https://example.com and the review notes are in the wiki\r\n",
+            "source code is at https://example.com and the review notes are in the wiki\r\nThe meeting starts after lunch.\r\nPlease bring your review notes.\r\n",
         ),
     ] {
         assert_eq!(derived_kind(short), PasteKind::Short, "{short}");

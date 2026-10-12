@@ -92,12 +92,14 @@ fn short_uses_the_auto_detection_minimum() {
     for (content, short) in [
         (prose(63), true),
         (format!("\n  {}\t\n", prose(63)), true),
-        (prose(64), false),
+        (prose(64), true),
+        (format!("{}\n\n  \ncall the bank", prose(64)), true),
         ("buy milk today\n\n  \ncall the bank".to_owned(), true),
         (
             "buy milk today\ncall the bank\nwalk the dog".to_owned(),
-            false,
+            true,
         ),
+        (format!("{}\ncall the bank\nwalk the dog", prose(40)), false),
     ] {
         assert_eq!(
             crate::detection::too_short_to_classify(&content),

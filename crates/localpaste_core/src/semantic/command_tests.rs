@@ -265,7 +265,14 @@ fn scripts_with_status_messages_ranges_and_control_flow_stay_commands() {
                 paste.language
             );
             if sequence {
-                assert_eq!(paste.language.as_deref(), Some("shell"), "{content}");
+                assert_eq!(
+                    crate::detection::detect_language(&content).as_deref(),
+                    Some("shell"),
+                    "{content}"
+                );
+                let expected = (!crate::detection::too_short_to_classify(&content))
+                    .then_some("shell");
+                assert_eq!(paste.language.as_deref(), expected, "{content}");
             }
         }
     }

@@ -349,36 +349,48 @@ fn backend_reset_refreshes_versions_with_full_history_window_limit() {
 fn backend_creates_updates_and_deletes_paste() {
     let TestDb { _dir: _guard, db } = setup_db();
     let backend = spawn_backend(db, 10 * 1024 * 1024);
-
     backend
         .cmd_tx
         .send(CoreCmd::CreatePaste {
-            content: "fn main() { println!(\"hi\"); }".to_string(),
+            content: "fn main() {\n    println!(\"hi\");\n}".to_string(),
         })
         .expect("send create");
     let created_id = match recv_event(&backend.evt_rx) {
         CoreEvent::PasteCreated { paste } => {
-            assert_eq!(paste.content, "fn main() { println!(\"hi\"); }");
-            // Too short to auto-detect, so the paste stays on unresolved Auto.
+            assert_eq!(paste.content, "fn main() {\n    println!(\"hi\");\n}");
             assert!(paste.language.is_none() && !paste.language_is_manual);
             paste.id
         }
         other => panic!("unexpected event: {:?}", other),
     };
-    backend
-        .cmd_tx
-        .send(CoreCmd::UpdatePasteVirtual {
-            id: created_id.clone(),
-            content: Rope::from_str("updated"),
-            protected_version_id_ms: None,
-        })
-        .expect("send update");
-    match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteSaved { paste } => {
-            assert_eq!(paste.id, created_id);
-            assert_eq!(paste.content, "updated");
+    for (content, language) in [
+        (
+            "fn main() { println!(\"this one-line source has more than sixty-four characters\"); }",
+            None,
+        ),
+        (
+            "def main():\n    import sys\n    print('hello from LocalPaste', sys.version)",
+            Some("python"),
+        ),
+        ("updated", Some("python")),
+    ] {
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePasteVirtual {
+                id: created_id.clone(),
+                content: Rope::from_str(content),
+                protected_version_id_ms: None,
+            })
+            .expect("send update");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteSaved { paste } => {
+                assert_eq!(paste.id, created_id);
+                assert_eq!(paste.content, content);
+                assert_eq!(paste.language.as_deref(), language);
+                assert_eq!(paste.language_is_manual, language.is_some());
+            }
+            other => panic!("unexpected event: {:?}", other),
         }
-        other => panic!("unexpected event: {:?}", other),
     }
     backend
         .cmd_tx
@@ -386,7 +398,6 @@ fn backend_creates_updates_and_deletes_paste() {
             id: created_id.clone(),
         })
         .expect("send delete");
-
     let undo_token = match recv_event(&backend.evt_rx) {
         CoreEvent::PasteDeleted { id, undo_token } => {
             assert_eq!(id, created_id);

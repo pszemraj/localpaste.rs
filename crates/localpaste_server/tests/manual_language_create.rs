@@ -57,8 +57,16 @@ async fn test_create_paste_manual_language_mode_matrix() {
         },
         Case {
             request: json!({
-                "content": "fn main() { println!(\"hello\"); }",
+                "content": "fn main() {\n    println!(\"hello\");\n}",
                 "name": "short-default-create"
+            }),
+            expected_language: None,
+            expected_manual: false,
+        },
+        Case {
+            request: json!({
+                "content": "fn main() { println!(\"this one-line source has more than sixty-four characters\"); }",
+                "name": "long-one-line-default-create"
             }),
             expected_language: None,
             expected_manual: false,
@@ -81,7 +89,7 @@ async fn test_auto_language_update_transitions_cover_redetect_and_legacy_preserv
         let created_json = create_paste(
             &server,
             json!({
-                "content": "fn main() {\n    println!(\"hello\");\n}",
+                "content": "fn main() {\n    let greeting = \"hello from LocalPaste\";\n    println!(\"{greeting}\");\n}",
                 "name": "default-create"
             }),
         )
@@ -103,7 +111,7 @@ async fn test_auto_language_update_transitions_cover_redetect_and_legacy_preserv
             &server,
             paste_id,
             json!({
-                "content": "def main():\n    import sys\n    print('hello')\n"
+                "content": "def main():\n    import sys\n    print('hello from LocalPaste', sys.version)\n"
             }),
         )
         .await;
