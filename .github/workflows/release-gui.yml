@@ -319,14 +319,10 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "missing=$(printf '%s ' "${missing[@]}" | sed 's/[[:space:]]*$//')" >> "$GITHUB_OUTPUT"
             {
-              echo "### macOS signing/notarization skipped"
+              echo "### macOS artifacts: unsigned (default)"
               echo
-              echo "Missing required secrets: $(printf '%s, ' "${missing[@]}" | sed 's/, $//')"
-              if [[ "${SOURCE_MODE}" == "release_tag" ]]; then
-                echo "Permissive release mode: macOS artifacts will be published unsigned/unnotarized."
-              else
-                echo "Verification mode: unsigned macOS packaging build will continue."
-              fi
+              echo "Apple signing credentials are optional; unsigned packaging and uploads continue normally."
+              echo "Unconfigured optional credentials: $(printf '%s, ' "${missing[@]}" | sed 's/, $//')"
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"

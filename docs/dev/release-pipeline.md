@@ -43,6 +43,8 @@ Windows packaging needs a WiX 3 toolchain. `release_gui_prepare.py` finds an ins
 
 ## macOS signing and notarization
 
+Unsigned, unnotarized macOS releases are the intentional default. Apple credentials are optional, and their absence does not block packaging or publishing. The [Gatekeeper instructions](../release-gui.md#macos-gatekeeper) cover opening these builds.
+
 Signing runs only when all of these repository secrets are set: `APPLE_SIGNING_CERT_BASE64`, `APPLE_SIGNING_CERT_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. With them, the effective config sets `macos.signingIdentity` and the workflow passes credentials to cargo-packager using its `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID` environment variables. The packager signs, notarizes, and staples the app before putting it in the DMG, then signs the DMG. The workflow notarizes and staples the DMG and verifies the signature and staple of the app inside it. It never modifies the app after assembling the DMG. Without all six secrets, a `release_tag` run still publishes the macOS artifacts unsigned and unnotarized, and a `current_ref` run builds them unsigned.
 
 When a release contains a DMG, the publish job appends a one-line Gatekeeper note to the release body, once. Its wording matches the instructions in [../release-gui.md](../release-gui.md#macos-gatekeeper); keep the two in step.

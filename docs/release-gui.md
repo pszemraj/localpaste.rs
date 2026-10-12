@@ -29,7 +29,7 @@ The `localpaste` executable inside the archives is the GUI under a shorter name.
 
 ## macOS Gatekeeper
 
-macOS builds are signed and notarized only when the release was built with the maintainer's Apple signing credentials. Otherwise Gatekeeper blocks the first launch with a message that LocalPaste cannot be verified. To open it anyway, use either of these:
+macOS releases are intentionally unsigned and unnotarized by default. Gatekeeper blocks the first launch with a message that LocalPaste cannot be verified. To open the app, use either of these:
 
 1. Try to open `LocalPaste.app` once, then open System Settings > Privacy & Security, find the message about LocalPaste, and choose Open Anyway.
 2. Remove the quarantine flag from the installed app in a terminal, then open it normally: `xattr -cr /Applications/LocalPaste.app`

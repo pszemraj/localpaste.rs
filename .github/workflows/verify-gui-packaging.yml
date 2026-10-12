@@ -99,9 +99,10 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "missing=$(printf '%s ' "${missing[@]}" | sed 's/[[:space:]]*$//')" >> "$GITHUB_OUTPUT"
             {
-              echo "### macOS signing/notarization skipped"
+              echo "### macOS artifacts: unsigned (default)"
               echo
-              echo "Missing secrets: $(printf '%s, ' "${missing[@]}" | sed 's/, $//')"
+              echo "Apple signing credentials are optional; unsigned packaging and uploads continue normally."
+              echo "Unconfigured optional credentials: $(printf '%s, ' "${missing[@]}" | sed 's/, $//')"
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "enabled=true" >> "$GITHUB_OUTPUT"
