@@ -33,6 +33,7 @@
 - [ ] Evaluate code-editor-style smart Home behavior for the virtual editor (first non-whitespace <-> column 0) without regressing platform-native line/document key bindings.
 - [ ] Decide whether sidebar recency grouping should keep the current rolling seven-day `This Week` behavior, switch to local-calendar week semantics, or rename the bucket to `Last 7 Days`.
 - [ ] Define the virtual editor accessibility contract and decide whether to publish a read-only AccessKit text node with caret/selection metadata, or document bespoke editor screen-reader support as out of scope for the current local-tool UX.
+- [ ] Nice to have: drive the app with a real screen reader (VoiceOver on macOS; Narrator or Orca elsewhere), starting with discovery dismissal and the Properties drawer. Headless tests assert that published accessibility focus always names a node in the tree, and dev runs activate AccessKit through AX queries, but no screen reader has been run against the app.
 - [ ] Make backup creation crash-safe via temp-directory staging + atomic rename, and define cleanup rules for interrupted backup artifacts.
 - [ ] Add schema-repair backup retention/rotation so repeated upgrades cannot accumulate unbounded snapshots in the DB directory.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
