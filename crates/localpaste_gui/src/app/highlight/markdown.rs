@@ -6,6 +6,11 @@ use syntect::highlighting::{Highlighter, StyleModifier, ThemeItem, ThemeSet};
 use syntect::parsing::syntax_definition::Pattern;
 use syntect::parsing::{Scope, SyntaxDefinition, SyntaxSet};
 
+/// Lookahead that starts every unquoted list opener: indentation, a bullet or
+/// ordered marker, then a space or tab. Lines without one fail here before an
+/// opener tries its alternation of marker and padding widths.
+const ITEM_GUARD: &str = r"(?=[ \t]*(?:[-+*]|[0-9]{1,9}[.)])[ \t])";
+
 /// Matches whitespace occupying exactly `columns` from a starting tab column.
 ///
 /// # Arguments
@@ -28,6 +33,32 @@ fn indentation_pattern(columns: usize, start_column: usize) -> String {
     pattern
 }
 
+/// Matches whitespace from a tab stop spanning `columns` to `columns + 3`.
+///
+/// Tabs never skip a stop, so the whitespace splits into whole stops and a
+/// tail of at most one tab. A run reaching at least `columns` always has such
+/// a prefix, so a lookahead on this pattern tests for that indentation.
+///
+/// # Arguments
+/// - `columns`: Minimum width in columns, at least one.
+///
+/// # Returns
+/// A non-capturing regex accepting equivalent spaces and four-column tabs.
+fn indentation_range_pattern(columns: usize) -> String {
+    let stops = (columns - 1) / 4;
+    let rest = columns - 4 * stops;
+    let mut pattern = String::from("(?:");
+    if stops > 0 {
+        pattern.push_str(&format!(r"(?: {{4}}| {{0,3}}\t){{{stops}}}"));
+    }
+    pattern.push_str(&format!(r"(?: {{{rest},{}}}| {{0,3}}\t", rest + 3));
+    if rest > 1 {
+        pattern.push_str(&format!(" {{0,{}}}", rest - 1));
+    }
+    pattern.push_str("))");
+    pattern
+}
+
 /// Build the shared syntax/theme sets with the project Markdown grammar.
 ///
 /// # Returns
@@ -36,15 +67,19 @@ fn indentation_pattern(columns: usize, start_column: usize) -> String {
 /// # Panics
 /// Panics if the checked-in grammar or constant scope selectors are invalid.
 pub(super) fn settings() -> SyntectSettings {
-    // A backreference can retain indentation, but cannot turn a variable-width
-    // ordered marker into spaces. Generate the ten CommonMark marker widths
-    // (one bullet, or 1..9 digits plus punctuation) with the same list context.
+    // CommonMark puts an item's content after its marker and padding, and a
+    // tab advances to the next multiple of four columns. A backreference can
+    // only repeat the opener's exact whitespace, so item contexts are generated
+    // per content column, covering the ten marker widths (one bullet, or 1..9
+    // digits plus punctuation), and a continuation line may reach that column
+    // with spaces or tabs.
     let mut grammar = include_str!("../../../assets/LocalPaste-Markdown.sublime-syntax").to_owned();
     grammar.push_str("\n  list-items:\n");
     let mut list_contexts = String::new();
+    let mut item_openers = String::new();
+    let mut fence_openers = String::new();
     let mut variants = Vec::new();
-    let mut ordinary_items = Vec::new();
-    let mut direct_openings: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    let mut root_openings: BTreeMap<usize, Vec<String>> = BTreeMap::new();
     let mut quoted_openings: BTreeMap<usize, Vec<String>> = BTreeMap::new();
     for width in 1..=10 {
         let marker = if width == 1 {
@@ -52,17 +87,9 @@ pub(super) fn settings() -> SyntectSettings {
         } else {
             format!("[0-9]{{{}}}[.)]", width - 1)
         };
-        ordinary_items.push((
-            format!("list-item-{width}"),
-            format!(r"^([ ]*){marker}([ ]{{1,4}})"),
-            format!(r"\1{}\2", " ".repeat(width)),
-            String::new(),
-            true,
-            false,
-        ));
         for residue in 0..4 {
             for padding in 1..=4 {
-                direct_openings
+                root_openings
                     .entry(residue + width + padding)
                     .or_default()
                     .push(format!(
@@ -75,7 +102,7 @@ pub(super) fn settings() -> SyntectSettings {
             // it share the same next stop; trailing spaces determine the indent.
             let stop = 4 - (residue + width) % 4;
             for trailing in 0..=4 - stop {
-                direct_openings
+                root_openings
                     .entry(residue + width + stop + trailing)
                     .or_default()
                     .push(format!(
@@ -118,13 +145,14 @@ pub(super) fn settings() -> SyntectSettings {
             }
         }
     }
-    // Direct fences share frames by item indentation, rather than duplicating
-    // contexts for every marker, gap, and quote-column combination.
-    for (quoted, openings_by_indent) in [(false, direct_openings), (true, quoted_openings)] {
+    // Items share frames by content column, rather than duplicating contexts
+    // for every marker, gap, and quote-column combination. A frame's prefix
+    // spans the column plus up to three, the indentation a fence may carry.
+    for (quoted, openings_by_indent) in [(false, root_openings), (true, quoted_openings)] {
         for (indent, openings) in openings_by_indent {
-            let mut prefixes = Vec::new();
-            for extra in 0..4 {
-                if quoted {
+            let prefix = if quoted {
+                let mut prefixes = Vec::new();
+                for extra in 0..4 {
                     for leading in 0..4 {
                         for separator in 0..=1 {
                             prefixes.push(format!(
@@ -135,52 +163,57 @@ pub(super) fn settings() -> SyntectSettings {
                             ));
                         }
                     }
-                } else {
-                    prefixes.push(indentation_pattern(indent + extra, 0));
                 }
-            }
-            let prefix = format!("(?:{})", prefixes.join("|"));
+                format!("(?:{})", prefixes.join("|"))
+            } else {
+                indentation_range_pattern(indent)
+            };
             let item_name = format!(
-                "direct-list-item-{}-{indent}",
+                "list-item-{}-{indent}",
                 if quoted { "quote" } else { "root" }
             );
+            // Each line that reaches the list rules searches every opener once.
+            // Openers anchor with `\A`, like the item frames: only the line
+            // start can match, and onig searches `^` patterns measurably slower.
+            let start = format!(r"\A{}", if quoted { "" } else { ITEM_GUARD });
             variants.push((
                 item_name.clone(),
-                format!(r"^()()(?:{})", openings.join("|")),
+                format!(r"{start}()()(?:{})", openings.join("|")),
                 prefix.clone(),
                 prefix.clone(),
-                false,
                 quoted,
             ));
             if !quoted {
+                // Nesting whitespace ends on a tab stop: four spaces, or up to
+                // three spaces and a tab. Its continuation repeats it exactly.
                 variants.push((
                     format!("{item_name}-nested"),
-                    format!(r"^((?: {{4}})+)(?:{})()", openings.join("|")),
+                    format!(
+                        r"{start}((?: {{4}}| {{0,3}}\t)+)(?:{})()",
+                        openings.join("|")
+                    ),
                     format!(r"\1{prefix}"),
                     prefix,
-                    false,
                     false,
                 ));
             }
         }
     }
-    variants.extend(ordinary_items);
-    for (item_name, opening, prefix, continuation_prefix, ordinary_item, quoted) in variants {
+    for (item_name, opening, prefix, continuation_prefix, quoted) in variants {
         let blank = if quoted {
             r"[ ]{0,3}>[ \t]*\r?$"
         } else {
             r"[ \t]*\r?$"
         };
-        if !ordinary_item {
-            for (name, fence, info) in [("backtick", '`', r"[^`\n]*"), ("tilde", '~', r"[^\n]*")] {
-                grammar.push_str(&format!(
-                    r"    - match: '{opening}({fence}{{3,}}){info}$'
+        for (name, fence, info) in [("backtick", '`', r"[^`\n]*"), ("tilde", '~', r"[^\n]*")] {
+            fence_openers.push_str(&format!(
+                r"    - match: '{opening}({fence}{{3,}}){info}$'
       scope: punctuation.definition.raw.markdown.localpaste
       push: [{item_name}, {item_name}-{name}]
 "
-                ));
-                list_contexts.push_str(&format!(
-                    r"  {item_name}-{name}:
+            ));
+            list_contexts.push_str(&format!(
+                r"  {item_name}-{name}:
     - meta_scope: markup.raw.block.markdown.localpaste
     - match: '\A(?!{prefix}|{blank})'
       pop: true
@@ -189,11 +222,14 @@ pub(super) fn settings() -> SyntectSettings {
       scope: punctuation.definition.raw.markdown.localpaste
       pop: true
 "
-                ));
-            }
-        } else {
-            grammar.push_str(&format!(
-                r"    - match: '{opening}(?=\S)'
+            ));
+        }
+        // Quoted items take a frame only when a fence opens on the marker.
+        // Plain openers come first so ordinary item lines skip every fence
+        // opener; their final lookahead leaves fence lines to those openers.
+        if !quoted {
+            item_openers.push_str(&format!(
+                r"    - match: '{opening}(?=\S)(?!(?:`{{3,}}[^`\n]*|~{{3,}}[^\n]*)$)'
       scope: punctuation.definition.list.markdown
       push: {item_name}
 "
@@ -207,36 +243,23 @@ pub(super) fn settings() -> SyntectSettings {
       pop: true
 "
         ));
+        let captures = if prefix.starts_with(r"\1") {
+            r"(\1)()"
+        } else {
+            r"()()"
+        };
         for (name, fence, info) in [("backtick", '`', r"[^`\n]*"), ("tilde", '~', r"[^\n]*")] {
-            if ordinary_item {
-                list_contexts.push_str(&format!(
-                    r"    - match: '\A({prefix}) {{0,3}}({fence}{{3,}}){info}$'
-      scope: punctuation.definition.raw.markdown.localpaste
-      push:
-        - meta_scope: markup.raw.block.markdown.localpaste
-        - match: '\A(?!\1|{blank})'
-          pop: true
-        - match: '\A\1 {{0,3}}\2{fence}*[ \t]*\r?$'
-          scope: punctuation.definition.raw.markdown.localpaste
-          pop: true
-"
-                ));
-            } else {
-                let captures = if prefix.starts_with(r"\1") {
-                    r"(\1)()"
-                } else {
-                    r"()()"
-                };
-                list_contexts.push_str(&format!(
-                    r"    - match: '\A{captures}{continuation_prefix}({fence}{{3,}}){info}$'
+            list_contexts.push_str(&format!(
+                r"    - match: '\A{captures}{continuation_prefix}({fence}{{3,}}){info}$'
       scope: punctuation.definition.raw.markdown.localpaste
       push: {item_name}-{name}
 "
-                ));
-            }
+            ));
         }
         list_contexts.push_str("    - include: markup\n");
     }
+    grammar.push_str(&item_openers);
+    grammar.push_str(&fence_openers);
     grammar.push_str(&list_contexts);
     let mut builder = SyntaxSet::load_defaults_newlines().into_builder();
     let mut syntax =

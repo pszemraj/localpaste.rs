@@ -294,6 +294,132 @@ mod markdown_block_boundaries {
     }
 
     #[test]
+    fn tab_indented_list_content_stays_in_the_item() {
+        let settings = settings();
+        let syntax = resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let structure = highlighter
+            .style_for_stack(&[Scope::new("constant.numeric").unwrap()])
+            .foreground;
+        // Obsidian and Logseq nest with tabs. CommonMark expands a tab to the
+        // next multiple of four columns, at or past these items' content. A
+        // backtick info string cannot hold backticks, so the last opener is an
+        // ordinary item rather than a fence.
+        for (marker, first) in [
+            ("- ", "outer item"),
+            ("* ", "outer item"),
+            ("+ ", "outer item"),
+            ("1. ", "outer item"),
+            ("2) ", "outer item"),
+            ("10. ", "outer item"),
+            ("-\t", "outer item"),
+            ("1.\t", "outer item"),
+            ("- ", "```inline``` outer item"),
+        ] {
+            let mut lines = HighlightLines::new(syntax, theme);
+            styled_segments(&settings, &mut lines, &format!("{marker}{first}\n"));
+            for (line, nested) in [
+                ("\t- inner item with words\n", true),
+                ("\tcontinued text here\n", false),
+                ("\t\t1. deeper item\n", true),
+                ("\t\tdeeper continuation\n", false),
+                (" \tspace before the tab\n", false),
+                ("\n", false),
+                ("\tparagraph after a blank line\n", false),
+                (&format!("{marker}second outer\n"), true),
+            ] {
+                let result = non_empty_colors(&settings, &mut lines, line);
+                let expected = if nested { structure } else { prose };
+                assert_eq!(
+                    result.first().map(|(color, _)| *color),
+                    (!line.trim().is_empty()).then_some(expected),
+                    "{marker:?} {line:?}: {result:?}"
+                );
+                assert!(
+                    result.iter().skip(1).all(|(color, _)| *color == prose),
+                    "{marker:?} {line:?}: {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tab_indented_list_fences_close_relative_to_their_item() {
+        let settings = settings();
+        let syntax = resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        for fence in ["```", "~~~"] {
+            for (items, opening, indent) in [
+                ("- outer\n", "\t", "\t"),
+                ("1. outer\n", "\t", "   "),
+                ("- outer\n\t- inner\n", "\t  ", "\t  "),
+                ("- outer\n", "\t- ", "\t  "),
+                ("- outer\n\t- inner\n", "\t\t- ", "\t\t  "),
+            ] {
+                let mut lines = HighlightLines::new(syntax, theme);
+                for line in items.split_inclusive('\n') {
+                    styled_segments(&settings, &mut lines, line);
+                }
+                styled_segments(&settings, &mut lines, &format!("{opening}{fence}sh\n"));
+                for body in ["**literal code**\n", "\n", "**after a blank line**\n"] {
+                    let body = if body == "\n" {
+                        body.to_owned()
+                    } else {
+                        format!("{indent}{body}")
+                    };
+                    assert!(
+                        non_empty_colors(&settings, &mut lines, &body)
+                            .iter()
+                            .all(|(color, _)| *color == code),
+                        "{items:?}{opening:?}{fence}: {body:?}"
+                    );
+                }
+                styled_segments(&settings, &mut lines, &format!("{indent}{fence}\n"));
+                let result =
+                    non_empty_colors(&settings, &mut lines, &format!("{indent}prose after\n"));
+                assert!(
+                    result.iter().all(|(color, _)| *color == prose),
+                    "{items:?}{opening:?}{fence}: {result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tabs_short_of_item_content_or_outside_lists_stay_indented_code() {
+        let settings = settings();
+        let syntax = resolve_syntax(&settings.ps, "markdown");
+        let theme = &settings.ts.themes["base16-mocha.dark"];
+        let highlighter = Highlighter::new(theme);
+        let prose = highlighter.get_default().foreground;
+        let code = highlighter
+            .style_for_stack(&[Scope::new("string").unwrap()])
+            .foreground;
+        // `100. ` puts content at column five, past a single tab's stop, so a
+        // tab-indented line after a blank line leaves the list.
+        for seed in ["", "100. item\n\n", "- item\n\nparagraph\n\n"] {
+            let mut lines = HighlightLines::new(syntax, theme);
+            for line in seed.split_inclusive('\n') {
+                styled_segments(&settings, &mut lines, line);
+            }
+            let result = non_empty_colors(&settings, &mut lines, "\t**literal code**\n");
+            assert!(
+                result.iter().all(|(color, _)| *color == code),
+                "{seed:?}: {result:?}"
+            );
+            let result = non_empty_colors(&settings, &mut lines, "dedented prose\n");
+            assert!(result.iter().all(|(color, _)| *color == prose));
+        }
+    }
+
+    #[test]
     fn quoted_inline_spans_recover_at_blank_lines_and_sibling_items() {
         let settings = settings();
         let syntax = resolve_syntax(&settings.ps, "markdown");

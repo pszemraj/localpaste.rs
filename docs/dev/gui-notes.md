@@ -220,6 +220,7 @@ Run this checklist when touching detection/highlight/filter code.
    - unsupported labels should remain metadata-visible while rendering plain text.
    - In Markdown, put a Rust fence after a `- ` list marker, add an indented body, then an unindented `ordinary prose` line. The final line returns to prose colors; repeat with an ordered marker, tildes, and a following sibling list item.
    - In Markdown, type ```` > > ```rust ````, `> > let x = 1;`, ```` > > ``` ```` and `> > after`, then an unquoted `plain line`. The fence body and both fence lines use the code color, while `after` and `plain line` return to prose colors; repeat with `~~~` and with a single `> ` prefix.
+   - In Markdown, paste lines indented with real tab characters (the editor's `Tab` key inserts spaces), as Obsidian and Logseq write nested lists: `- outer item`, `<tab>- inner item with words`, `<tab>continued text here`, `- second outer`, then `1. ordered` and `<tab>continued ordered text`. Every tab-indented line keeps prose colors, with the list-marker color on its `-` if it has one, rather than the code color of an indented block. After ordinary prose and a blank line, a `<tab>`-indented line is still code.
 9. Validate large-buffer guardrail:
    - Use content over the [plain-rendering threshold](../language-detection.md#virtual-editor-async-highlight-flow) and verify display is plain regardless of language metadata.
 10. Re-run keyboard/navigation sanity checks listed in [Keyboard And Navigation Contract](#keyboard-and-navigation-contract) after language UI edits.
