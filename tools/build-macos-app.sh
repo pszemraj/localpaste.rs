@@ -14,14 +14,21 @@ fi
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo"
 commit="$(git rev-parse --verify "${1:-HEAD}^{commit}")"
-# Reuse the configured build cache while keeping the tagged source separate.
-target_dir="$(cargo metadata --locked --no-deps --format-version 1 |
-    /usr/bin/plutil -extract target_directory raw -o - -)"
 work="$(mktemp -d "${TMPDIR:-/tmp}/localpaste-macos.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 mkdir "$work/source"
 git archive --format=tar "$commit" | tar -xf - -C "$work/source"
-cd "$work/source"
+source_dir="$(cd "$work/source" && pwd -P)"
+# Read only the selected source, even when the checkout's manifest is unfinished.
+# Keep this cwd so Cargo discovers the checkout's cache configuration as before.
+target_dir="$(cargo metadata --locked --no-deps --format-version 1 \
+    --manifest-path "$source_dir/Cargo.toml" |
+    /usr/bin/plutil -extract target_directory raw -o - -)"
+if [[ "$target_dir" == "$source_dir/target" ]]; then
+    # Cargo's default follows the archived workspace; reuse a persistent cache.
+    target_dir="$repo/target"
+fi
+cd "$source_dir"
 
 package_id="$(cargo pkgid -p localpaste_gui)"
 version="${package_id##*[@#]}"
