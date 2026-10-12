@@ -97,6 +97,60 @@ fn toolbar_fits_one_row_at_common_widths() {
     }
 }
 
+fn properties_drawer_left(ctx: &egui::Context) -> f32 {
+    egui::containers::panel::PanelState::load(ctx, egui::Id::new("properties_drawer"))
+        .expect("drawer")
+        .rect
+        .left()
+}
+
+/// Asserts that every toolbar control starting in the editor pane also ends there.
+///
+/// Accessible bounds cover the nested rows of combo boxes and menus, which a
+/// painted label inside them does not. The toolbar ends above the paste id;
+/// nodes without a role, such as the drawer's resize handle on the boundary,
+/// are not controls.
+fn assert_toolbar_inside_pane(
+    app: &LocalPasteApp,
+    ctx: &egui::Context,
+    output: &egui::FullOutput,
+    width: u32,
+) {
+    let drawer_left = f64::from(properties_drawer_left(ctx));
+    let paste_id = app.selected_id.as_deref().expect("selected paste");
+    let toolbar_bottom = label_rects(output, paste_id, |pos| {
+        pos.x > 300.0 && f64::from(pos.x) < drawer_left
+    })[0]
+        .top();
+    let update = output.platform_output.accesskit_update.as_ref().unwrap();
+    let mut controls = 0;
+    let mut clipped = Vec::new();
+    for (_, node) in &update.nodes {
+        let Some(bounds) = node.bounds() else {
+            continue;
+        };
+        if node.role() == egui::accesskit::Role::Unknown
+            || bounds.x0 <= 300.0
+            || bounds.x0 >= drawer_left
+            || bounds.y1 > f64::from(toolbar_bottom)
+        {
+            continue;
+        }
+        controls += 1;
+        if bounds.x1 > drawer_left + 0.5 {
+            clipped.push((node.role(), node.label().map(str::to_owned), bounds));
+        }
+    }
+    assert!(
+        clipped.is_empty(),
+        "controls run past the editor pane at width {width}: {clipped:?}"
+    );
+    assert!(
+        controls > ROW_ACTIONS.len(),
+        "{controls} accessible controls at width {width}"
+    );
+}
+
 #[test]
 fn narrow_toolbar_moves_actions_to_a_second_row_without_overlap() {
     let mut harness = make_app();
@@ -113,6 +167,38 @@ fn narrow_toolbar_moves_actions_to_a_second_row_without_overlap() {
         );
     }
     assert_no_overlap(&mut actions);
+
+    // The minimum window with Properties open leaves the editor 280 points,
+    // narrower than the title and language fields alone, so both rows wrap.
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    harness.app.properties_drawer_open = true;
+    harness.app.edit_name = "Alpha renamed".into();
+    harness.app.metadata_dirty = true;
+    for width in (MIN_WINDOW_SIZE[0] as u32..=1300).step_by(10) {
+        let output = render_at(&mut harness.app, &ctx, width as f32);
+        assert_toolbar_inside_pane(&harness.app, &ctx, &output, width);
+    }
+    let output = render_at(&mut harness.app, &ctx, MIN_WINDOW_SIZE[0]);
+    let drawer_left = properties_drawer_left(&ctx);
+    let pane_rect = |label: &str| {
+        let rect = label_rects(&output, label, |pos| pos.x > 300.0 && pos.x < drawer_left)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("{label} is not painted in the editor pane"));
+        assert!(
+            rect.right() < drawer_left,
+            "{label} at {rect:?} runs past the editor pane"
+        );
+        rect
+    };
+    for label in ["Alpha renamed"].into_iter().chain(ROW_ACTIONS) {
+        pane_rect(label);
+    }
+    let apply = pane_rect("Apply").center();
+    let _ = click(&mut harness.app, &ctx, MIN_WINDOW_SIZE[0], apply);
+    assert!(metadata_save_dispatched(&harness.cmd_rx));
 }
 
 #[test]

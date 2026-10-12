@@ -3,7 +3,8 @@
 //! The metadata group (title, language, Apply, tag chips) is left-aligned and
 //! the frequent actions are right-aligned. Less frequent actions live in the
 //! `More` menu. When the editor is too narrow for both groups, the actions
-//! move to a second row instead of overlapping the metadata.
+//! move to a second row instead of overlapping the metadata, and each group
+//! wraps within the pane when it is too wide for one row on its own.
 
 use super::super::*;
 use super::properties_drawer::MetadataTextField;
@@ -130,8 +131,10 @@ impl LocalPasteApp {
                 );
                 self.render_toolbar_metadata(&mut metadata_ui, &mut requests);
             } else {
-                ui.horizontal(|ui| self.render_toolbar_metadata(ui, &mut requests));
-                ui.horizontal(|ui| {
+                // A row of its own can still be wider than the pane, as with
+                // Properties open in the minimum window, so each group wraps.
+                ui.horizontal_wrapped(|ui| self.render_toolbar_metadata(ui, &mut requests));
+                ui.horizontal_wrapped(|ui| {
                     self.render_toolbar_actions(
                         ui,
                         TOOLBAR_ACTIONS.iter(),
@@ -165,6 +168,13 @@ impl LocalPasteApp {
 
         ui.add_enabled_ui(!background_mutation_blocked, |ui| {
             self.render_title_field(ui, title_width, requests);
+        });
+        // A combo box lays out in a nested row that a wrapping row cannot
+        // move, so start a new row when it would not fit on this one.
+        if ui.layout().main_wrap && ui.available_size_before_wrap().x < LANGUAGE_COMBO_WIDTH {
+            ui.end_row();
+        }
+        ui.add_enabled_ui(!background_mutation_blocked, |ui| {
             self.render_language_field(ui, "header_language_select", Some(LANGUAGE_COMBO_WIDTH));
         });
         if ui
