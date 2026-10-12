@@ -58,6 +58,8 @@ Fetch the current content of a paste into a local file. `get` prints the content
 lpaste get "<paste-id>" > recovered.txt
 ```
 
+When a reader closes the pipe early, as in `lpaste get "<paste-id>" | head`, `lpaste` stops quietly with exit status 0.
+
 Inspect version history for a paste:
 
 ```bash

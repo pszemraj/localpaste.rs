@@ -4,7 +4,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::{generate, Shell};
 use localpaste_core::diff::{DiffRef, DiffRequest, DiffResponse, EqualResponse};
 use serde_json::Value;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::num::NonZeroU64;
 use std::time::{Duration, Instant};
 
@@ -330,6 +330,30 @@ fn log_timing_parts(timing: bool, label: &str, request: Duration, parse: Option<
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    quiet_on_closed_stdout(run().await)
+}
+
+/// Treats a reader that closed stdout early (`lpaste get ID | head`) as a normal end of output.
+///
+/// Rust ignores SIGPIPE, so such writes fail with `BrokenPipe` instead of killing the process.
+/// Every other error is returned unchanged.
+fn quiet_on_closed_stdout(
+    result: Result<(), Box<dyn std::error::Error>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match result {
+        Err(err)
+            if err
+                .downcast_ref::<io::Error>()
+                .is_some_and(|err| err.kind() == io::ErrorKind::BrokenPipe) =>
+        {
+            Ok(())
+        }
+        result => result,
+    }
+}
+
+/// Parses the command line, runs the requested command, and writes its output to stdout.
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let Cli {
         server,
         no_discovery,
@@ -343,7 +367,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(shell) => {
             let mut cmd = Cli::command();
             let name = cmd.get_name().to_string();
-            generate(shell, &mut cmd, name, &mut io::stdout());
+            let mut script = Vec::new();
+            generate(shell, &mut cmd, name, &mut script);
+            io::stdout().write_all(&script)?;
             return Ok(());
         }
         Ok(command) => command,
@@ -359,6 +385,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("[server] resolved via {}", source.as_str());
     }
 
+    let mut out = io::stdout();
     match command {
         ApiCommand::New { file, name } => {
             let endpoint = api_url_or_exit(&server, "New", &["api", "paste"]);
@@ -392,13 +419,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             log_timing_parts(timing, "new", request_elapsed, Some(parse_elapsed));
             if json {
-                println!("{}", serde_json::to_string_pretty(&paste)?);
+                writeln!(out, "{}", serde_json::to_string_pretty(&paste)?)?;
             } else {
                 let Some((id, name)) = paste_id_and_name(&paste) else {
                     eprintln!("New failed: response missing 'id' or 'name' field");
                     std::process::exit(1);
                 };
-                println!("Created: {} ({})", name, id);
+                writeln!(out, "Created: {} ({})", name, id)?;
             }
         }
         ApiCommand::Get { id } => {
@@ -420,7 +447,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(1);
                 }
             };
-            println!("{}", output);
+            writeln!(out, "{}", output)?;
         }
         ApiCommand::List { limit } => {
             let endpoint = api_url_or_exit(&server, "List", &["api", "pastes", "meta"]);
@@ -448,7 +475,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             if !output.is_empty() {
-                println!("{}", output);
+                writeln!(out, "{}", output)?;
             }
         }
         ApiCommand::Search {
@@ -478,7 +505,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             if !output.is_empty() {
-                println!("{}", output);
+                writeln!(out, "{}", output)?;
             }
         }
         ApiCommand::SearchMeta {
@@ -508,7 +535,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             if !output.is_empty() {
-                println!("{}", output);
+                writeln!(out, "{}", output)?;
             }
         }
         ApiCommand::Delete { id } => {
@@ -530,7 +557,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(1);
                 }
             };
-            println!("{}", output);
+            writeln!(out, "{}", output)?;
         }
         ApiCommand::Versions { id, limit } => {
             let endpoint = api_url_or_exit(
@@ -562,7 +589,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             if !output.is_empty() {
-                println!("{}", output);
+                writeln!(out, "{}", output)?;
             }
         }
         ApiCommand::GetVersion { id, version_id_ms } => {
@@ -596,7 +623,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(1);
                 }
             };
-            println!("{}", output);
+            writeln!(out, "{}", output)?;
         }
         ApiCommand::Diff {
             left_id,
@@ -639,7 +666,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             if !output.is_empty() {
-                println!("{}", output);
+                writeln!(out, "{}", output)?;
             }
         }
         ApiCommand::Equal {
@@ -681,7 +708,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::process::exit(1);
                 }
             };
-            println!("{}", output);
+            // The exit status is this command's result, so a closed stdout must not change it.
+            if let Err(err) = writeln!(out, "{}", output) {
+                if err.kind() != io::ErrorKind::BrokenPipe {
+                    return Err(err.into());
+                }
+            }
             std::process::exit(if equal.equal { 0 } else { 1 });
         }
         ApiCommand::ResetHard { id, version_id_ms } => {
@@ -710,9 +742,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             log_timing_parts(timing, "reset-hard", request_elapsed, Some(parse_elapsed));
 
             if json {
-                println!("{}", serde_json::to_string_pretty(&paste)?);
+                writeln!(out, "{}", serde_json::to_string_pretty(&paste)?)?;
             } else {
-                println!("Reset paste {} to version {}.", id, version_id_ms);
+                writeln!(out, "Reset paste {} to version {}.", id, version_id_ms)?;
             }
         }
         ApiCommand::DuplicateVersion {
@@ -755,13 +787,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(parse_elapsed),
             );
             if json {
-                println!("{}", serde_json::to_string_pretty(&paste)?);
+                writeln!(out, "{}", serde_json::to_string_pretty(&paste)?)?;
             } else {
                 let Some((new_id, new_name)) = paste_id_and_name(&paste) else {
                     eprintln!("Duplicate version failed: response missing 'id' or 'name' field");
                     std::process::exit(1);
                 };
-                println!("Created: {} ({})", new_name, new_id);
+                writeln!(out, "Created: {} ({})", new_name, new_id)?;
             }
         }
     }
