@@ -46,7 +46,7 @@ cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates
 cargo run -p localpaste_tools --bin check-ast-dupes -- --root crates --include-tests
 
 # 6) targeted tests for touched areas
-# cargo test -p <crate>
+# cargo test -p <crate> --all-features   (localpaste_core runs its Magika tests only with the magika feature, which is off by default)
 
 # 7) full build
 cargo build --workspace --all-targets --all-features
