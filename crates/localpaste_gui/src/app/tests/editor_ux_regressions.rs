@@ -535,6 +535,55 @@ fn undo_reselects_text_removed_by_cut_delete_or_replacement() {
 }
 
 #[test]
+fn text_typed_over_a_selection_is_one_undo_step() {
+    let ctx = egui::Context::default();
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("abcdef");
+    let len = harness.app.virtual_editor_buffer.len_chars();
+    harness.app.virtual_editor_state.set_cursor(4, len);
+    harness.app.virtual_editor_state.move_cursor(1, len, true);
+    let mut apply = |command: VirtualInputCommand| {
+        harness.app.apply_virtual_commands(&ctx, &[command]);
+        (
+            harness.app.virtual_editor_buffer.to_string(),
+            harness.app.virtual_editor_state.cursor(),
+            harness.app.virtual_editor_state.anchor(),
+        )
+    };
+    apply(VirtualInputCommand::InsertText("x".to_string()));
+    assert_eq!(
+        apply(VirtualInputCommand::InsertText("y".to_string())),
+        ("axyef".to_string(), 3, None)
+    );
+    // Later keystrokes extend the replacement, so one undo restores the
+    // backward selection and redo reapplies every typed character.
+    assert_eq!(
+        apply(VirtualInputCommand::Undo),
+        ("abcdef".to_string(), 1, Some(4))
+    );
+    assert_eq!(
+        apply(VirtualInputCommand::Redo),
+        ("axyef".to_string(), 3, None)
+    );
+
+    // Typing over a new selection starts its own step, even at the caret.
+    harness
+        .app
+        .virtual_editor_state
+        .restore_selection(4, Some(3), 5);
+    let mut apply = |command: VirtualInputCommand| {
+        harness.app.apply_virtual_commands(&ctx, &[command]);
+        harness.app.virtual_editor_buffer.to_string()
+    };
+    assert_eq!(
+        apply(VirtualInputCommand::InsertText("z".to_string())),
+        "axyzf"
+    );
+    assert_eq!(apply(VirtualInputCommand::Undo), "axyef");
+    assert_eq!(apply(VirtualInputCommand::Undo), "abcdef");
+}
+
+#[test]
 fn indentation_preserves_direction_excludes_next_line_and_is_one_undo_step() {
     for (ending, reverse) in ["\n", "\r\n", "\r", "\u{2028}", "\u{85}"]
         .into_iter()

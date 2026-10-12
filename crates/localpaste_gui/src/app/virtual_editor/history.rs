@@ -163,7 +163,9 @@ impl VirtualEditorHistory {
         }
         match previous.intent {
             EditIntent::Insert => {
-                if !previous.deleted.is_empty() || !next.deleted.is_empty() {
+                // Typing extends text typed over a selection, so one undo
+                // restores that selection; a new replacement starts a step.
+                if !next.deleted.is_empty() {
                     return false;
                 }
                 next.start == previous.after_cursor
