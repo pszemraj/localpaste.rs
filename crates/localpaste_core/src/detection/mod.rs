@@ -243,10 +243,7 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         }
     }
 
-    if label == "python"
-        && crate::models::paste::is_markdown_content(content)
-        && heuristic::has_python_document_wrapper(content)
-    {
+    if label == "python" && heuristic::has_python_document_wrapper(content) {
         return None;
     }
 

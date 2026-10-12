@@ -94,7 +94,10 @@ pub(super) fn compound_body(sample: &str) -> bool {
 
 fn compound_header(line: &str) -> bool {
     line.strip_suffix(':').is_some_and(|header| {
-        matches!(header, "try" | "except" | "else" | "finally")
+        // Definitions use the same shape check as standalone source anchors;
+        // indented prose must not turn an invalid class/def heading into source.
+        definition_header(line)
+            || matches!(header, "try" | "except" | "else" | "finally")
             || [
                 "if ",
                 "elif ",
@@ -106,9 +109,6 @@ fn compound_header(line: &str) -> bool {
                 "except ",
                 "match ",
                 "case ",
-                "def ",
-                "async def ",
-                "class ",
             ]
             .iter()
             .any(|prefix| {
@@ -282,13 +282,18 @@ pub(super) fn definition_header(line: &str) -> bool {
     let Some(name_end) = identifier_end(rest) else {
         return false;
     };
-    let mut header = &rest[name_end..];
+    let mut header = rest[name_end..].trim_start();
     let mut parameters = false;
     while header.starts_with(['(', '[']) {
         parameters |= header.starts_with('(');
         let Some(close) = group_end(header) else {
             return parameters || !function;
         };
+        // Adjacent bare operands are positive prose evidence, unlike legal
+        // whitespace before a parameter/base list: `(room 4)` is not Python.
+        if adjacent_bare_operands(&header[1..close]) {
+            return false;
+        }
         header = header[close + 1..].trim_start();
     }
     let closed = match header.strip_prefix("->") {
@@ -296,6 +301,30 @@ pub(super) fn definition_header(line: &str) -> bool {
         None => header.starts_with(':'),
     };
     closed && (parameters || !function)
+}
+
+/// Reject only simple groups of adjacent atoms, leaving expressions to detection.
+fn adjacent_bare_operands(group: &str) -> bool {
+    let words: Vec<_> = group.split_whitespace().collect();
+    words.len() > 1
+        && words.iter().all(|word| {
+            !matches!(
+                *word,
+                "and"
+                    | "or"
+                    | "not"
+                    | "is"
+                    | "in"
+                    | "if"
+                    | "else"
+                    | "for"
+                    | "lambda"
+                    | "await"
+                    | "yield"
+                    | "from"
+                    | "async"
+            ) && (identifier(word) || word.chars().all(|ch| ch.is_ascii_digit()))
+        })
 }
 
 /// Byte index of the bracket closing the group that `value` opens, if it closes.

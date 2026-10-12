@@ -197,6 +197,9 @@ fn sentences_opening_with_def_or_class_are_not_python_definitions() {
         "class Tuesday (room 4): bring your notes",
         "def foo(bar) is broken: see the log",
         "def not coming tonight: dentist at 3pm",
+        "class is cancelled today:\n    return your books\n    return your notes",
+        "class Tuesday (room 4):\n    return your books\n    return your notes",
+        "def not coming tonight:\n    return your books\n    return your notes",
     ] {
         for body in [note.to_owned(), format!("{note}\n")] {
             assert!(!heuristic::looks_like_python_source(&body), "{body}");
@@ -212,6 +215,7 @@ fn sentences_opening_with_def_or_class_are_not_python_definitions() {
     for source in [
         "def main():",
         "async def fetch(url):",
+        "def helper (value):",
         "def größe(x): return x",
         "def read_config(",
         "def parse(text: str) -> dict[str, int]:",
@@ -219,11 +223,23 @@ fn sentences_opening_with_def_or_class_are_not_python_definitions() {
         "def pick(key=lambda item: item[0]):",
         "def close(marker=')'):",
         "class Point:",
+        "class Point :",
+        "class Point (Base):",
+        "class Point (Base if enabled else Other):",
         "class Point(Base, metaclass=Meta):",
         "class Box[T](Base):",
         "class Config(",
     ] {
         assert!(heuristic::looks_like_python_source(source), "{source}");
+    }
+    for source in [
+        "def helper (value):\n    doubled_result = value * 2\n    return doubled_result",
+        "class Example :\n    example_attribute = True\n    another_attribute = False",
+        "class Example (object):\n    example_attribute = True\n    another_attribute = False",
+    ] {
+        let paste = Paste::new(source.into(), "source".into());
+        assert_eq!(paste.language.as_deref(), Some("python"), "{source}");
+        assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Code);
     }
 }
 

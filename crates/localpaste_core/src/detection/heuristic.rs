@@ -604,6 +604,14 @@ fn python_body_evidence(sample: &str) -> PythonBodyEvidence {
             anchored = true;
             continue;
         }
+        // A prose definition heading cannot become Python through a model label
+        // either, including `class is ...`, where `is` resembles an operator.
+        if ["def ", "async def ", "class "]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        {
+            return PythonBodyEvidence::Document;
+        }
         if ["```", "~~~", "> "]
             .iter()
             .any(|prefix| line.starts_with(*prefix))
