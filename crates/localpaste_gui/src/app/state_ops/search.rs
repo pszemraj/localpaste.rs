@@ -116,6 +116,20 @@ impl LocalPasteApp {
         langs.into_iter().collect()
     }
 
+    /// Whether [`Self::language_filter_options`] would be nonempty, without building it.
+    ///
+    /// Stops at the first paste with a filterable language, so the sidebar can
+    /// decide every frame whether to show the language filter at no cost that
+    /// grows with the store.
+    ///
+    /// # Returns
+    /// `true` when any known paste has a language that normalizes to a filter value.
+    pub(in crate::app) fn has_language_filter_options(&self) -> bool {
+        self.all_pastes
+            .iter()
+            .any(|paste| normalize_language_filter_value(paste.language.as_deref()).is_some())
+    }
+
     /// Schedules pending sidebar and picker searches independently of further input.
     ///
     /// # Arguments

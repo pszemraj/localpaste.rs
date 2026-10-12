@@ -146,6 +146,13 @@ fn search_scope_and_language_filter_share_one_row() {
     let output = settled_frame(&mut harness.app, DEFAULT_WINDOW_SIZE, 1.0);
     assert_eq!(sidebar_text_rects(&output, "All fields").len(), 1);
     assert!(sidebar_text_rects(&output, "All languages").is_empty());
+    // A blank language is no language, so it offers nothing to filter by.
+    harness
+        .app
+        .all_pastes
+        .push(test_summary("blank", "Blank", Some("  "), 1));
+    let output = settled_frame(&mut harness.app, DEFAULT_WINDOW_SIZE, 1.0);
+    assert!(sidebar_text_rects(&output, "All languages").is_empty());
 
     harness
         .app
@@ -170,6 +177,38 @@ fn search_scope_and_language_filter_share_one_row() {
     let language = sidebar_text_rects(&output, long_name)[0];
     assert!((scope.top() - language.top()).abs() < 1.0);
     assert!(language.right() <= SIDEBAR_CONTENT_RIGHT, "{language:?}");
+}
+
+#[test]
+fn the_open_language_filter_lists_each_canonical_language_once() {
+    let mut harness = make_app();
+    harness.app.all_pastes = vec![
+        test_summary("a", "A", Some("Rust"), 1),
+        test_summary("b", "B", Some("rs"), 1),
+        test_summary("c", "C", Some("python"), 1),
+        test_summary("d", "D", None, 1),
+    ];
+    let ctx = egui::Context::default();
+    let frame = |app: &mut LocalPasteApp, events: Vec<egui::Event>| {
+        let mut input = sidebar_input();
+        input.events = events;
+        run_full_update_with_input(app, &ctx, input)
+    };
+    let _ = frame(&mut harness.app, Vec::new());
+    let output = frame(&mut harness.app, Vec::new());
+    assert!(
+        sidebar_text_rects(&output, "rust").is_empty(),
+        "popup closed"
+    );
+    let combo = sidebar_text_rects(&output, "All languages")[0].center();
+    for pressed in [true, false] {
+        let _ = frame(&mut harness.app, primary_pointer_events(combo, pressed));
+    }
+
+    let output = frame(&mut harness.app, Vec::new());
+    assert_eq!(sidebar_text_rects(&output, "All languages").len(), 2);
+    assert_eq!(sidebar_text_rects(&output, "rust").len(), 1);
+    assert_eq!(sidebar_text_rects(&output, "python").len(), 1);
 }
 
 #[test]

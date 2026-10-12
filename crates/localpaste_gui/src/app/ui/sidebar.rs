@@ -453,12 +453,13 @@ impl LocalPasteApp {
 
     /// Renders the language filter combo beside the search scope, when any paste has a language.
     ///
+    /// The option list scans every paste, so it is built only while the popup is open.
+    ///
     /// # Arguments
     /// - `ui`: Horizontal row shared with the search scope combo.
     /// - `width`: Outer combo width; long language names truncate to the row's remaining width.
     fn render_language_filter(&mut self, ui: &mut egui::Ui, width: f32) {
-        let language_options = self.language_filter_options();
-        if language_options.is_empty() {
+        if !self.has_language_filter_options() {
             return;
         }
 
@@ -474,7 +475,7 @@ impl LocalPasteApp {
             .truncate()
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut selected_language, None, "All languages");
-                for lang in &language_options {
+                for lang in self.language_filter_options() {
                     ui.selectable_value(&mut selected_language, Some(lang.clone()), lang.as_str());
                 }
             })
