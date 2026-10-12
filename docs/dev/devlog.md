@@ -2,6 +2,14 @@
 
 [Architecture](../architecture.md#1-system-at-a-glance) maps each crate to its binaries and runtime role.
 
+## Human-Language Support And Review Scope
+
+LocalPaste is English-first, not English-only. The maintainer is currently its only known user, and the workflows guiding development are primarily in English. Until someone using the project requests broader support and the maintainer revisits this policy, keep implementation and validation proportional to that audience.
+
+Non-English text is welcome, and text integrity and crash prevention remain core requirements regardless of language. Preserve working Unicode behavior, but do not add specialized matching, normalization, collation, word segmentation, input-method handling, or UI localization solely to cover hypothetical language-specific cases. This policy concerns human languages, not the programming languages and file formats LocalPaste detects and highlights.
+
+For human and automated reviews, distinguish a bug in an established behavior or explicit contract from a request to broaden language support. Missing specialized language behavior is a feature request, not a release blocker by itself; do not require exhaustive multilingual coverage without a demonstrated user need. Issues and PRs with a concrete workflow, sample text, and expected behavior are welcome and give us a reason to revisit the scope.
+
 ## Build And Run
 
 ```bash

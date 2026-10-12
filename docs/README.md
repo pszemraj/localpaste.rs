@@ -20,6 +20,7 @@
 | Version history, diff, and metadata retrieval/search path | [architecture.md#5-read-and-write-paths](architecture.md#5-read-and-write-paths) |
 | Lock semantics (`db.owner.lock`, paste edit locks, API `423`) | [dev/locking-model.md](dev/locking-model.md) |
 | Build, run, and validation workflow | [dev/devlog.md](dev/devlog.md) |
+| Human-language support and review scope | [dev/devlog.md#human-language-support-and-review-scope](dev/devlog.md#human-language-support-and-review-scope) |
 | Server and CLI smoke test, including restart persistence | [dev/devlog.md#runtime-smoke-test-server-cli](dev/devlog.md#runtime-smoke-test-server-cli) |
 | Tooling CLI contracts (`check-loc`, `check-ast-dupes`) | [dev/devlog.md#tooling-cli-contracts](dev/devlog.md#tooling-cli-contracts) |
 | GUI runtime flags, navigation probe, and interaction behavior | [dev/gui-notes.md](dev/gui-notes.md) |
