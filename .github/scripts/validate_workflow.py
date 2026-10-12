@@ -597,6 +597,28 @@ def validate_release_packaging_helpers(path: Path, data: dict[str, Any]) -> list
     return errors
 
 
+def validate_release_note_rules(path: Path, data: dict[str, Any]) -> list[str]:
+    """Keep release-note errors optional while requiring successful asset uploads."""
+    if path.name != "release-gui.yml":
+        return []
+    publish = data.get("jobs", {}).get("publish")
+    if not isinstance(publish, dict):
+        return []
+    errors: list[str] = []
+    upload = find_step(publish, step_id="publish_release")
+    note = find_step(publish, step_id="mac_gatekeeper")
+    if publish.get("continue-on-error") not in (None, False):
+        errors.append(f"{path}: publish job must fail when required publishing fails")
+    if upload is None or upload.get("continue-on-error") not in (None, False):
+        errors.append(f"{path}: release asset upload must remain required")
+    if note is None or note.get("continue-on-error") is not True:
+        errors.append(f"{path}: macOS release-note update must use continue-on-error: true")
+    if note is not None and upload is not None:
+        if publish["steps"].index(note) <= publish["steps"].index(upload):
+            errors.append(f"{path}: macOS release-note update must follow asset upload")
+    return errors
+
+
 def validate_workflow_file(path: Path) -> list[str]:
     data, errors = load_yaml(path)
     if data is None:
@@ -606,6 +628,7 @@ def validate_workflow_file(path: Path) -> list[str]:
     errors.extend(validate_release_job_shape(path, data))
     errors.extend(validate_release_macos_signing_rules(path, data))
     errors.extend(validate_release_packaging_helpers(path, data))
+    errors.extend(validate_release_note_rules(path, data))
 
     run_blocks = extract_job_run_blocks(data)
     for block_path, shell, script in run_blocks:

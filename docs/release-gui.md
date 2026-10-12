@@ -29,10 +29,22 @@ The `localpaste` executable inside the archives is the GUI under a shorter name.
 
 ## macOS Gatekeeper
 
-macOS releases are intentionally unsigned and unnotarized by default. Gatekeeper blocks the first launch with a message that LocalPaste cannot be verified. To open the app, use either of these:
-
-1. Try to open `LocalPaste.app` once, then open System Settings > Privacy & Security, find the message about LocalPaste, and choose Open Anyway.
-2. Remove the quarantine flag from the installed app in a terminal, then open it normally: `xattr -cr /Applications/LocalPaste.app`
+> [!TIP]
+> macOS packages are intentionally unsigned and unnotarized by default. Open the DMG and drag **LocalPaste.app** to **Applications**.
+>
+> If macOS blocks the installed app, run this in Terminal, then open the app again:
+>
+> ```sh
+> xattr -dr com.apple.quarantine "/Applications/LocalPaste.app"
+> ```
+>
+> If the downloaded DMG itself is blocked, remove its quarantine flag first, then reopen it (replace `<tag>` with the version you downloaded):
+>
+> ```sh
+> xattr -d com.apple.quarantine "$HOME/Downloads/localpaste-<tag>-macos-aarch64.dmg"
+> ```
+>
+> Adjust the paths if you downloaded or installed elsewhere. Alternatively, try opening the app once, then choose **Open Anyway** in **System Settings > Privacy & Security** ([Apple's instructions](https://support.apple.com/en-us/102445)).
 
 ## Verify A Download
 

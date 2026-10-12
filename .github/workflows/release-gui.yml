@@ -720,8 +720,12 @@ jobs:
           files: |
             dist/release-assets/localpaste-*
             dist/release-assets/checksums.sha256
-      - name: Append macOS Gatekeeper note
+      - name: Update macOS Gatekeeper instructions
+        id: mac_gatekeeper
         if: steps.mac_dmg.outputs.found == 'true'
+        # Install guidance must never turn a successful asset upload into a failed release.
+        continue-on-error: true
+        timeout-minutes: 2
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -729,23 +733,75 @@ jobs:
           RELEASE_TAG: ${{ needs.resolve_tag.outputs.resolved_tag }}
         run: |
           set -euo pipefail
-          NOTE_PREFIX='macOS note:'
-          NOTE_P1='macOS note: this release may include unsigned/unnotarized LocalPaste macOS artifacts.'
-          NOTE_P2='If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security'
-          NOTE_P3='or run `xattr -cr /Applications/LocalPaste.app`.'
-          NOTE="${NOTE_P1} ${NOTE_P2} ${NOTE_P3}"
-          CURRENT_BODY="$(gh release view "${RELEASE_TAG}" --repo "${GH_REPO}" --json body --jq .body)"
+          # Quoted heredoc: Markdown backticks and release text are never shell commands.
+          python3 - <<'PYTHON'
+          import json
+          import os
+          import subprocess
+          import sys
+          import tempfile
+          from pathlib import Path
 
-          if grep -Fq "${NOTE_PREFIX}" <<< "${CURRENT_BODY}"; then
-            echo "macOS Gatekeeper note already present in release body"
-            exit 0
-          fi
+          start = "<!-- localpaste-macos-install:start -->"
+          end = "<!-- localpaste-macos-install:end -->"
+          legacy = (
+              "macOS note: this release may include unsigned/unnotarized LocalPaste macOS artifacts. "
+              "If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security "
+              "or run `xattr -cr /Applications/LocalPaste.app`."
+          )
 
-          BODY_PATH="$(mktemp)"
-          if [[ -n "${CURRENT_BODY}" ]]; then
-            printf "%s\n\n%s\n" "${CURRENT_BODY}" "${NOTE}" > "${BODY_PATH}"
-          else
-            printf "%s\n" "${NOTE}" > "${BODY_PATH}"
-          fi
+          def update_body(body, tag):
+              alternative = (
+                  "Adjust the paths if you downloaded or installed elsewhere. Alternatively, try opening the app once, then choose "
+                  "**Open Anyway** in **System Settings > Privacy & Security** ([Apple's instructions](https://support.apple.com/en-us/102445))."
+              )
+              note = f"""{start}
 
-          gh release edit "${RELEASE_TAG}" --repo "${GH_REPO}" --notes-file "${BODY_PATH}"
+          > [!TIP]
+          > **macOS: opening LocalPaste**
+          > macOS packages are intentionally unsigned and unnotarized by default. Open the DMG and drag **LocalPaste.app** to **Applications**.
+          >
+          > If macOS blocks the installed app, run this in Terminal, then open the app again:
+          >
+          > ```sh
+          > xattr -dr com.apple.quarantine "/Applications/LocalPaste.app"
+          > ```
+          >
+          > If the downloaded DMG itself is blocked, remove its quarantine flag first, then reopen it:
+          >
+          > ```sh
+          > xattr -d com.apple.quarantine "$HOME/Downloads/localpaste-{tag}-macos-aarch64.dmg"
+          > ```
+          >
+          > {alternative}
+
+          {end}"""
+              # Replace only our exact old paragraph, preserving all authored notes.
+              body = "".join(line for line in body.splitlines(keepends=True)
+                             if line.rstrip("\r\n") != legacy)
+              if start in body or end in body:
+                  if body.count(start) != 1 or body.count(end) != 1 or body.index(start) >= body.index(end):
+                      raise ValueError("macOS instruction markers are incomplete; release notes left unchanged")
+                  return body[:body.index(start)] + note + body[body.index(end) + len(end):]
+              separator = "" if not body or body.endswith("\n\n") else "\n" if body.endswith("\n") else "\n\n"
+              return body + separator + note + "\n"
+
+          try:
+              tag, repo = os.environ["RELEASE_TAG"], os.environ["GH_REPO"]
+              view = subprocess.run(["gh", "release", "view", tag, "--repo", repo, "--json", "body"],
+                                    check=True, capture_output=True, text=True)
+              body = json.loads(view.stdout)["body"] or ""
+              updated = update_body(body, tag)
+              if updated == body:
+                  print("macOS installation instructions already up to date")
+              else:
+                  with tempfile.TemporaryDirectory(prefix="localpaste-release-notes-") as directory:
+                      notes = Path(directory) / "notes.md"
+                      notes.write_text(updated, encoding="utf-8")
+                      subprocess.run(["gh", "release", "edit", tag, "--repo", repo, "--notes-file", str(notes)],
+                                     check=True, capture_output=True, text=True)
+          except Exception as error:
+              print(getattr(error, "stderr", None) or str(error), file=sys.stderr)
+              print(f"::warning::Could not update macOS installation instructions ({type(error).__name__}). "
+                    "Release assets remain published. See docs/release-gui.md#macos-gatekeeper.")
+          PYTHON
