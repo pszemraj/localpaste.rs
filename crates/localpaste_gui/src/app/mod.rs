@@ -128,7 +128,11 @@ pub(crate) struct LocalPasteApp {
     /// Rows filter the sidebar last revealed for; a different `sidebar_rows_filter` reveals once.
     sidebar_revealed_filter: Option<SidebarRowsFilter>,
     pending_picker_open: Option<PendingPickerOpen>,
+    /// Queued selection target that takes over `picker_selection_pin` when its switch applies.
     pending_picker_selection_pin: Option<String>,
+    /// Selection kept through list refreshes and search replies that leave it out, such as a
+    /// picker result, the paste open across a scope change, or a created paste; cleared when
+    /// the sidebar selection, search query, or filters change.
     picker_selection_pin: Option<String>,
     pending_delete_id: Option<String>,
     picker_delete_transition: Option<PickerDeleteTransition>,

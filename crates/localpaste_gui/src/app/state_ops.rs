@@ -259,36 +259,41 @@ impl LocalPasteApp {
                 } else {
                     self.recompute_visible_pastes();
                 }
-                let paste_visible =
+                // A created paste always opens. One the sidebar does not list is pinned,
+                // so refreshes and search replies keep it until the query or filters change.
+                let paste_listed =
                     !search_active && self.pastes.iter().any(|item| item.id == paste_id);
                 let has_unsaved_edits =
                     self.save_status == SaveStatus::Dirty || self.metadata_dirty;
                 let save_in_progress = self.save_in_flight
                     || self.metadata_save_in_flight
                     || self.save_status == SaveStatus::Saving;
-                if paste_visible && self.selection_transition_block_reason().is_some() {
-                    self.queue_pending_selection(paste_id);
+                if self.selection_transition_block_reason().is_some() {
+                    self.queue_pending_selection(paste_id.clone());
+                    if !paste_listed {
+                        self.pin_queued_selection(paste_id);
+                    }
                     self.notify("Created new paste; it opens once you close History or Diff.");
                     return;
                 }
-                if paste_visible && (has_unsaved_edits || save_in_progress) {
+                if has_unsaved_edits || save_in_progress {
                     // Keep current editor/save state untouched when switching is deferred.
-                    self.select_paste(paste_id);
+                    if self.select_paste(paste_id.clone()) && !paste_listed {
+                        self.pin_queued_selection(paste_id);
+                    }
                     return;
                 }
-                if paste_visible && !has_unsaved_edits && !save_in_progress {
-                    self.select_loaded_paste(paste);
-                    self.pending_selection_id = None;
-                    self.focus_editor_next = true;
-                    self.set_status("Created new paste.");
-                    return;
-                }
-                self.ensure_selection_after_list_update();
-                if search_active {
-                    self.set_status("Created new paste; refreshing search results.");
+                self.select_loaded_paste(paste);
+                self.pending_selection_id = None;
+                self.picker_selection_pin = (!paste_listed).then_some(paste_id);
+                self.focus_editor_next = true;
+                self.set_status(if paste_listed {
+                    "Created new paste."
+                } else if search_active {
+                    "Created new paste; refreshing search results."
                 } else {
-                    self.notify("Created new paste; current filters keep it hidden.");
-                }
+                    "Created new paste; current filters hide it in the sidebar."
+                });
             }
             CoreEvent::PasteSaved { paste } => {
                 let paste_id = paste.id.clone();

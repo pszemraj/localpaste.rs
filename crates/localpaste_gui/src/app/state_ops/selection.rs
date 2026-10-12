@@ -80,6 +80,15 @@ impl LocalPasteApp {
         self.pending_selection_id = Some(id);
     }
 
+    /// Pins a queued switch to `id`, a paste the sidebar does not list.
+    ///
+    /// The loaded paste stays pinned until the switch applies and transfers the
+    /// pin to `id`, so list refreshes and search replies replace neither.
+    pub(super) fn pin_queued_selection(&mut self, id: String) {
+        self.pending_picker_selection_pin = Some(id);
+        self.picker_selection_pin = self.selected_id.clone();
+    }
+
     /// Cancels any queued selection switch that has not been applied yet.
     pub(in crate::app) fn clear_pending_selection_request(&mut self) {
         self.pending_selection_id = None;
