@@ -27,6 +27,18 @@ Alternatively, extract the `.tar.gz` and run `./localpaste`.
 
 The `localpaste` executable inside the archives is the GUI under a shorter name. Releases do not include the standalone server (also called `localpaste` when built from source) or the `lpaste` CLI; build those from source.
 
+## Build A Local Mac App
+
+From a source checkout on macOS, build an existing tag without publishing a release:
+
+```bash
+bash tools/build-macos-app.sh v0.5.0
+```
+
+The script builds the committed source for your Mac and prints the path to `LocalPaste.app` under `dist/macos/`. Drag that app into Applications, double-click it, and choose **Keep in Dock** from its Dock menu. Omit the tag to build `HEAD`; uncommitted changes are excluded. The current checkout stays on its branch, and repeated builds produce separate output directories.
+
+This needs the Git, Rust, and native build tools listed in the [Quick Start](../README.md#quick-start). It uses built-in macOS tools to assemble the app and apply a local ad-hoc signature, with no Apple account, notarization, DMG, or extra packaging tool. It does not install or launch the app.
+
 ## macOS Gatekeeper
 
 > [!TIP]
