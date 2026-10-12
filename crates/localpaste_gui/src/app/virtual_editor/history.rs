@@ -209,8 +209,15 @@ impl VirtualEditorHistory {
         }
     }
 
+    /// Evict the oldest undo records until history fits its bounds.
+    ///
+    /// The newest record is never evicted, so one edit larger than `max_bytes`,
+    /// such as indenting a whole multi-megabyte paste, stays undoable and the
+    /// byte bound becomes that single edit.
     fn trim_undo(&mut self) {
-        while self.undo.len() > self.max_ops || self.undo_bytes > self.max_bytes {
+        while self.undo.len() > 1
+            && (self.undo.len() > self.max_ops || self.undo_bytes > self.max_bytes)
+        {
             let Some(removed) = self.undo.pop_front() else {
                 break;
             };
@@ -495,5 +502,46 @@ mod tests {
         }
         assert_eq!(buffer.to_string(), "A");
         assert!(history.undo(&mut buffer, &mut state).is_none());
+    }
+
+    #[test]
+    fn edit_larger_than_byte_cap_stays_undoable() {
+        // Indenting or replacing a whole multi-megabyte paste records one edit
+        // above the byte cap. It evicts older steps, but never itself.
+        let mut buffer = RopeBuffer::new("abc");
+        let mut state = VirtualEditorState::default();
+        let mut history = VirtualEditorHistory {
+            max_bytes: 8,
+            ..VirtualEditorHistory::default()
+        };
+        let now = Instant::now();
+        for (index, (range, inserted)) in [(3..3, "E"), (0..4, "    abcE")].into_iter().enumerate()
+        {
+            let deleted = buffer.slice_chars(range.clone());
+            let _ = buffer.replace_char_range(range.clone(), inserted);
+            history.record_edit(RecordedEdit {
+                start: range.start,
+                deleted,
+                inserted: inserted.to_string(),
+                intent: EditIntent::Other,
+                before_cursor: range.end,
+                before_anchor: (!range.is_empty()).then_some(range.start),
+                after_cursor: range.start + inserted.chars().count(),
+                at: now + Duration::from_millis(index as u64),
+            });
+        }
+        assert_eq!(history.undo_len(), 1);
+        assert_eq!(history.perf_stats().trim_evictions, 1);
+
+        // Redo pushes the oversized edit back through the same bound.
+        for _ in 0..2 {
+            assert!(history.undo(&mut buffer, &mut state).is_some());
+            assert_eq!(buffer.to_string(), "abcE");
+            assert_eq!((state.cursor(), state.anchor()), (4, Some(0)));
+            assert!(history.undo(&mut buffer, &mut state).is_none());
+            assert!(history.redo(&mut buffer, &mut state).is_some());
+            assert_eq!(buffer.to_string(), "    abcE");
+            assert_eq!(history.undo_len(), 1);
+        }
     }
 }
