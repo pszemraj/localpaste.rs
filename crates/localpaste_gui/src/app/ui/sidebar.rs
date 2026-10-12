@@ -5,6 +5,8 @@ use super::super::*;
 use chrono::Local;
 use eframe::egui::{self, RichText};
 pub(in crate::app) use list::SidebarRows;
+#[cfg(test)]
+pub(in crate::app) use list::MAX_CLUSTER_GAP;
 use list::{SidebarList, SidebarListItem, SidebarListMetrics};
 
 mod clusters;

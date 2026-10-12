@@ -44,7 +44,7 @@ fn row_metrics(frames: &SidebarFrames) -> (f32, f32) {
     let spacing = frames.ctx.style().spacing.clone();
     (
         spacing.interact_size.y + spacing.item_spacing.y,
-        spacing.interact_size.y,
+        crate::app::ui::sidebar::MAX_CLUSTER_GAP,
     )
 }
 

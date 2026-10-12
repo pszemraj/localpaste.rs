@@ -140,6 +140,10 @@ fn sidebar_time_bucket<Tz: TimeZone>(
     }
 }
 
+/// Extra space, in points, above a row whose pause before it is as unusual as
+/// pauses get; smaller pauses scale down from it.
+pub(in crate::app) const MAX_CLUSTER_GAP: f32 = 12.0;
+
 /// Vertical sizes the sidebar list is laid out with, in points.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct SidebarListMetrics {
@@ -153,8 +157,8 @@ pub(super) struct SidebarListMetrics {
 
 impl SidebarListMetrics {
     /// Metrics for the sidebar's style: items as tall as an interactive widget,
-    /// the theme's item spacing between them, and up to one row of extra space
-    /// above rows separated from their neighbours in time.
+    /// the theme's item spacing between them, and up to [`MAX_CLUSTER_GAP`] of
+    /// extra space above rows separated from their neighbours in time.
     ///
     /// # Arguments
     /// - `spacing`: Spacing of the UI that renders the list.
@@ -165,7 +169,7 @@ impl SidebarListMetrics {
         Self {
             item_height: spacing.interact_size.y,
             item_spacing: spacing.item_spacing.y,
-            cluster_gap: spacing.interact_size.y,
+            cluster_gap: MAX_CLUSTER_GAP,
         }
     }
 }
