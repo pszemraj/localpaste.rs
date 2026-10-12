@@ -61,6 +61,7 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use style::*;
 use tracing::{info, warn};
+use ui::sidebar::SidebarRows;
 use util::{count_label, display_language_label, paste_list_language_label, word_range_at};
 use version_ui::VersionUiState;
 use virtual_editor::{
@@ -76,7 +77,7 @@ use window_bounds::enforce_window_bounds;
 pub(crate) struct LocalPasteApp {
     backend: BackendHandle,
     all_pastes: Vec<PasteSummary>,
-    pastes: Vec<PasteSummary>,
+    pastes: SidebarRows,
     selected_id: Option<String>,
     selected_paste: Option<Paste>,
     edit_name: String,

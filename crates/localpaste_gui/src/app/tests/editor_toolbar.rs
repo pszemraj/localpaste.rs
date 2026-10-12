@@ -567,7 +567,7 @@ fn escape_cancels_toolbar_type_ahead_and_leaves_nothing_to_save() {
             .app
             .all_pastes
             .push(test_summary("beta", "Beta", None, 4));
-        harness.app.pastes = harness.app.all_pastes.clone();
+        harness.app.pastes = harness.app.all_pastes.clone().into();
         let app = &mut harness.app;
         let ctx = egui::Context::default();
         load_language(app, language, is_manual);

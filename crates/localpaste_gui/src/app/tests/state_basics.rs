@@ -620,7 +620,7 @@ fn paste_deleted_selects_visible_neighbor_matrix() {
             .iter()
             .map(|id| test_summary(id, &id.to_ascii_uppercase(), None, 1))
             .collect();
-        harness.app.pastes = harness.app.all_pastes.clone();
+        harness.app.pastes = harness.app.all_pastes.clone().into();
         harness.app.selected_id = Some("b".to_string());
 
         harness.app.apply_event(CoreEvent::PasteDeleted {

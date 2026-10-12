@@ -163,7 +163,7 @@ fn reset_to_version_reprojects_sidebar_filters_without_search_query() {
         test_summary("alpha", "Alpha", Some("rust"), 7),
         test_summary("beta", "Beta", Some("rust"), 5),
     ];
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness
         .app
         .set_active_language_filter(Some("rust".to_string()));
@@ -487,7 +487,7 @@ fn history_reset_in_flight_blocks_selection_switches_until_matching_ack() {
         test_summary("alpha", "Alpha", None, 7),
         test_summary("beta", "Beta", None, 5),
     ];
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness
         .app
         .locks
@@ -545,7 +545,7 @@ fn history_reset_in_flight_preserves_selection_across_list_reprojection() {
         test_summary("alpha", "Alpha", None, 7),
         test_summary("beta", "Beta", None, 5),
     ];
-    harness.app.pastes = vec![test_summary("beta", "Beta", None, 5)];
+    harness.app.pastes = vec![test_summary("beta", "Beta", None, 5)].into();
     harness
         .app
         .locks

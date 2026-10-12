@@ -124,7 +124,7 @@ fn revisiting_paste_ignores_snapshot_from_previous_selection_lock() {
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", Some("text"), 13));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     assert!(harness.app.acquire_paste_lock("alpha"));
     let receive = || backend.evt_rx.recv_timeout(Duration::from_secs(5)).unwrap();
 
@@ -294,7 +294,7 @@ fn selecting_active_paste_cancels_pending_switch() {
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", Some("text"), 10));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     let mut alpha = Paste::new_with_language(
         "saved text".into(),
         "Alpha".into(),
@@ -332,7 +332,7 @@ fn repeated_target_load_does_not_replace_new_draft() {
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", Some("text"), 10));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     let mut alpha = Paste::new_with_language(
         "alpha body".into(),
         "Alpha".into(),
@@ -391,7 +391,7 @@ fn stale_selection_failures_preserve_revisited_paste_and_its_draft() {
             .app
             .all_pastes
             .push(test_summary("beta", "Beta", Some("text"), 9));
-        harness.app.pastes = harness.app.all_pastes.clone();
+        harness.app.pastes = harness.app.all_pastes.clone().into();
         assert!(harness.app.select_paste("beta".into()));
         let old_epoch = harness.app.active_buffer_epoch;
         assert!(harness.app.select_paste("alpha".into()));
@@ -528,7 +528,7 @@ fn hidden_metadata_draft_remains_locked_until_the_latest_save_ack() {
 fn refused_mutating_target_preserves_hidden_document_and_pending_picker_input() {
     let (mut harness, _event_tx) = make_app_with_event_tx();
     harness.app.picker_selection_pin = Some("alpha".into());
-    harness.app.pastes = vec![test_summary("gamma", "Gamma", None, 4)];
+    harness.app.pastes = vec![test_summary("gamma", "Gamma", None, 4)].into();
     harness.app.all_pastes = harness.app.pastes.clone();
     harness.app.pending_selection_id = Some("queued".into());
     harness.app.pending_picker_selection_pin = Some("queued".into());
@@ -587,7 +587,7 @@ fn deferred_target_lock_refusal_preserves_hidden_document_after_content_or_metad
                 harness.app.picker_selection_pin = Some("alpha".into());
                 harness.app.search_query = "gamma".into();
                 harness.app.search_last_sent = "gamma".into();
-                harness.app.pastes = vec![test_summary("gamma", "Gamma", None, 4)];
+                harness.app.pastes = vec![test_summary("gamma", "Gamma", None, 4)].into();
                 if !refused {
                     harness
                         .app

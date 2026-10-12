@@ -69,7 +69,7 @@ fn sidebar_and_picker_reject_stale_scopes_and_keep_independent_queries() {
     assert_eq!(harness.app.palette_search_results[0].id, "valid");
     assert_eq!(harness.app.search_query, "sidebar");
     assert_eq!(harness.app.search_scope, SearchScope::Title);
-    harness.app.pastes = vec![test_summary("previous", "Previous result", None, 1)];
+    harness.app.pastes = vec![test_summary("previous", "Previous result", None, 1)].into();
     // Changing only the field scope must dispatch even with identical query text.
     harness.app.set_search_scope(SearchScope::Metadata);
     assert_eq!(harness.app.pastes[0].id, "previous");
@@ -616,7 +616,7 @@ fn picker_open_keeps_off_sidebar_selection_until_sidebar_context_changes() {
     harness.app.search_query = "sidebar".into();
     harness.app.search_last_sent = "sidebar".into();
     harness.app.all_pastes = vec![test_summary("alpha", "Alpha", None, 10)];
-    harness.app.pastes = vec![test_summary("alpha", "Alpha", None, 10)];
+    harness.app.pastes = vec![test_summary("alpha", "Alpha", None, 10)].into();
     harness.app.open_paste_picker();
     harness.app.open_palette_selection("picked".into());
     assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("picked"));

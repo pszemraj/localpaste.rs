@@ -84,7 +84,7 @@ impl LocalPasteApp {
         Self {
             backend,
             all_pastes: Vec::new(),
-            pastes: Vec::new(),
+            pastes: SidebarRows::default(),
             selected_id: None,
             selected_paste: None,
             edit_name: String::new(),

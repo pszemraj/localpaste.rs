@@ -294,7 +294,7 @@ fn command_shift_v_during_a_switch_deferred_by_a_save_appends_to_the_chosen_past
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", None, 9));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
     harness.app.reset_virtual_editor("alpha edited");
     harness.app.mark_dirty();

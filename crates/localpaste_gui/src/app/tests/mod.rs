@@ -467,7 +467,7 @@ fn make_app() -> TestHarness {
         server,
     );
     app.all_pastes = vec![test_summary("alpha", "Alpha", None, 7)];
-    app.pastes = vec![test_summary("alpha", "Alpha", None, 7)];
+    app.pastes = vec![test_summary("alpha", "Alpha", None, 7)].into();
     app.selected_id = Some("alpha".to_string());
     let mut selected = Paste::new("content".to_string(), "Alpha".to_string());
     selected.id = "alpha".to_string();

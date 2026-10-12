@@ -175,7 +175,8 @@ fn same_frame_editor_click_and_sidebar_arrow_does_not_change_selection() {
     harness.app.pastes = vec![
         test_summary("alpha", "Alpha", None, 7),
         test_summary("beta", "Beta", None, 4),
-    ];
+    ]
+    .into();
     harness.app.all_pastes = harness.app.pastes.clone();
     harness.app.selected_id = Some("alpha".to_string());
 
@@ -720,7 +721,7 @@ fn version_overlay_blocks_selection_switches_and_auto_reselection() {
         Some("Close History or Diff to switch pastes.")
     );
 
-    harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)];
+    harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)].into();
     harness.app.ensure_selection_after_list_update();
     assert_eq!(
         harness.app.selected_id.as_deref(),

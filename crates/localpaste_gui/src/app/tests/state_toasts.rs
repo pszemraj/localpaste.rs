@@ -681,7 +681,7 @@ fn open_popups_stay_above_a_toast_raised_after_them() {
     // A language gives the sidebar its language filter combo.
     let rust = test_summary("alpha", "Alpha", Some("rust"), 7);
     harness.app.all_pastes = vec![rust.clone()];
-    harness.app.pastes = vec![rust];
+    harness.app.pastes = vec![rust].into();
     let ctx = egui::Context::default();
     let output = toast_frames(&mut harness, &ctx, vec![], 2);
     let (_, combo) = text_indices(&output, "All languages")[0];

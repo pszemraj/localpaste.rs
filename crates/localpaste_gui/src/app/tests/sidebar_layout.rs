@@ -3,6 +3,7 @@
 use super::*;
 
 mod clusters;
+mod layout_reuse;
 
 /// Smart-filter chip labels, grouped by the row each renders on.
 const FILTER_ROWS: [&[&str]; 2] = [
@@ -220,7 +221,7 @@ fn the_minimum_window_shows_six_sidebar_rows() {
         row.language = Some("rust".to_string());
     }
     harness.app.all_pastes = rows.clone();
-    harness.app.pastes = rows;
+    harness.app.pastes = rows.into();
     let output = settled_frame(&mut harness.app, MIN_WINDOW_SIZE, 1.0);
     let visible = (0..60)
         .filter(|index| sidebar_label_is_visible(&output, &format!("Sidebar row {index}")))
@@ -307,7 +308,7 @@ fn a_new_selection_scrolls_its_sidebar_row_into_view_once() {
     let mut harness = make_app();
     let rows = long_sidebar_list(60);
     harness.app.all_pastes = rows.clone();
-    harness.app.pastes = rows;
+    harness.app.pastes = rows.into();
     let mut frames = SidebarFrames::new();
     let output = frames.render(&mut harness.app, vec![]);
     assert!(sidebar_label_is_visible(&output, "Sidebar row 0"));
@@ -342,7 +343,7 @@ fn sidebar_wheeled_to_bottom() -> (TestHarness, SidebarFrames) {
     let mut harness = make_app();
     let rows = long_sidebar_list(60);
     harness.app.all_pastes = rows.clone();
-    harness.app.pastes = rows;
+    harness.app.pastes = rows.into();
     let mut frames = SidebarFrames::new();
     frames.render(&mut harness.app, vec![]);
     assert!(harness.app.select_paste("paste-59".to_string()));
@@ -660,7 +661,7 @@ fn sidebar_row_hover_is_neutral_and_weaker_than_the_selected_row() {
     let mut harness = make_app();
     let rows = long_sidebar_list(10);
     harness.app.all_pastes = rows.clone();
-    harness.app.pastes = rows;
+    harness.app.pastes = rows.into();
     assert!(harness.app.select_paste("paste-0".to_string()));
     let mut frames = SidebarFrames::new();
     let output = frames.render(&mut harness.app, vec![]);
@@ -736,7 +737,7 @@ fn a_long_sidebar_name_ends_in_an_ellipsis_just_before_its_language_label() {
     ];
     let language = paste_list_language_label(&rows[0]);
     harness.app.all_pastes = rows.clone();
-    harness.app.pastes = rows;
+    harness.app.pastes = rows.into();
     let mut frames = SidebarFrames::new();
     let output = frames.render(&mut harness.app, vec![]);
     // Title and language label keep the theme's item spacing between them.

@@ -104,7 +104,7 @@ fn closing_version_overlays_reconciles_hidden_selection_back_to_visible_projecti
 
     for overlay in [OverlayCase::History, OverlayCase::Diff] {
         let mut harness = make_app();
-        harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)];
+        harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)].into();
 
         match overlay {
             OverlayCase::History => {
@@ -133,7 +133,7 @@ fn closing_version_overlays_reconciles_hidden_selection_back_to_visible_projecti
 fn refused_version_overlay_selection_preserves_picker_pin_and_queued_state() {
     for history in [false, true] {
         let mut harness = make_app();
-        harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)];
+        harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)].into();
         harness.app.picker_selection_pin = Some("alpha".into());
         harness.app.version_ui.history_modal_open = history;
         harness.app.version_ui.diff_modal_open = !history;

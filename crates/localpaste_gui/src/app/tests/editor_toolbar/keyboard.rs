@@ -219,7 +219,7 @@ fn arrow_keys_leave_the_selection_alone_while_a_popup_is_open() {
             .app
             .all_pastes
             .push(test_summary("beta", "Beta", None, 4));
-        harness.app.pastes = harness.app.all_pastes.clone();
+        harness.app.pastes = harness.app.all_pastes.clone().into();
         let ctx = egui::Context::default();
         let (key, neighbor) = match harness.app.sidebar_arrow_target_id(1) {
             Some(id) => (egui::Key::ArrowDown, id),

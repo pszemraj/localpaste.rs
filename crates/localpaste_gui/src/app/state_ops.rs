@@ -385,7 +385,7 @@ impl LocalPasteApp {
                     self.query_perf.search_last_roundtrip_ms =
                         Some(sent_at.elapsed().as_secs_f32() * 1000.0);
                 }
-                self.pastes = self.filter_by_collection(&items);
+                self.pastes = self.filter_by_collection(&items).into();
                 self.note_sidebar_rows_filter();
                 self.ensure_selection_after_list_update();
             }

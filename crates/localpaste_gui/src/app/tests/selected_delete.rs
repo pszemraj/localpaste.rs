@@ -286,7 +286,7 @@ fn selected_picker_delete_owns_escape_before_ack_and_replacement_load() {
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", None, 12));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness.app.paste_picker_open = true;
     let ctx = egui::Context::default();
     run_full_update(&mut harness.app, &ctx, vec![]);
@@ -408,7 +408,7 @@ fn selected_picker_delete_stale_missing_does_not_release_replacement_fence() {
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", None, 12));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness.app.paste_picker_open = true;
     harness
         .app
@@ -459,7 +459,7 @@ fn selected_picker_delete_ignores_a_dying_paste_load_before_delete_ack() {
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", None, 12));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness.app.paste_picker_open = true;
     harness
         .app
@@ -502,7 +502,7 @@ fn selected_picker_delete_prefers_the_selection_queued_before_delete() {
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", None, 12));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness.app.palette_search_results = vec![test_summary("gamma", "Gamma", None, 14)];
     set_active_content(&mut harness.app, "dirty alpha");
     harness.app.save_status = SaveStatus::Dirty;
@@ -718,7 +718,7 @@ fn selected_picker_replacement_dispatch_failure_releases_ownership_fence() {
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", None, 12));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness.app.paste_picker_open = true;
     harness
         .app
@@ -748,7 +748,7 @@ fn selected_picker_replacement_load_failure_releases_ownership_fence() {
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", None, 12));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness.app.paste_picker_open = true;
     let ctx = egui::Context::default();
     harness.app.send_palette_delete(&ctx, "alpha".to_string());

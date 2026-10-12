@@ -1,10 +1,91 @@
-//! Sidebar list model: date headers, paste rows, cluster gaps, and their geometry.
+//! Sidebar list model: the visible rows, and the date headers, cluster gaps,
+//! and geometry laid out from them.
 
 use super::clusters::relative_time_gaps;
 use crate::backend::PasteSummary;
-use chrono::{DateTime, Duration as ChronoDuration, Local, TimeZone, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Local, NaiveDate, TimeZone, Utc};
 use eframe::egui;
-use std::ops::Range;
+use std::ops::{Deref, DerefMut, Range};
+use std::rc::Rc;
+
+/// Visible sidebar rows in display order, with the list layout built from them.
+///
+/// Building the layout visits every row, so it is kept until its inputs
+/// change. Mutable access to the rows drops it and assigning new rows replaces
+/// it, so no mutation can leave a stale layout behind; reads through `Deref`
+/// keep it.
+#[derive(Debug, Default)]
+pub(in crate::app) struct SidebarRows {
+    rows: Vec<PasteSummary>,
+    /// Layout of `rows`, with the other inputs it was built for.
+    layout: Option<(SidebarLayoutKey, Rc<SidebarList>)>,
+}
+
+/// Inputs of the sidebar list layout besides the rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SidebarLayoutKey {
+    /// Whether the rows are search results, which get no headers or gaps.
+    searched: bool,
+    /// Local date the date headers are measured from.
+    today: NaiveDate,
+}
+
+impl SidebarRows {
+    /// Returns the list layout of these rows, building it only when the rows,
+    /// the search state, or the local date changed since it was last built.
+    ///
+    /// # Arguments
+    /// - `search_query`: Active sidebar query; non-blank means the rows are search results.
+    /// - `now`: Local time that dates the headers.
+    ///
+    /// # Returns
+    /// A shared handle to the layout, which callers may keep while mutating the app.
+    pub(super) fn layout(&mut self, search_query: &str, now: DateTime<Local>) -> Rc<SidebarList> {
+        let key = SidebarLayoutKey {
+            searched: !search_query.trim().is_empty(),
+            today: now.date_naive(),
+        };
+        if let Some((built_for, layout)) = &self.layout {
+            if *built_for == key {
+                return Rc::clone(layout);
+            }
+        }
+        let layout = Rc::new(SidebarList::build(&self.rows, search_query, now));
+        self.layout = Some((key, Rc::clone(&layout)));
+        layout
+    }
+
+    /// The layout kept from the last [`Self::layout`] call.
+    ///
+    /// # Returns
+    /// The kept layout, or `None` when a change to the rows has dropped it.
+    #[cfg(test)]
+    pub(in crate::app) fn cached_layout(&self) -> Option<&Rc<SidebarList>> {
+        self.layout.as_ref().map(|(_, layout)| layout)
+    }
+}
+
+impl Deref for SidebarRows {
+    type Target = Vec<PasteSummary>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.rows
+    }
+}
+
+impl DerefMut for SidebarRows {
+    /// Hands out the rows for mutation, dropping the layout built from them.
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.layout = None;
+        &mut self.rows
+    }
+}
+
+impl From<Vec<PasteSummary>> for SidebarRows {
+    fn from(rows: Vec<PasteSummary>) -> Self {
+        Self { rows, layout: None }
+    }
+}
 
 /// Date group of the unsearched list, by the local calendar day of a paste's last change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +177,7 @@ impl SidebarListMetrics {
 /// position a closed-form expression, so the list finds the items in view
 /// with a binary search instead of measuring every item above them.
 #[derive(Debug)]
-pub(super) struct SidebarList {
+pub(in crate::app) struct SidebarList {
     items: Vec<SidebarListItem>,
     /// Cumulative extra spacing weight at or above each item.
     gaps_above: Vec<f32>,
@@ -227,10 +308,12 @@ impl SidebarList {
 #[cfg(test)]
 mod tests {
     use super::{
-        sidebar_time_bucket, SidebarList, SidebarListItem, SidebarListMetrics, SidebarTimeBucket,
+        sidebar_time_bucket, SidebarList, SidebarListItem, SidebarListMetrics, SidebarRows,
+        SidebarTimeBucket,
     };
     use chrono::{Duration, FixedOffset, Local, TimeZone, Utc};
     use eframe::egui;
+    use std::rc::Rc;
 
     fn summary(id: &str, updated_at: chrono::DateTime<Utc>) -> crate::backend::PasteSummary {
         crate::backend::PasteSummary {
@@ -479,5 +562,55 @@ mod tests {
         // A viewport inside the spacing and gap between two rows shows nothing.
         assert_eq!(range(161.0, 175.0), 4..4);
         assert_eq!(range(500.0, 600.0), 5..5);
+    }
+
+    #[test]
+    fn rows_keep_their_layout_until_the_rows_search_state_or_date_change() {
+        let noon = Local.with_ymd_and_hms(2026, 6, 15, 12, 0, 0).unwrap();
+        let tomorrow = noon + Duration::days(1);
+        let mut rows = SidebarRows::from(vec![
+            summary("new", (noon - Duration::hours(1)).with_timezone(&Utc)),
+            summary("old", (noon - Duration::days(9)).with_timezone(&Utc)),
+        ]);
+        let built = rows.layout("", noon);
+
+        // Reads, a later hour of the same day, and a blank query reuse it.
+        assert_eq!((rows.len(), rows[0].id.as_str()), (2, "new"));
+        assert!(Rc::ptr_eq(
+            &built,
+            &rows.layout(" ", noon + Duration::hours(11))
+        ));
+
+        // Searching drops the headers once; editing the query alone does not rebuild.
+        let searched = rows.layout("needle", noon);
+        assert!(!Rc::ptr_eq(&built, &searched));
+        assert_eq!(
+            searched.items(),
+            [SidebarListItem::Row(0), SidebarListItem::Row(1)]
+        );
+        assert!(Rc::ptr_eq(&searched, &rows.layout("needles", noon)));
+
+        // A new local day re-dates the headers.
+        let next_day = rows.layout("", tomorrow);
+        assert!(!Rc::ptr_eq(&searched, &next_day));
+        assert_eq!(
+            next_day.items()[0],
+            SidebarListItem::Header(SidebarTimeBucket::Yesterday)
+        );
+
+        // Any mutable access drops the layout, and the next one shows the change.
+        rows[0].updated_at = rows[1].updated_at;
+        assert!(rows.cached_layout().is_none());
+        assert_eq!(
+            rows.layout("", tomorrow).items(),
+            [
+                SidebarListItem::Header(SidebarTimeBucket::Earlier),
+                SidebarListItem::Row(0),
+                SidebarListItem::Row(1),
+            ]
+        );
+        rows.retain(|row| row.id == "old");
+        assert!(rows.cached_layout().is_none());
+        assert_eq!(rows.layout("", tomorrow).items().len(), 2);
     }
 }

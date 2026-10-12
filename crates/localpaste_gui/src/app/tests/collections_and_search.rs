@@ -140,7 +140,7 @@ fn selected_paste_summary_prefers_visible_search_result_over_stale_cache() {
     let now = Utc::now();
     harness.app.selected_id = Some("alpha".to_string());
     harness.app.all_pastes = vec![test_summary_at("alpha", "Stale", Some("text"), 5, now)];
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness.app.set_search_query("alpha".to_string());
     harness.app.search_last_sent = "alpha".to_string();
 
@@ -593,7 +593,8 @@ fn clearing_search_restores_list_even_after_cached_query_was_invalidated() {
         Some("rust"),
         3,
         now,
-    )];
+    )]
+    .into();
     harness.app.search_query = "rust".to_string();
     harness.app.search_last_sent.clear();
 
@@ -684,7 +685,7 @@ fn language_filter_options_dedupe_case_variants() {
 fn sidebar_search_failure_retains_rows_and_retries_only_when_requested() {
     let (mut harness, _event_tx) = make_app_with_event_tx();
     harness.app.search_query = "needle".into();
-    harness.app.pastes = vec![test_summary("previous", "Previous result", Some("rust"), 1)];
+    harness.app.pastes = vec![test_summary("previous", "Previous result", Some("rust"), 1)].into();
     harness.app.set_active_language_filter(Some("rust".into()));
     harness.app.set_search_scope(SearchScope::Body);
     harness.app.maybe_dispatch_search();

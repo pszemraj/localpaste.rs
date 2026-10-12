@@ -494,7 +494,8 @@ fn sidebar_arrow_target_is_empty_list_safe() {
     harness.app.pastes = vec![
         test_summary("alpha", "Alpha", None, 1),
         test_summary("beta", "Beta", None, 1),
-    ];
+    ]
+    .into();
     assert_eq!(
         harness.app.sidebar_arrow_target_id(1),
         Some("beta".to_string())

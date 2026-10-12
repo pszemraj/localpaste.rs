@@ -53,7 +53,8 @@ fn pending_restored_selection_applies_after_visible_list_refresh() {
     harness.app.pastes = vec![
         test_summary("alpha", "Alpha", None, 7),
         test_summary("beta", "Beta", None, 4),
-    ];
+    ]
+    .into();
 
     harness.app.ensure_selection_after_list_update();
 
@@ -71,7 +72,7 @@ fn pending_restored_selection_loads_even_when_current_filters_hide_it() {
     harness.app.selected_paste = None;
     harness.app.pending_selection_id = Some("beta".to_string());
     harness.app.active_collection = SidebarCollection::Code;
-    harness.app.pastes = vec![test_summary("alpha", "Alpha", Some("rust"), 7)];
+    harness.app.pastes = vec![test_summary("alpha", "Alpha", Some("rust"), 7)].into();
     harness.app.all_pastes = vec![
         test_summary("alpha", "Alpha", Some("rust"), 7),
         test_summary("beta", "Beta", None, 4),

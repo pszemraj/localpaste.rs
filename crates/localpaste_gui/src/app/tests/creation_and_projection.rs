@@ -35,7 +35,7 @@ fn paste_created_clean_visible_focuses_virtual_editor_on_next_render() {
 fn paste_created_hidden_by_active_filter_keeps_visible_selection_and_projection() {
     let mut harness = make_app();
     harness.app.all_pastes = vec![test_summary("alpha", "Alpha", Some("rust"), 7)];
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness
         .app
         .set_active_language_filter(Some("rust".to_string()));
@@ -89,7 +89,7 @@ fn paste_created_during_active_search_keeps_visible_projection_and_invalidates_s
     harness.app.search_query = "alpha".to_string();
     harness.app.search_last_sent = "alpha".to_string();
     harness.app.search_last_input_at = None;
-    harness.app.pastes = vec![test_summary("alpha", "Alpha", None, 7)];
+    harness.app.pastes = vec![test_summary("alpha", "Alpha", None, 7)].into();
     harness.app.all_pastes = harness.app.pastes.clone();
 
     let mut created = Paste::new("new-content".to_string(), "Gamma".to_string());
