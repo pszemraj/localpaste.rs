@@ -537,6 +537,13 @@ jobs:
           if ($payload.Length -le 0) {
             throw "extracted localpaste.exe is empty: $($payload.FullName)"
           }
+          $requiredDlls = @('msvcp140.dll', 'msvcp140_1.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
+          foreach ($name in $requiredDlls) {
+            $dll = Join-Path $payload.DirectoryName $name
+            if (!(Test-Path $dll) -or (Get-Item $dll).Length -le 0) {
+              throw "missing or empty runtime DLL beside extracted localpaste.exe: $dll"
+            }
+          }
       - name: Verify Linux AppImage runtime and payload
         if: runner.os == 'Linux'
         shell: bash

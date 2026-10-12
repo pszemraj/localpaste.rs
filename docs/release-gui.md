@@ -12,7 +12,7 @@ Every release also includes `checksums.sha256`, which lists a SHA-256 sum for ea
 
 ## Install A Release
 
-**Windows.** Run the MSI installer. Alternatively, extract the ZIP and run `localpaste.exe`.
+**Windows.** Run the MSI installer. Alternatively, extract the entire ZIP and run `localpaste.exe`; keep its bundled runtime DLLs beside the executable.
 
 **Linux.** Make the AppImage executable and run it:
 

@@ -35,7 +35,9 @@ Re-running the workflow for a tag replaces assets that have the same names.
 
 Each platform job builds `localpaste-gui` in release mode and stages it as `localpaste` (`localpaste.exe` on Windows) next to the `LICENSE`. `release_gui_prepare.py` writes the effective packager config from `packaging/<platform>/packager.json` with the release version filled in, and `cargo-packager` produces the MSI, AppImage, or DMG and app bundle from it. `release_gui_collect.py` then names the assets, adds the ZIP or tarball of the staged binary (the app bundle on macOS), and the job uploads them.
 
-Before upload the job checks its package: the MSI must contain `localpaste.exe` after administrative extraction, the AppImage must report its runtime version and extract, and the DMG must pass `hdiutil verify`, plus a signature check of the app inside the DMG when the build is signed.
+Before upload the job checks its package: the MSI must contain `localpaste.exe` and its required Microsoft C++ runtime DLLs together after administrative extraction, the AppImage must report its runtime version and extract, and the DMG must pass `hdiutil verify`, plus a signature check of the app inside the DMG when the build is signed.
+
+Windows binaries require the Microsoft C++ runtime used by ONNX Runtime. The prepare helper finds the x64 redistributable through `VCToolsRedistDir` or the installed Visual Studio C++ tools, stages its DLLs beside the executable, and maps them into the MSI's install directory. The ZIP contains the same DLLs. Both helpers reject a payload missing `msvcp140.dll`, `msvcp140_1.dll`, `vcruntime140.dll`, or `vcruntime140_1.dll`.
 
 Windows packaging needs a WiX 3 toolchain. `release_gui_prepare.py` finds an installed one and asserts its major version, and the workflow installs WiX 3.14.1 from Chocolatey when no WiX 3 installation is found. That installation is only a preflight: `cargo-packager` ignores it and downloads its own WiX 3.11.2 into `WixTools` under `<cache-dir>/.cargo-packager`, as the pinned version's [WiX code](https://github.com/crabnebula-dev/cargo-packager/blob/cargo-packager-v0.11.8/crates/packager/src/package/wix/mod.rs) shows.
 
@@ -57,6 +59,7 @@ The workflows default to a read-only token, and only the publish job has `conten
 | Pinned toolchain and `cargo-packager` versions | `release-gui.yml`, `verify-gui-packaging.yml`, `rust-toolchain.toml` |
 | Package formats, product name, identifier, minimum macOS version | `packaging/<platform>/packager.json` |
 | Version injection, staging, WiX version check | `.github/scripts/release_gui_prepare.py` |
+| Microsoft C++ redistributable discovery and required DLLs | `.github/scripts/release_windows_runtime.py` |
 | App icons | `assets/icons/desktop_icon.png` (Linux, and the source of the macOS `.icns` generated in the workflow), `packaging/windows/localpaste.ico` (also embedded in the executable by `crates/localpaste_gui/build.rs`) |
 | Asset names and archive contents | `.github/scripts/release_gui_collect.py` |
 | Tag and version rules | `.github/scripts/release_versioning.py`, `normalize_release_tag.sh`, `normalize_packaging_tag.py`, `workspace_version.sh` |

@@ -26,6 +26,7 @@ from release_versioning import (
     normalize_packaging_tag,
     packager_version_for_runner,
 )
+from release_windows_runtime import discover_vc_runtime, runtime_dlls
 
 
 def fail(message: str) -> None:
@@ -296,6 +297,21 @@ def main() -> int:
         print(f"using WiX: {wix_bin} (version {wix_version})")
 
     stage_runtime_binary(runner_os=runner_os, target=args.target, asset_suffix=args.asset_suffix)
+
+    if runner_os == "Windows":
+        stage_dir = Path("dist") / "stage" / args.asset_suffix
+        try:
+            runtime_dir = discover_vc_runtime()
+            dlls = runtime_dlls(runtime_dir)
+        except ValueError as exc:
+            fail(str(exc))
+        resources = config.setdefault("resources", [])
+        for dll in dlls:
+            staged = stage_dir / dll.name
+            shutil.copy2(dll, staged)
+            # A filename target installs beside localpaste.exe, not in a subdirectory.
+            resources.append({"src": str(staged.resolve()), "target": dll.name})
+        print(f"staged Microsoft C++ runtime from {runtime_dir}")
 
     effective_config.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     append_github_env("PACKAGER_CONFIG_PATH", str(effective_config.resolve()))

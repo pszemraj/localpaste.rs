@@ -4,16 +4,116 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
 import release_gui_prepare
+import release_gui_collect
+import release_windows_runtime
 import validate_workflow
 from test_release_gui_versioning import create_packager_fixture, working_directory, workspace_tempdir
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def create_crt(root):
+    """Create a redist layout with the required DLLs and an additional CRT DLL."""
+    directory = root / "x64/Microsoft.VC143.CRT"
+    directory.mkdir(parents=True)
+    for name in (*release_windows_runtime.REQUIRED_DLLS, "concrt140.dll"):
+        (directory / name).write_bytes(f"fixture {name}".encode())
+    return directory
+
+
+class WindowsPackagingTests(unittest.TestCase):
+    def test_active_redist_is_used_without_querying_other_toolchains(self):
+        with workspace_tempdir() as root:
+            crt = create_crt(root / "active")
+            with mock.patch.dict(os.environ, {"VCToolsRedistDir": str(root / "active")}), \
+                    mock.patch.object(release_windows_runtime.subprocess, "run") as run:
+                self.assertEqual(release_windows_runtime.discover_vc_runtime(), crt)
+                run.assert_not_called()
+
+    def test_vswhere_discovery_selects_newest_complete_numeric_version(self):
+        with workspace_tempdir() as root:
+            vswhere = root / "program-files/Microsoft Visual Studio/Installer/vswhere.exe"
+            vswhere.parent.mkdir(parents=True)
+            vswhere.touch()
+            redist = root / "visual-studio/VC/Redist/MSVC"
+            create_crt(redist / "14.9.1")
+            expected = create_crt(redist / "14.10.1")
+            incomplete = create_crt(redist / "14.11.1")
+            (incomplete / "vcruntime140_1.dll").unlink()
+            result = subprocess.CompletedProcess([], 0, stdout=str(root / "visual-studio") + "\n")
+            with mock.patch.dict(os.environ, {"ProgramFiles(x86)": str(root / "program-files")}, clear=True), \
+                    mock.patch.object(release_windows_runtime.subprocess, "run", return_value=result) as run:
+                self.assertEqual(release_windows_runtime.discover_vc_runtime(), expected)
+                self.assertIn("Microsoft.VisualStudio.Component.VC.Tools.x86.x64", run.call_args.args[0])
+
+    def test_discovery_rejects_incomplete_redist(self):
+        with workspace_tempdir() as root:
+            crt = create_crt(root)
+            (crt / "msvcp140.dll").unlink()
+            with mock.patch.dict(os.environ, {"VCToolsRedistDir": str(root)}, clear=True):
+                with self.assertRaisesRegex(ValueError, "complete x64 Microsoft C\\+\\+ redistributable"):
+                    release_windows_runtime.discover_vc_runtime()
+
+    def test_prepare_and_zip_include_runtime_dlls_beside_executable(self):
+        with workspace_tempdir() as root:
+            target = "x86_64-pc-windows-msvc"
+            config = create_packager_fixture(root, "windows", target)
+            crt = create_crt(root / "redist")
+            argv = ["release_gui_prepare.py", "--tag", "v0.5.0", "--target", target,
+                    "--asset-suffix", "windows-x86_64", "--packager-config", str(config),
+                    "--runner-os", "Windows"]
+            with working_directory(root), mock.patch("sys.argv", argv), \
+                    mock.patch.dict(os.environ, {"VCToolsRedistDir": str(root / "redist")}), \
+                    mock.patch.object(release_gui_prepare, "discover_wix_bin", return_value=(root / "wix/bin", "3.14.1")):
+                self.assertEqual(release_gui_prepare.main(), 0)
+            stage = root / "dist/stage/windows-x86_64"
+            expected = {path.name: path.read_bytes() for path in crt.iterdir()}
+            effective = json.loads(config.with_name("packager.effective.json").read_text())
+            self.assertEqual({item["target"] for item in effective["resources"]}, set(expected))
+            for resource in effective["resources"]:
+                self.assertEqual(Path(resource["src"]), stage / resource["target"])
+                self.assertEqual(Path(resource["src"]).read_bytes(), expected[resource["target"]])
+            packages = root / "packages"
+            packages.mkdir()
+            (packages / "LocalPaste.msi").write_bytes(b"installer fixture")
+            release = root / "release"
+            release.mkdir()
+            names = release_gui_collect.collect_windows("v0.5.0", "windows-x86_64", packages, release, stage)
+            with zipfile.ZipFile(release / names[1]) as archive:
+                self.assertEqual(set(archive.namelist()), {"localpaste.exe", "LICENSE", *expected})
+                self.assertEqual(archive.read("localpaste.exe"), (stage / "localpaste.exe").read_bytes())
+                for name, payload in expected.items():
+                    self.assertEqual(archive.read(name), payload)
+
+    def test_zip_rejects_missing_or_empty_runtime_instead_of_publishing_broken_payload(self):
+        with workspace_tempdir() as root:
+            stage = create_crt(root)
+            (stage / "localpaste.exe").write_bytes(b"executable fixture")
+            (stage / "LICENSE").write_text("MIT")
+            packages, release = root / "packages", root / "release"
+            packages.mkdir()
+            release.mkdir()
+            (packages / "LocalPaste.msi").write_bytes(b"installer fixture")
+            for name in release_windows_runtime.REQUIRED_DLLS:
+                for missing in (True, False):
+                    with self.subTest(name=name, missing=missing):
+                        path = stage / name
+                        if missing:
+                            path.unlink()
+                        else:
+                            path.write_bytes(b"")
+                        with self.assertRaises(SystemExit):
+                            release_gui_collect.collect_windows("v0.5.0", "windows-x86_64", packages, release, stage)
+                        self.assertFalse(list(release.glob("*.zip")))
+                        path.write_bytes(b"runtime fixture")
 
 
 class MacosPackagingTests(unittest.TestCase):

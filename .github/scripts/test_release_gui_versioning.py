@@ -13,6 +13,7 @@ from unittest import mock
 
 import release_gui_collect
 import release_gui_prepare
+from release_windows_runtime import REQUIRED_DLLS
 from release_versioning import (
     VersionValidationError,
     normalize_packaging_tag,
@@ -173,6 +174,10 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
         with workspace_tempdir() as root:
             target = "x86_64-pc-windows-msvc"
             packager_config = create_packager_fixture(root, "windows", target)
+            runtime_dir = root / "crt"
+            runtime_dir.mkdir()
+            for name in REQUIRED_DLLS:
+                (runtime_dir / name).write_bytes(b"runtime fixture")
 
             with working_directory(root):
                 argv = [
@@ -195,6 +200,7 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
                         "discover_wix_bin",
                         return_value=(Path("C:/WiX/bin"), "3.14.1"),
                     ),
+                    mock.patch.object(release_gui_prepare, "discover_vc_runtime", return_value=runtime_dir),
                 ):
                     self.assertEqual(release_gui_prepare.main(), 0)
 
