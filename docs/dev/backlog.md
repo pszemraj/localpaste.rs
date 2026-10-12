@@ -7,6 +7,8 @@
 
 - [ ] Split `LocalPasteApp` into domain state groups (`EditorState`, `HighlightState`, `SearchState`, `UiState`) to reduce coupling and simplify test harness construction.
 - [ ] Extract the virtual input-routing/control-flow block from `LocalPasteApp::update` into a dedicated per-frame input pipeline API.
+- [ ] Split the remaining files above the 900-line warning threshold by responsibility: `localpaste_gui/src/app/highlight/mod.rs`, `localpaste_gui/src/app/tests/highlight_behaviors.rs`, and `localpaste_tools/src/main.rs`. They remain below the 1000-line cap; defer this unrelated refactor until work in those modules can validate each extraction.
+- [ ] Preserve New's editor-focus intent through save-before-selection transitions, and define how typing or paste during that loading gap should behave. The existing path returns before setting the New focus request when a save is outstanding; reproduce native event delivery before changing input buffering.
 - [ ] Add local perf microbench coverage (list-from-metadata and highlight/layout paths) to catch regressions earlier than manual perf runs.
 - [~] Reduce highlight request payload churn and revisit debounce tuning using fresh perf traces.
 - [~] Reduce the fallback `base.lines.clone()` in `queue_highlight_patch` for very large files while preserving the displayed render until its replacement is ready.
@@ -38,6 +40,7 @@
 - [ ] Add schema-repair backup retention/rotation so repeated upgrades cannot accumulate unbounded snapshots in the DB directory.
 - [ ] Add structured output mode (`--output json`) for `check-ast-dupes` with stable category/severity/score fields and policy-aware `--fail-on-findings` handling.
 - [ ] Revisit `check-ast-dupes --include-tests` duplicate/near-miss navigation and discovery input pairs only if a measured cleanup reduces LOC or clarifies behavior: `localpaste_gui/src/app/tests/{keyboard_navigation_audit,discovery_input_order}.rs` covers distinct cursor, event-order, and IME transitions that should stay explicit unless a better structure preserves the invariants. Shared frame/setup code accounts for the discovery-test findings.
+- [ ] Keep the test-inclusive AST similarities in `localpaste_gui/src/app/tests/editor_find.rs` (body-match selection versus metadata-only query) and `localpaste_core/src/detection/classification_tests.rs` (tabbed notes versus sentence-case lists) explicit until consolidation preserves their distinct assertions with less setup. These are fixture similarities, with no shared production implementation to consolidate.
 - [ ] Add local doc/help contract checks (verify key `--help` sections and command examples stay synchronized with behavior).
 - [ ] Expand standalone `verify-gui-packaging.yml` beyond macOS (at least Linux x64) so packaging script regressions are caught before release-tag runs.
 - [ ] Revisit `TransactionOps` create/delete/move wrapper consolidation with a lock-safe transaction template only if we can preserve operation-specific invariants and error semantics without reducing readability.
