@@ -17,6 +17,7 @@ pub enum SidebarCollection {
     Config,
     Logs,
     Links,
+    Short,
 }
 
 impl SidebarCollection {
@@ -36,6 +37,7 @@ impl SidebarCollection {
             Self::Config => "config",
             Self::Logs => "logs",
             Self::Links => "links",
+            Self::Short => "short",
         }
     }
 
@@ -55,6 +57,7 @@ impl SidebarCollection {
             "config" => Some(Self::Config),
             "logs" => Some(Self::Logs),
             "links" => Some(Self::Links),
+            "short" => Some(Self::Short),
             _ => None,
         }
     }
@@ -385,6 +388,7 @@ fn matches_semantic_collection(item: &PasteSummary, collection: SidebarCollectio
             &LINK_SUMMARY_PATTERN,
             looks_like_url_name(item.name.as_str()),
         ),
+        SidebarCollection::Short => summary_has_kind(item, PasteKind::Short),
         _ => false,
     }
 }
@@ -420,7 +424,8 @@ pub(crate) fn matches_active_filters(
         | SidebarCollection::Documents
         | SidebarCollection::Config
         | SidebarCollection::Logs
-        | SidebarCollection::Links => matches_semantic_collection(item, active_collection.clone()),
+        | SidebarCollection::Links
+        | SidebarCollection::Short => matches_semantic_collection(item, active_collection.clone()),
     };
     if !collection_match {
         return false;
@@ -600,7 +605,7 @@ mod tests {
         })
         .collect::<Vec<_>>();
         // Without a language these are too short to classify, so no content
-        // kind claims them on a few words of evidence.
+        // kind claims them on a few words of evidence; the Short filter lists them.
         for content in [
             "{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}\n",
             "sudo systemctl restart nginx",
@@ -616,7 +621,7 @@ mod tests {
             cases.push((
                 localpaste_core::models::paste::Paste::new(content.into(), "notes".into()),
                 PasteKind::Short,
-                None,
+                Some(SidebarCollection::Short),
             ));
         }
         for (content, kind) in [
@@ -675,7 +680,12 @@ mod tests {
                     "{content}"
                 );
             }
-            if kind == PasteKind::Short {
+            if kind != PasteKind::Short {
+                assert!(
+                    !matches_semantic_collection(&item, SidebarCollection::Short),
+                    "{content}"
+                );
+            } else {
                 for collection in [
                     SidebarCollection::Code,
                     SidebarCollection::Config,
@@ -699,6 +709,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_collection_restores_from_its_storage_value() {
+        for collection in [
+            SidebarCollection::All,
+            SidebarCollection::Today,
+            SidebarCollection::Week,
+            SidebarCollection::Recent,
+            SidebarCollection::Unfiled,
+            SidebarCollection::Code,
+            SidebarCollection::Documents,
+            SidebarCollection::Config,
+            SidebarCollection::Logs,
+            SidebarCollection::Links,
+            SidebarCollection::Short,
+        ] {
+            assert_eq!(
+                SidebarCollection::from_storage_value(collection.storage_value()),
+                Some(collection)
+            );
+        }
+        assert_eq!(SidebarCollection::Short.storage_value(), "short");
     }
 
     #[test]

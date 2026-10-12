@@ -916,12 +916,20 @@ fn smart_collections_use_derived_kind_without_name_or_language_hints() {
         },
         ..test_summary("link", "quiet-valley", None, 20)
     };
+    // A few words without a language are too short to classify: Short, not a Document.
+    let hello = Paste::new("hello new paste".to_string(), "calm-meadow".to_string());
+    let short = PasteSummary {
+        derived: localpaste_core::models::paste::PasteMeta::from(&hello).derived,
+        ..test_summary("short", "calm-meadow", None, hello.content.len())
+    };
 
-    apply_paste_list(&mut harness, vec![code, config, log, link]);
+    apply_paste_list(&mut harness, vec![code, config, log, link, short]);
     assert_collection_ids(&mut harness, SidebarCollection::Code, &["code"]);
     assert_collection_ids(&mut harness, SidebarCollection::Config, &["config"]);
     assert_collection_ids(&mut harness, SidebarCollection::Logs, &["log"]);
     assert_collection_ids(&mut harness, SidebarCollection::Links, &["link"]);
+    assert_collection_ids(&mut harness, SidebarCollection::Short, &["short"]);
+    assert_collection_ids(&mut harness, SidebarCollection::Documents, &[]);
 }
 
 #[test]

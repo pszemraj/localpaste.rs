@@ -12,7 +12,10 @@ fn worker_filters_collections_before_top_k_and_separates_cached_collections() {
     document.updated_at = Utc::now() - chrono::Duration::days(1);
     let mut code = Paste::new("// Needle\nfn main() {}".into(), "Needle code".into());
     code.language = Some("rust".into());
-    for paste in [&document, &code] {
+    // Unlabeled and too short to classify, so only the Short filter lists it.
+    let mut short = Paste::new("Needle".into(), "Needle short".into());
+    short.updated_at = Utc::now() - chrono::Duration::days(2);
+    for paste in [&document, &code, &short] {
         db.pastes.create(paste).unwrap();
     }
     let backend = spawn_backend(db, 10 * 1024 * 1024);
@@ -20,6 +23,7 @@ fn worker_filters_collections_before_top_k_and_separates_cached_collections() {
         (SidebarCollection::All, &code.id),
         (SidebarCollection::Documents, &document.id),
         (SidebarCollection::Code, &code.id),
+        (SidebarCollection::Short, &short.id),
     ] {
         backend
             .cmd_tx

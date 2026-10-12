@@ -6,9 +6,10 @@ mod clusters;
 mod layout_reuse;
 
 /// Smart-filter chip labels, grouped by the row each renders on.
-const FILTER_ROWS: [&[&str]; 2] = [
+const FILTER_ROWS: [&[&str]; 3] = [
     &["All", "Today", "This Week", "Recent (30d)"],
-    &["Unfiled", "Documents", "Code", "Config", "Logs", "Links"],
+    &["Documents", "Code", "Config", "Logs", "Links"],
+    &["Unfiled", "Short"],
 ];
 
 /// Left edge of sidebar content (8 pt panel margin).
@@ -119,7 +120,7 @@ fn chip_row_extent(output: &egui::FullOutput, row: &[&str]) -> (f32, f32) {
 fn every_smart_filter_is_a_visible_chip_without_an_overflow_menu() {
     let mut harness = make_app();
     harness.app.active_collection = crate::backend::SidebarCollection::Links;
-    // Default window at each display scale: time chips on one row, kinds on the next.
+    // Default window at each display scale: time chips, then kinds, then Unfiled and Short.
     for pixels_per_point in DISPLAY_SCALES {
         let output = settled_frame(&mut harness.app, DEFAULT_WINDOW_SIZE, pixels_per_point);
         let mut row_tops = Vec::new();
@@ -134,7 +135,10 @@ fn every_smart_filter_is_a_visible_chip_without_an_overflow_menu() {
             );
             row_tops.push(top);
         }
-        assert!(row_tops[0] < row_tops[1], "filter rows: {row_tops:?}");
+        assert!(
+            row_tops.windows(2).all(|pair| pair[0] < pair[1]),
+            "filter rows: {row_tops:?}"
+        );
         assert!(sidebar_text_rects(&output, "...").is_empty());
         assert!(sidebar_text_rects(&output, "Active filter is in ...").is_empty());
     }

@@ -219,7 +219,9 @@ impl LocalPasteApp {
                     }
                 });
 
-                ui.add_space(10.0);
+                // No heading above the chips, which name their own filters, so
+                // the third chip row leaves the list where two rows and a heading did.
+                ui.add_space(2.0);
                 self.render_collection_filters(ui);
 
                 ui.separator();
@@ -402,13 +404,9 @@ impl LocalPasteApp {
     }
 
     fn render_collection_filters(&mut self, ui: &mut egui::Ui) {
-        ui.label(
-            RichText::new("Smart filters")
-                .small()
-                .color(COLOR_TEXT_MUTED),
-        );
-        // Time windows on the first row, content kinds on the second.
-        let rows: [&[(SidebarCollection, &str)]; 2] = [
+        // Time windows on the first row, content kinds on the second, Unfiled
+        // and Short (pastes too short to classify) on the third.
+        let rows: [&[(SidebarCollection, &str)]; 3] = [
             &[
                 (SidebarCollection::All, "All"),
                 (SidebarCollection::Today, "Today"),
@@ -416,12 +414,15 @@ impl LocalPasteApp {
                 (SidebarCollection::Recent, "Recent (30d)"),
             ],
             &[
-                (SidebarCollection::Unfiled, "Unfiled"),
                 (SidebarCollection::Documents, "Documents"),
                 (SidebarCollection::Code, "Code"),
                 (SidebarCollection::Config, "Config"),
                 (SidebarCollection::Logs, "Logs"),
                 (SidebarCollection::Links, "Links"),
+            ],
+            &[
+                (SidebarCollection::Unfiled, "Unfiled"),
+                (SidebarCollection::Short, "Short"),
             ],
         ];
         let mut pending_collection: Option<SidebarCollection> = None;
