@@ -163,6 +163,40 @@ fn deeply_nested_assignment_detection_has_a_bounded_scan() {
 }
 
 #[test]
+fn sentences_opening_with_def_or_class_are_not_python_definitions() {
+    for note in [
+        "class is cancelled today: bring your notes",
+        "class Tuesday (room 4): bring your notes",
+        "def foo(bar) is broken: see the log",
+        "def not coming tonight: dentist at 3pm",
+    ] {
+        for body in [note.to_owned(), format!("{note}\n")] {
+            assert!(!heuristic::looks_like_python_source(&body), "{body}");
+            assert_ne!(detect_language(&body).as_deref(), Some("python"), "{body}");
+            let paste = Paste::new(body.clone(), "note".into());
+            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document);
+            assert_eq!(derive(&body, Some("markdown")).kind, PasteKind::Document);
+        }
+    }
+    for source in [
+        "def main():",
+        "async def fetch(url):",
+        "def größe(x): return x",
+        "def read_config(",
+        "def parse(text: str) -> dict[str, int]:",
+        "def first[T](items: list[T]) -> T:",
+        "def pick(key=lambda item: item[0]):",
+        "def close(marker=')'):",
+        "class Point:",
+        "class Point(Base, metaclass=Meta):",
+        "class Box[T](Base):",
+        "class Config(",
+    ] {
+        assert!(heuristic::looks_like_python_source(source), "{source}");
+    }
+}
+
+#[test]
 fn tabbed_python_source_is_not_a_makefile_target() {
     for source in [
         "def main():\n\tpass\n",

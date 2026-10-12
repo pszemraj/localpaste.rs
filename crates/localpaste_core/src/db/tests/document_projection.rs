@@ -75,6 +75,7 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
         ("buy milk - 2 cartons", "text", PasteKind::Other, PasteKind::Document),
         ("$ 5 for a coffee is too much honestly", "text", PasteKind::Other, PasteKind::Document),
         ("> python rocks", "markdown", PasteKind::Code, PasteKind::Document),
+        ("class is cancelled today: bring your notes", "markdown", PasteKind::Code, PasteKind::Document),
         ("# Todo\nls", "markdown", PasteKind::Code, PasteKind::Document),
         ("```\nfrom os import path\n# Load\nx = 1\n```", "markdown", PasteKind::Document, PasteKind::Code),
         ("# build all\nfor f in *.c; do cc \"$f\"; done", "markdown", PasteKind::Document, PasteKind::Code),

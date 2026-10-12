@@ -599,10 +599,7 @@ fn python_body_evidence(sample: &str) -> PythonBodyEvidence {
         }
         if looks_like_python_import(line)
             || looks_like_python_from_import(line)
-            || (["def ", "async def ", "class "]
-                .iter()
-                .any(|prefix| line.starts_with(*prefix))
-                && line.contains(['(', ':']))
+            || super::python::definition_header(line)
         {
             anchored = true;
             continue;

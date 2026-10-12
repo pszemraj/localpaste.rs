@@ -1,4 +1,5 @@
-//! Whole-sample compound Python evidence for ambiguous Makefile-shaped bodies.
+//! Python source shapes: definition headers, and whole-sample compound
+//! evidence for ambiguous Makefile-shaped bodies.
 
 use crate::text::{utf8_prefix_by_bytes, TEXT_SAMPLE_MAX_BYTES};
 
@@ -250,6 +251,64 @@ fn target_delimiter(
         };
     }
     None
+}
+
+/// Recognize a `def` or `class` line by the shape Python requires of a definition header.
+///
+/// An identifier follows the keyword directly, then a function's parameter list
+/// or a class's optional bases, either of which may follow PEP 695 type
+/// parameters, and then the colon that ends the header. Only a `->` return
+/// annotation may stand between a function's parameters and its colon, and
+/// brackets still open at the end of the line continue the header on the next.
+/// A sentence that opens with the keyword, such as `class is cancelled today:
+/// bring your notes`, has words where those brackets or that colon belong.
+///
+/// # Arguments
+/// - `line`: Trimmed source line.
+///
+/// # Returns
+/// Whether `line` opens a function or class definition.
+///
+/// # Panics
+/// Panics only if the lexical scanner's character-boundary invariant is violated.
+pub(super) fn definition_header(line: &str) -> bool {
+    let Some((function, rest)) = [("def ", true), ("async def ", true), ("class ", false)]
+        .into_iter()
+        .find_map(|(keyword, function)| Some((function, line.strip_prefix(keyword)?)))
+    else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let Some(name_end) = identifier_end(rest) else {
+        return false;
+    };
+    let mut header = &rest[name_end..];
+    let mut parameters = false;
+    while header.starts_with(['(', '[']) {
+        parameters |= header.starts_with('(');
+        let Some(close) = group_end(header) else {
+            return parameters || !function;
+        };
+        header = header[close + 1..].trim_start();
+    }
+    let closed = match header.strip_prefix("->") {
+        Some(annotation) => function && top_level_delimiter(annotation, ':').is_some(),
+        None => header.starts_with(':'),
+    };
+    closed && (parameters || !function)
+}
+
+/// Byte index of the bracket closing the group that `value` opens, if it closes.
+fn group_end(value: &str) -> Option<usize> {
+    let mut depth = 0isize;
+    syntax_chars(value).find_map(|(idx, ch)| {
+        depth += match ch {
+            '(' | '[' | '{' => 1,
+            ')' | ']' | '}' => -1,
+            _ => 0,
+        };
+        (depth == 0).then_some(idx)
+    })
 }
 
 fn identifier(value: &str) -> bool {
