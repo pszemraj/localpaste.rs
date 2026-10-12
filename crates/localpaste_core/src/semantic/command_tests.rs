@@ -1,6 +1,8 @@
 //! Command-versus-prose regressions for notes that start with a tool name.
 
-use super::commands::{extract_command_handle, looks_like_shell_command_sequence};
+use super::commands::{
+    extract_command_handle, has_prose_grammar, looks_like_shell_command_sequence,
+};
 use super::{derive, PasteKind};
 use crate::models::paste::{Paste, PasteMeta};
 use crate::test_support::assert_derived_kinds;
@@ -288,6 +290,20 @@ fn sentences_with_echo_or_control_words_stay_documents() {
         assert!(!looks_like_shell_command_sequence(&note), "{note}");
     }
     assert_derived_kinds(&notes, &[None, Some("text")], PasteKind::Document);
+}
+
+#[test]
+fn prose_grammar_scan_is_linear_in_quotes_after_a_word() {
+    // Quoted text does not end a word, so every quote in this sample-sized
+    // line follows the same 32 000-character word.
+    let quoted = format!("x {}1{}", "a".repeat(32_000), "''".repeat(16_000));
+    let started = std::time::Instant::now();
+    assert!(!has_prose_grammar(&quoted));
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    // An apostrophe after letters is still prose, and an escape is not a letter.
+    for (text, prose) in [("it's", true), ("a\\b'c'", false), ("x1'y'", false)] {
+        assert_eq!(has_prose_grammar(text), prose, "{text}");
+    }
 }
 
 #[test]

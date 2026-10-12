@@ -269,6 +269,9 @@ const FUNCTION_WORDS: &[&str] = &[
 pub(crate) fn has_prose_grammar(text: &str) -> bool {
     let mut chars = text.chars();
     let mut word = String::new();
+    // Tracked per pushed character: quoted text does not end a word, so
+    // rescanning the word at each quote would be quadratic in its length.
+    let mut alphabetic_word = true;
     let mut quoted = false;
     loop {
         let ch = chars.next();
@@ -278,6 +281,7 @@ pub(crate) fn has_prose_grammar(text: &str) -> bool {
                     return true;
                 }
                 word.clear();
+                alphabetic_word = true;
                 quoted = false;
                 if ch.is_none() {
                     return false;
@@ -288,11 +292,12 @@ pub(crate) fn has_prose_grammar(text: &str) -> bool {
             Some('\\') => {
                 let _ = chars.next();
                 word.push('_');
+                alphabetic_word = false;
             }
             Some(quote @ ('\'' | '"')) => {
                 // A shell never opens a quote mid-word in `it's` or `twitter's`;
                 // only prose puts an apostrophe after letters.
-                if quote == '\'' && !word.is_empty() && word.chars().all(char::is_alphabetic) {
+                if quote == '\'' && !word.is_empty() && alphabetic_word {
                     return true;
                 }
                 quoted = true;
@@ -308,7 +313,10 @@ pub(crate) fn has_prose_grammar(text: &str) -> bool {
                     }
                 }
             }
-            Some(other) => word.push(other),
+            Some(other) => {
+                word.push(other);
+                alphabetic_word &= other.is_alphabetic();
+            }
         }
     }
 }
