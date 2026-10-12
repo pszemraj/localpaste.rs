@@ -6,7 +6,7 @@ Artifact names and installation steps for users are in [GUI Releases](../release
 
 [`release-gui.yml`](../../.github/workflows/release-gui.yml) builds and uploads artifacts when a GitHub Release is published or when started manually; the release tag must be a stable `vX.Y.Z`. It runs a server and CLI smoke test on Linux similar to the [devlog runbook](devlog.md#runtime-smoke-test-server-cli) (create, search, delete, and a second paste read back after a restart), then builds, packages, and checks the GUI on Windows, Linux, and macOS in parallel. A run that [publishes](#source-modes) then uploads the assets and a `checksums.sha256` file to the GitHub release for the tag, which needs all three platform jobs to succeed.
 
-[`verify-gui-packaging.yml`](../../.github/workflows/verify-gui-packaging.yml) is a manual, macOS-only rehearsal: workspace check, GUI tests, packaging, and signing when credentials exist. It publishes nothing and keeps its output as a workflow artifact for seven days.
+[`verify-gui-packaging.yml`](../../.github/workflows/verify-gui-packaging.yml) is a manual, macOS-only rehearsal: workspace check, GUI tests, packaging, and signing when credentials exist. Its Cargo commands use `--locked`, like release builds. It publishes nothing and keeps its output as a workflow artifact for seven days.
 
 [`workflow-lint.yml`](../../.github/workflows/workflow-lint.yml) runs `validate_workflow.py` (YAML, embedded shell, and release invariants such as job order, the platform matrix, and the macOS signing and WiX rules) plus the release helper tests, on pull requests that touch workflows or scripts and when started manually. The same commands are in the [validation loop](devlog.md#validation-loop) for local runs.
 
@@ -16,7 +16,7 @@ Release builds do not run on PR merges, branch or tag pushes, draft saves, relea
 
 A run packages either a release tag or the current commit.
 
-In `release_tag` mode the tag must be a stable `vX.Y.Z` (the leading `v` is optional on manual input) that exists in the repository, and `[workspace.package].version` in the root `Cargo.toml` at that tag must equal it. The smoke and build jobs check out the tag's commit, so the build matches the tag exactly. They also run the helper scripts from that checkout, so a change to a script's command-line flags must keep working against older tags; the workflow probes `release_gui_prepare.py --help` before passing `--expected-wix-major` for that reason. A published release always uses this mode and uploads to that release.
+In `release_tag` mode the tag must be a stable `vX.Y.Z` (the leading `v` is optional on manual input) that exists in the repository, and `[workspace.package].version` in the root `Cargo.toml` at that tag must equal it. The smoke and build jobs check out the tag's commit, so the Rust code, lockfile, and package templates match the tag exactly. Packaging helper scripts come from the workflow's own commit (`github.workflow_sha`), so a manual retry from an updated branch can apply packaging fixes to an existing tag without changing its source. A published release always uses this mode and uploads to that release.
 
 In `current_ref` mode the run packages the commit it was started from and never publishes. The version comes from the workspace version, which may be a prerelease. Artifact names keep the full prerelease version, but the MSI uses only `major.minor.patch`, because WiX product versions cannot carry prerelease or build metadata.
 
@@ -41,7 +41,7 @@ Windows packaging needs a WiX 3 toolchain. `release_gui_prepare.py` finds an ins
 
 ## macOS signing and notarization
 
-Signing runs only when all of these repository secrets are set: `APPLE_SIGNING_CERT_BASE64`, `APPLE_SIGNING_CERT_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. With them, the job signs the app bundle and the DMG, notarizes the DMG, and staples both. Without them, a `release_tag` run still publishes the macOS artifacts unsigned and unnotarized, and a `current_ref` run builds them unsigned.
+Signing runs only when all of these repository secrets are set: `APPLE_SIGNING_CERT_BASE64`, `APPLE_SIGNING_CERT_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. With them, the effective config sets `macos.signingIdentity` and the workflow passes credentials to cargo-packager using its `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID` environment variables. The packager signs, notarizes, and staples the app before putting it in the DMG, then signs the DMG. The workflow notarizes and staples the DMG and verifies the signature and staple of the app inside it. It never modifies the app after assembling the DMG. Without all six secrets, a `release_tag` run still publishes the macOS artifacts unsigned and unnotarized, and a `current_ref` run builds them unsigned.
 
 When a release contains a DMG, the publish job appends a one-line Gatekeeper note to the release body, once. Its wording matches the instructions in [../release-gui.md](../release-gui.md#macos-gatekeeper); keep the two in step.
 

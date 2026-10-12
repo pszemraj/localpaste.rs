@@ -142,6 +142,28 @@ class ReleaseSourceTests(unittest.TestCase):
         self.assertIn("release tag does not exist: v0.9.9", result.stderr)
         self.assertEqual(outputs, {})
 
+    def test_manual_retry_uses_workflow_helpers_without_changing_tagged_source(self):
+        helper = self.root / ".github/scripts/release_gui_prepare.py"
+        helper.write_text("# corrected packaging helper\n")
+        self.git("add", str(helper))
+        self.git("commit", "--quiet", "-m", "fix packaging")
+        workflow_sha = self.git("rev-parse", "HEAD")
+        self.git("checkout", "--quiet", "v0.5.0")
+        self.assertFalse(helper.exists())
+        runner_temp = self.root / "runner-temp"
+        runner_temp.mkdir()
+        github_env = self.root / "github-env"
+        step = validate_workflow.find_step(load_workflow()["jobs"]["build_package"],
+            step_name="Load packaging helpers from workflow commit")
+        result = subprocess.run(["bash", "-c", step["run"]], cwd=self.root,
+            env=self.env | {"RUNNER_TEMP": str(runner_temp), "WORKFLOW_SHA": workflow_sha,
+                            "GITHUB_ENV": str(github_env)}, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        scripts = Path(github_env.read_text().strip().split("=", 1)[1])
+        self.assertEqual((scripts / helper.name).read_text(), "# corrected packaging helper\n")
+        self.assertFalse(helper.exists())
+        self.assertEqual(self.git("rev-parse", "HEAD"), self.release_sha)
+
 
 if __name__ == "__main__":
     unittest.main()

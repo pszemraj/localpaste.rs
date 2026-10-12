@@ -62,12 +62,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo check --workspace --all-targets --all-features
+          cargo check --workspace --all-targets --all-features --locked
       - name: GUI test suite
         shell: bash
         run: |
           set -euo pipefail
-          cargo test -p localpaste_gui
+          cargo test -p localpaste_gui --locked
       - name: Determine macOS signing/notarization availability
         id: mac_signing
         shell: bash
@@ -110,7 +110,7 @@ jobs:
       - name: Install cargo-packager
         run: cargo install cargo-packager --version 0.11.8 --locked
       - name: Build GUI release binary
-        run: cargo build -p localpaste_gui --bin localpaste-gui --release --target ${{ env.TARGET }}
+        run: cargo build -p localpaste_gui --bin localpaste-gui --release --target ${{ env.TARGET }} --locked
       - name: Generate macOS icns icon
         shell: bash
         run: |
@@ -146,6 +146,9 @@ jobs:
           fi
       - name: Prepare packager config and staged runtime
         shell: bash
+        env:
+          MACOS_SIGNING_ENABLED: ${{ steps.mac_signing.outputs.enabled }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
           prepare_args=(
@@ -160,32 +163,23 @@ jobs:
           )
           python .github/scripts/release_gui_prepare.py "${prepare_args[@]}"
       - name: Build installer packages
+        env:
+          APPLE_CERTIFICATE: ${{ steps.mac_signing.outputs.enabled == 'true' && secrets.APPLE_SIGNING_CERT_BASE64 || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ steps.mac_signing.outputs.enabled == 'true' && secrets.APPLE_SIGNING_CERT_PASSWORD || '' }}
+          APPLE_ID: ${{ steps.mac_signing.outputs.enabled == 'true' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ steps.mac_signing.outputs.enabled == 'true' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ steps.mac_signing.outputs.enabled == 'true' && secrets.APPLE_TEAM_ID || '' }}
         run: python -c "import os, subprocess; subprocess.run(['cargo', 'packager', '--config', os.environ['PACKAGER_CONFIG_PATH']], check=True)"
-      - name: Sign, notarize, and verify macOS artifacts
+      - name: Notarize DMG and verify macOS artifacts
         if: steps.mac_signing.outputs.enabled == 'true'
         shell: bash
         env:
-          APPLE_SIGNING_CERT_BASE64: ${{ secrets.APPLE_SIGNING_CERT_BASE64 }}
-          APPLE_SIGNING_CERT_PASSWORD: ${{ secrets.APPLE_SIGNING_CERT_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          KEYCHAIN_PATH="${RUNNER_TEMP}/localpaste-signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
-          CERT_PATH="${RUNNER_TEMP}/localpaste-signing.p12"
           PACKAGER_DIR="dist/packager/${ASSET_SUFFIX}"
-
-          echo "${APPLE_SIGNING_CERT_BASE64}" | base64 --decode > "${CERT_PATH}"
-          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
-          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
-          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
-          security list-keychains -d user -s "${KEYCHAIN_PATH}"
-          security import "${CERT_PATH}" -k "${KEYCHAIN_PATH}" -P "${APPLE_SIGNING_CERT_PASSWORD}" -T /usr/bin/codesign -T /usr/bin/security
-          security set-key-partition-list -S apple-tool:,apple: -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
-
           APP_BUNDLE="$(find "${PACKAGER_DIR}" -maxdepth 4 -type d -name '*.app' | head -n 1)"
           DMG_PATH="$(find "${PACKAGER_DIR}" -maxdepth 4 -type f -name '*.dmg' | head -n 1)"
           if [[ -z "${APP_BUNDLE}" || -z "${DMG_PATH}" ]]; then
@@ -193,18 +187,19 @@ jobs:
             exit 1
           fi
 
-          codesign --force --deep --options runtime --timestamp --sign "${APPLE_SIGNING_IDENTITY}" "${APP_BUNDLE}"
-          codesign --force --timestamp --sign "${APPLE_SIGNING_IDENTITY}" "${DMG_PATH}"
-
+          # cargo-packager has already signed and stapled the app before building the DMG.
+          codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"
+          xcrun stapler validate "${APP_BUNDLE}"
+          codesign --verify --strict --verbose=2 "${DMG_PATH}"
           xcrun notarytool submit "${DMG_PATH}" \
             --apple-id "${APPLE_ID}" \
             --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
             --team-id "${APPLE_TEAM_ID}" \
             --wait
 
-          xcrun stapler staple "${APP_BUNDLE}"
           xcrun stapler staple "${DMG_PATH}"
-          spctl --assess --type open --verbose=4 "${DMG_PATH}"
+          xcrun stapler validate "${DMG_PATH}"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "${DMG_PATH}"
       - name: Verify signed app bundle inside DMG
         if: steps.mac_signing.outputs.enabled == 'true'
         shell: bash
@@ -232,6 +227,7 @@ jobs:
           fi
 
           codesign --verify --deep --strict --verbose=2 "${MOUNTED_APP}"
+          xcrun stapler validate "${MOUNTED_APP}"
           spctl --assess --type execute --verbose=4 "${MOUNTED_APP}"
       - name: Verify macOS DMG usability
         shell: bash

@@ -509,7 +509,7 @@ def validate_release_trigger_rules(path: Path, data: dict[str, Any]) -> list[str
 
 
 def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> list[str]:
-    if path.name != "release-gui.yml":
+    if path.name not in {"release-gui.yml", "verify-gui-packaging.yml"}:
         return []
 
     errors: list[str] = []
@@ -517,21 +517,22 @@ def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> li
     if not isinstance(jobs, dict):
         return errors
 
-    build_job = jobs.get("build_package")
+    job_name = "build_package" if path.name == "release-gui.yml" else "macos-package-verify"
+    build_job = jobs.get(job_name)
     if not isinstance(build_job, dict):
         return errors
 
     mac_gate_step = find_step(build_job, step_id="mac_signing")
     if mac_gate_step is None:
         errors.append(
-            f"{path}: build_package must define a mac signing gate step with id 'mac_signing'"
+            f"{path}: {job_name} must define a mac signing gate step with id 'mac_signing'"
         )
         return errors
 
-    sign_step = find_step(build_job, step_name="Sign, notarize, and verify macOS artifacts")
+    sign_step = find_step(build_job, step_name="Notarize DMG and verify macOS artifacts")
     if sign_step is None:
         errors.append(
-            f"{path}: build_package must include 'Sign, notarize, and verify macOS artifacts' step"
+            f"{path}: {job_name} must include 'Notarize DMG and verify macOS artifacts' step"
         )
     else:
         sign_if = sign_step.get("if")
@@ -542,18 +543,19 @@ def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> li
 
     verify_step = find_step(build_job, step_name="Verify macOS DMG usability")
     if verify_step is None:
-        errors.append(f"{path}: build_package must include 'Verify macOS DMG usability' step")
-    else:
+        errors.append(f"{path}: {job_name} must include 'Verify macOS DMG usability' step")
+    elif path.name == "release-gui.yml":
         verify_if = verify_step.get("if")
         if not isinstance(verify_if, str) or "runner.os == 'macOS'" not in verify_if:
             errors.append(
                 f"{path}: 'Verify macOS DMG usability' step must run on macOS runners"
             )
 
-    for step_name in ("Collect release assets", "Upload release assets"):
+    upload_name = "Upload release assets" if path.name == "release-gui.yml" else "Upload macOS verify artifacts"
+    for step_name in ("Collect release assets", upload_name):
         step = find_step(build_job, step_name=step_name)
         if step is None:
-            errors.append(f"{path}: missing '{step_name}' step in build_package")
+            errors.append(f"{path}: missing '{step_name}' step in {job_name}")
             continue
         condition = step.get("if")
         if isinstance(condition, str) and "steps.mac_signing.outputs.enabled == 'true'" in condition:
@@ -564,7 +566,7 @@ def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> li
     return errors
 
 
-def validate_release_wix_prepare_guard(path: Path, data: dict[str, Any]) -> list[str]:
+def validate_release_packaging_helpers(path: Path, data: dict[str, Any]) -> list[str]:
     if path.name != "release-gui.yml":
         return []
 
@@ -577,31 +579,20 @@ def validate_release_wix_prepare_guard(path: Path, data: dict[str, Any]) -> list
     if not isinstance(build_job, dict):
         return errors
 
-    prepare_step = find_step(
-        build_job,
-        step_name="Prepare packager config and staged runtime",
-    )
-    if prepare_step is None:
+    loader = find_step(build_job, step_name="Load packaging helpers from workflow commit")
+    if loader is None or loader.get("env", {}).get("WORKFLOW_SHA") != "${{ github.workflow_sha }}":
         errors.append(
-            f"{path}: build_package must include 'Prepare packager config and staged runtime' step"
+            f"{path}: build_package must load packaging helpers from github.workflow_sha"
         )
-        return errors
-
-    run_script = prepare_step.get("run")
-    if not isinstance(run_script, str):
-        errors.append(
-            f"{path}: release packager prepare step must define a run script"
-        )
-        return errors
-
-    if "--expected-wix-major" not in run_script:
-        errors.append(
-            f"{path}: release packager prepare step must assert the expected WiX major when supported"
-        )
-    if "release_gui_prepare.py --help" not in run_script or "grep -q" not in run_script:
-        errors.append(
-            f"{path}: release packager prepare step must guard --expected-wix-major with the checked-out helper's --help output"
-        )
+    for name, helper in (
+        ("Prepare packager config and staged runtime", "release_gui_prepare.py"),
+        ("Collect release assets", "release_gui_collect.py"),
+    ):
+        step = find_step(build_job, step_name=name)
+        if step is None or f"${{RELEASE_SCRIPTS}}/{helper}" not in str(step.get("run", "")):
+            errors.append(f"{path}: '{name}' must use the workflow commit's packaging helpers")
+        elif helper == "release_gui_prepare.py" and "--expected-wix-major 3" not in step["run"]:
+            errors.append(f"{path}: release packager prepare step must assert WiX major 3")
 
     return errors
 
@@ -614,7 +605,7 @@ def validate_workflow_file(path: Path) -> list[str]:
     errors.extend(validate_release_trigger_rules(path, data))
     errors.extend(validate_release_job_shape(path, data))
     errors.extend(validate_release_macos_signing_rules(path, data))
-    errors.extend(validate_release_wix_prepare_guard(path, data))
+    errors.extend(validate_release_packaging_helpers(path, data))
 
     run_blocks = extract_job_run_blocks(data)
     for block_path, shell, script in run_blocks:

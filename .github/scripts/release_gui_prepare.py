@@ -255,6 +255,15 @@ def main() -> int:
         if not icns_path.is_file() or icns_path.stat().st_size <= 0:
             fail("expected generated macOS icon at assets/icons/desktop_icon.icns")
         config["icons"] = ["../../assets/icons/desktop_icon.icns"]
+        macos = config.setdefault("macos", {})
+        if os.environ.get("MACOS_SIGNING_ENABLED") == "true":
+            identity = os.environ.get("APPLE_SIGNING_IDENTITY", "").strip()
+            if not identity:
+                fail("APPLE_SIGNING_IDENTITY is required when macOS signing is enabled")
+            # cargo-packager signs and notarizes the app before assembling the DMG.
+            macos["signingIdentity"] = identity
+        else:
+            macos.pop("signingIdentity", None)
 
     formats = config.get("formats")
     if not isinstance(formats, list) or not formats:

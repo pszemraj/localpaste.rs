@@ -52,7 +52,7 @@ def create_packager_fixture(
     is_windows = platform == "windows"
     binary_name = "localpaste-gui.exe" if is_windows else "localpaste-gui"
     icon_name = "localpaste.ico" if is_windows else "icon.png"
-    formats = ["wix"] if is_windows else ["appimage"]
+    formats = {"windows": ["wix"], "linux": ["appimage"], "macos": ["dmg", "app"]}[platform]
 
     config_dir = root / "packaging" / platform
     config_dir.mkdir(parents=True)
@@ -63,6 +63,10 @@ def create_packager_fixture(
     (target_dir / binary_name).write_text("binary\n", encoding="utf-8")
 
     (config_dir / icon_name).write_text("icon\n", encoding="utf-8")
+    if platform == "macos":
+        icon_dir = root / "assets" / "icons"
+        icon_dir.mkdir(parents=True)
+        (icon_dir / "desktop_icon.icns").write_bytes(b"icns fixture")
     packager_config = config_dir / "packager.json"
     packager_config.write_text(
         json.dumps({"formats": formats, "icons": [icon_name]}),
