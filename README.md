@@ -2,6 +2,9 @@
 
 LocalPaste stores technical text locally for editing, search, diff, and version recovery.
 
+> [!TIP]
+> The recommended way to get LocalPaste is to download the latest release for your operating system from [GitHub Releases](https://github.com/pszemraj/localpaste.rs/releases).
+
 ![LocalPaste Screenshot](assets/ui.jpg)
 
 Pastes can be code snippets, logs, stack traces, config fragments, prompts, queries, links, or notes. The GUI detects each paste's language and highlights it. Sidebar search can be limited to titles, metadata, or body text, and smart filters (Today, Code, Config, Logs, and others) with a language filter narrow the list.
