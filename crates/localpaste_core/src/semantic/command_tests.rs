@@ -5,7 +5,7 @@ use super::commands::{
 };
 use super::{derive, PasteKind};
 use crate::models::paste::{Paste, PasteMeta};
-use crate::test_support::assert_derived_kinds;
+use crate::test_support::{assert_derived_kinds, kind_unless_short};
 
 fn with_crlf(content: &str) -> [String; 2] {
     [content.to_owned(), content.replace('\n', "\r\n")]
@@ -55,14 +55,14 @@ fn sentences_led_by_tool_names_stay_documents() {
             for language in [None, Some("text")] {
                 assert_eq!(
                     derive(&content, language).kind,
-                    PasteKind::Document,
+                    kind_unless_short(&content, language, PasteKind::Document),
                     "{content}: {language:?}"
                 );
             }
             let paste = Paste::new(content.clone(), "note".into());
             assert_eq!(
                 PasteMeta::from(&paste).derived.kind,
-                PasteKind::Document,
+                kind_unless_short(&content, paste.language.as_deref(), PasteKind::Document),
                 "{content}: {:?}",
                 paste.language
             );
@@ -99,7 +99,7 @@ fn git_subcommands_quoted_operands_and_transcripts_stay_commands() {
             for language in [None, Some("text")] {
                 assert_eq!(
                     derive(&content, language).kind,
-                    PasteKind::Code,
+                    kind_unless_short(&content, language, PasteKind::Code),
                     "{content}"
                 );
             }
@@ -153,7 +153,7 @@ fn file_text_archive_and_cloud_tools_are_commands() {
             for language in [None, Some("text")] {
                 assert_eq!(
                     derive(&content, language).kind,
-                    PasteKind::Code,
+                    kind_unless_short(&content, language, PasteKind::Code),
                     "{content}: {language:?}"
                 );
             }
@@ -253,14 +253,14 @@ fn scripts_with_status_messages_ranges_and_control_flow_stay_commands() {
             for language in [None, Some("text"), Some("shell")] {
                 assert_eq!(
                     derive(&content, language).kind,
-                    PasteKind::Code,
+                    kind_unless_short(&content, language, PasteKind::Code),
                     "{content}: {language:?}"
                 );
             }
             let paste = Paste::new(content.clone(), "script".into());
             assert_eq!(
                 PasteMeta::from(&paste).derived.kind,
-                PasteKind::Code,
+                kind_unless_short(&content, paste.language.as_deref(), PasteKind::Code),
                 "{content}: {:?}",
                 paste.language
             );

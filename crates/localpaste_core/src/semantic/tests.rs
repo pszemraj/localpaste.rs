@@ -1,6 +1,7 @@
 //! Semantic classification and retrieval regressions.
 
 use super::{derive, extract_definition_handle_from_line, PasteKind};
+use crate::test_support::kind_unless_short;
 
 #[test]
 fn directive_only_makefiles_keep_their_language_without_a_local_recipe() {
@@ -46,14 +47,14 @@ fn review_regression_prose_flags_paths_and_currency_stay_documents() {
         for language in [None, Some("text")] {
             assert_eq!(
                 derive(content, language).kind,
-                PasteKind::Document,
+                kind_unless_short(content, language, PasteKind::Document),
                 "{content}"
             );
         }
         let paste = crate::models::paste::Paste::new(content.into(), "ordinary note".into());
         assert_eq!(
             crate::models::paste::PasteMeta::from(&paste).derived.kind,
-            PasteKind::Document,
+            kind_unless_short(content, paste.language.as_deref(), PasteKind::Document),
             "{content}: {:?}",
             paste.language
         );
@@ -208,7 +209,13 @@ fn unlisted_or_prefixed_commands_do_not_become_prose_documents() {
         "notes about /usr/bin tools and their behavior",
         "The --release option optimizes the build.",
     ] {
-        assert_eq!(derive(content, None).kind, PasteKind::Document, "{content}");
+        for language in [None, Some("text")] {
+            assert_eq!(
+                derive(content, language).kind,
+                kind_unless_short(content, language, PasteKind::Document),
+                "{content}: {language:?}"
+            );
+        }
     }
     let long_prose = "This is a long ordinary prose note about the release. ".repeat(2_000);
     assert_eq!(derive(&long_prose, None).kind, PasteKind::Document);
@@ -292,7 +299,7 @@ fn explicit_setup_queries_chains_and_adjacent_commands_remain_code() {
             for language in [None, Some("text"), Some("batch")] {
                 assert_eq!(
                     derive(&content, language).kind,
-                    PasteKind::Code,
+                    kind_unless_short(&content, language, PasteKind::Code),
                     "{content}: {language:?}"
                 );
             }
@@ -302,7 +309,7 @@ fn explicit_setup_queries_chains_and_adjacent_commands_remain_code() {
                     crate::models::paste::Paste::new(content.clone(), "setup boundary".into());
                 assert_eq!(
                     crate::models::paste::PasteMeta::from(&paste).derived.kind,
-                    PasteKind::Code,
+                    kind_unless_short(&content, paste.language.as_deref(), PasteKind::Code),
                     "{content}"
                 );
             }
@@ -312,7 +319,7 @@ fn explicit_setup_queries_chains_and_adjacent_commands_remain_code() {
         for language in [None, Some("text"), Some("batch")] {
             assert_eq!(
                 derive(content, language).kind,
-                PasteKind::Other,
+                kind_unless_short(content, language, PasteKind::Other),
                 "{content}"
             );
         }
@@ -353,7 +360,7 @@ fn setup_options_and_later_assignments_keep_code_kind() {
             for language in [None, Some("text"), Some("batch")] {
                 assert_eq!(
                     derive(&content, language).kind,
-                    PasteKind::Code,
+                    kind_unless_short(&content, language, PasteKind::Code),
                     "{content}: {language:?}"
                 );
             }
@@ -363,7 +370,7 @@ fn setup_options_and_later_assignments_keep_code_kind() {
                     crate::models::paste::Paste::new(content.clone(), "setup command".into());
                 assert_eq!(
                     crate::models::paste::PasteMeta::from(&paste).derived.kind,
-                    PasteKind::Code,
+                    kind_unless_short(&content, paste.language.as_deref(), PasteKind::Code),
                     "{content}"
                 );
             }
@@ -381,7 +388,11 @@ fn quoted_source_paths_with_spaces_keep_code_kind() {
         for content in [content.to_owned(), content.replace('\n', "\r\n")] {
             for language in [None, Some("text"), Some("batch")] {
                 let derived = derive(&content, language);
-                assert_eq!(derived.kind, PasteKind::Code, "{content}");
+                assert_eq!(
+                    derived.kind,
+                    kind_unless_short(&content, language, PasteKind::Code),
+                    "{content}"
+                );
                 assert!(
                     derived
                         .handle
@@ -396,7 +407,7 @@ fn quoted_source_paths_with_spaces_keep_code_kind() {
                     crate::models::paste::Paste::new(content.clone(), "source command".into());
                 assert_eq!(
                     crate::models::paste::PasteMeta::from(&paste).derived.kind,
-                    PasteKind::Code,
+                    kind_unless_short(&content, paste.language.as_deref(), PasteKind::Code),
                     "{content}"
                 );
             }
@@ -416,7 +427,11 @@ fn cmd_variable_assignments_with_spaces_keep_code_kind() {
             let content = format!("{content}{ending}");
             for language in [None, Some("text"), Some("batch")] {
                 let derived = derive(&content, language);
-                assert_eq!(derived.kind, PasteKind::Code, "{content}: {language:?}");
+                assert_eq!(
+                    derived.kind,
+                    kind_unless_short(&content, language, PasteKind::Code),
+                    "{content}: {language:?}"
+                );
                 assert!(
                     derived
                         .handle
@@ -509,7 +524,7 @@ fn explicit_documents_override_code_and_log_signals() {
     }
     assert_eq!(
         derive("A short prose note to keep for later.", None).kind,
-        PasteKind::Document
+        PasteKind::Short
     );
     assert_eq!(derive("fn main() {}", Some("rust")).kind, PasteKind::Code);
     for (content, expected) in [
@@ -611,8 +626,6 @@ fn untyped_structural_content_does_not_default_to_document() {
         ("echo hello there this is fine", PasteKind::Document),
         ("docker run ubuntu echo hello world", PasteKind::Code),
         ("printf hello world", PasteKind::Code),
-        ("INFO Starting the server", PasteKind::Log),
-        ("[INFO] Server started successfully", PasteKind::Log),
         ("info Starting the server", PasteKind::Document),
         ("info about the offsite agenda", PasteKind::Document),
         ("error in the invoice needs correcting", PasteKind::Document),
@@ -623,10 +636,7 @@ fn untyped_structural_content_does_not_default_to_document() {
             PasteKind::Document,
         ),
         ("echo 'this is a test'", PasteKind::Code),
-        ("[WARN] Retry in thirty seconds", PasteKind::Log),
         ("thread 'main' panicked at src/main.rs:12:5", PasteKind::Log),
-        ("error: unable to open database", PasteKind::Log),
-        ("WARNING: database connection unavailable", PasteKind::Log),
         ("debug: true\nname: foo", PasteKind::Config),
         (
             "Warning: do not touch the deployment settings.",
@@ -705,7 +715,7 @@ fn untyped_structural_content_does_not_default_to_document() {
         for language in [None, Some("text")] {
             assert_eq!(
                 derive(content, language).kind,
-                expected,
+                kind_unless_short(content, language, expected),
                 "{content}: {language:?}"
             );
         }
@@ -724,13 +734,19 @@ fn git_subcommands_stay_consistent_across_detection_and_semantics() {
             super::commands::looks_like_shell_command_sequence(&content),
             "{subcommand}"
         );
-        let derived = derive(&content, None);
-        assert_eq!(derived.kind, PasteKind::Code, "{subcommand}");
-        assert_eq!(
-            derived.handle.as_deref(),
-            Some(format!("git {subcommand}").as_str()),
-            "{subcommand}"
-        );
+        for language in [None, Some("text")] {
+            let derived = derive(&content, language);
+            assert_eq!(
+                derived.kind,
+                kind_unless_short(&content, language, PasteKind::Code),
+                "{subcommand}: {language:?}"
+            );
+            assert_eq!(
+                derived.handle.as_deref(),
+                Some(format!("git {subcommand}").as_str()),
+                "{subcommand}"
+            );
+        }
     }
 }
 
@@ -760,7 +776,11 @@ fn setup_words_in_prose_do_not_acquire_command_handles() {
             );
             for language in [None, Some("text")] {
                 let derived = derive(&content, language);
-                assert_eq!(derived.kind, PasteKind::Document, "{content}");
+                assert_eq!(
+                    derived.kind,
+                    kind_unless_short(&content, language, PasteKind::Document),
+                    "{content}"
+                );
             }
         }
     }
@@ -780,7 +800,11 @@ fn common_git_commands_keep_code_kind_and_handles() {
         ) {
             for language in [None, Some("text")] {
                 let derived = derive(&content, language);
-                assert_eq!(derived.kind, PasteKind::Code, "{content}");
+                assert_eq!(
+                    derived.kind,
+                    kind_unless_short(&content, language, PasteKind::Code),
+                    "{content}"
+                );
                 assert_eq!(derived.handle.as_deref(), Some(handle), "{content}");
             }
         }
@@ -804,6 +828,8 @@ fn derive_matrix_covers_code_config_log_link_and_other() {
                 derived.kind,
                 if super::is_document_language(language) {
                     PasteKind::Document
+                } else if language.is_none() {
+                    PasteKind::Short
                 } else {
                     PasteKind::Other
                 }

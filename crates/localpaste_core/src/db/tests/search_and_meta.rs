@@ -657,7 +657,7 @@ fn database_new_rebuilds_markerless_current_meta_rows() {
         .into_iter()
         .find(|meta| meta.id == paste_id)
         .expect("meta row");
-    assert_eq!(first_meta.derived.kind, crate::semantic::PasteKind::Code);
+    assert_eq!(first_meta.derived.kind, crate::semantic::PasteKind::Short);
     assert_eq!(first_meta.derived.handle.as_deref(), Some("cargo test"));
     assert!(
         !first_meta
@@ -690,7 +690,7 @@ fn database_new_rebuilds_markerless_current_meta_rows() {
         .into_iter()
         .find(|meta| meta.id == paste_id)
         .expect("meta row");
-    assert_eq!(second_meta.derived.kind, crate::semantic::PasteKind::Code);
+    assert_eq!(second_meta.derived.kind, crate::semantic::PasteKind::Short);
     assert_eq!(second_meta.derived.handle.as_deref(), Some("cargo test"));
     assert!(
         !second_meta
@@ -822,7 +822,7 @@ fn database_from_shared_respects_meta_schema_marker_states() {
 
         let mut current_meta = PasteMeta::from(&paste);
         let canonical_derived = current_meta.derived.clone();
-        assert_eq!(canonical_derived.kind, crate::semantic::PasteKind::Code);
+        assert_eq!(canonical_derived.kind, crate::semantic::PasteKind::Short);
         assert_eq!(canonical_derived.handle.as_deref(), Some("cargo test"));
         current_meta.derived = crate::semantic::DerivedMeta {
             kind: crate::semantic::PasteKind::Other,

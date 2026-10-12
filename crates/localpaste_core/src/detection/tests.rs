@@ -145,7 +145,7 @@ fn review_regression_prose_imports_and_command_wrappers_stay_documents() {
         assert!(!looks_like_shell_command_sequence(&content), "{content}");
         assert!(!matches!(heuristic::detect(&content).as_deref(), Some("shell" | "python")), "{content}");
         let language = detect_language(&content);
-        assert_eq!(derive(&content, language.as_deref()).kind, PasteKind::Document, "{content}: {language:?}");
+        assert_eq!(derive(&content, language.as_deref()).kind, crate::test_support::kind_unless_short(&content, language.as_deref(), PasteKind::Document), "{content}: {language:?}");
     }
     for content in [
         "# Tasks\nMeeting notes:\n\tDiscuss timeline tomorrow",

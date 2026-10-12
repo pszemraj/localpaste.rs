@@ -3,6 +3,7 @@
 use super::*;
 use crate::models::paste::{Paste, PasteMeta};
 use crate::semantic::{derive, PasteKind};
+use crate::test_support::kind_unless_short;
 
 const MAKEFILES: &[&str] = &[
     "# Build the project\nSRCS = a.c \\\n       b.c\nall: $(SRCS)\n\t$(CC) $(SRCS) -o app\n",
@@ -201,7 +202,10 @@ fn sentences_opening_with_def_or_class_are_not_python_definitions() {
             assert!(!heuristic::looks_like_python_source(&body), "{body}");
             assert_ne!(detect_language(&body).as_deref(), Some("python"), "{body}");
             let paste = Paste::new(body.clone(), "note".into());
-            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document);
+            assert_eq!(
+                PasteMeta::from(&paste).derived.kind,
+                kind_unless_short(&body, paste.language.as_deref(), PasteKind::Document)
+            );
             assert_eq!(derive(&body, Some("markdown")).kind, PasteKind::Document);
         }
     }
@@ -341,11 +345,15 @@ fn makefile_constructs_and_lowercase_notes_keep_their_meaning() {
             let paste = Paste::new(body.clone(), "note".into());
             assert_eq!(
                 PasteMeta::from(&paste).derived.kind,
-                PasteKind::Document,
+                kind_unless_short(&body, paste.language.as_deref(), PasteKind::Document),
                 "{body}: {:?}",
                 paste.language
             );
-            assert_eq!(derive(&body, None).kind, PasteKind::Document, "{body}");
+            assert_eq!(
+                derive(&body, None).kind,
+                kind_unless_short(&body, None, PasteKind::Document),
+                "{body}"
+            );
             assert!(!matches!(
                 heuristic::detect(&body).as_deref(),
                 Some("shell" | "javascript")
@@ -374,11 +382,16 @@ fn makefile_constructs_and_lowercase_notes_keep_their_meaning() {
         "make build \"before the release\"",
         "make sure --release",
     ] {
+        let language = detect_language(body);
         assert_eq!(
-            derive(body, detect_language(body).as_deref()).kind,
-            PasteKind::Code,
+            derive(body, language.as_deref()).kind,
+            kind_unless_short(body, language.as_deref(), PasteKind::Code),
             "{body}"
         );
+        if language.is_none() {
+            // The command rule still decides the kind once the body is labeled.
+            assert_eq!(derive(body, Some("text")).kind, PasteKind::Code, "{body}");
+        }
     }
     for (body, language) in [
         ("# Shopping\nDairy:\n\tmilk\n\teggs\n", "shell"),
@@ -548,7 +561,10 @@ fn chat_lines_shaped_like_make_rules_are_not_makefiles() {
             );
             assert_eq!(derive(&body, Some("makefile")).kind, PasteKind::Document);
             let paste = Paste::new(body.clone(), "standup".into());
-            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document);
+            assert_eq!(
+                PasteMeta::from(&paste).derived.kind,
+                kind_unless_short(&body, paste.language.as_deref(), PasteKind::Document)
+            );
         }
     }
     // Prerequisites are names, and a `##` help comment ends the scan.

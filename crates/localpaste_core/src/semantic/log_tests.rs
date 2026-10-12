@@ -3,7 +3,7 @@
 use super::{derive, PasteKind};
 use crate::detection::detect_language;
 use crate::models::paste::{Paste, PasteMeta};
-use crate::test_support::assert_derived_kinds;
+use crate::test_support::{assert_derived_kinds, kind_unless_short};
 
 fn with_crlf(content: &str) -> [String; 2] {
     [content.to_owned(), content.replace('\n', "\r\n")]
@@ -111,11 +111,14 @@ fn prose_about_failures_is_not_a_log() {
             for language in [None, Some("text"), Some("markdown")] {
                 assert_eq!(
                     derive(&content, language).kind,
-                    PasteKind::Document,
+                    kind_unless_short(&content, language, PasteKind::Document),
                     "{content}: {language:?}"
                 );
             }
-            assert_eq!(stored_kind(&content), PasteKind::Document, "{content}");
+            assert_eq!(stored_kind(&content),
+                kind_unless_short(&content, None, PasteKind::Document),
+                "{content}"
+            );
         }
     }
     let flags = "debug: True\ntrace: False";
@@ -313,7 +316,11 @@ fn notes_about_crashes_stay_documents() {
         .all(|note| !super::logs::looks_like_runtime_log(&note)
             && detect_language(&note).as_deref() != Some("log")));
     for note in notes.iter().flat_map(|note| with_crlf(note)) {
-        assert_eq!(stored_kind(&note), PasteKind::Document, "{note}");
+        assert_eq!(
+            stored_kind(&note),
+            kind_unless_short(&note, None, PasteKind::Document),
+            "{note}"
+        );
     }
 }
 

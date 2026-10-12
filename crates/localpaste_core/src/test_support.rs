@@ -103,16 +103,51 @@ pub(crate) fn assert_folder_counts_match_canonical(db: &Database) {
     );
 }
 
+/// The kind `derive` gives `content` stored under `language` when the body
+/// rules classify it as `kind`.
+///
+/// Content without a language that is too short to classify derives
+/// [`PasteKind::Short`](crate::semantic::PasteKind::Short) in place of the
+/// Document, Code, Config, or Other kind the body rules would guess. A Link or
+/// Log expectation is returned unchanged: only a single URL or a strict
+/// runtime log keeps that kind when short, so any other short body expected to
+/// be one fails the caller's assertion and must be pinned explicitly.
+///
+/// # Arguments
+/// - `content`: Paste body the expectation is for.
+/// - `language`: Stored language label the body is derived under.
+/// - `kind`: The kind the body rules give the content.
+///
+/// # Returns
+/// `PasteKind::Short` for a guessed kind on short unlabeled content, otherwise `kind`.
+pub(crate) fn kind_unless_short(
+    content: &str,
+    language: Option<&str>,
+    kind: crate::semantic::PasteKind,
+) -> crate::semantic::PasteKind {
+    use crate::semantic::PasteKind;
+    let guessed = !matches!(kind, PasteKind::Link | PasteKind::Log);
+    if guessed
+        && language.is_none_or(|label| label.trim().is_empty())
+        && crate::detection::too_short_to_classify(content)
+    {
+        PasteKind::Short
+    } else {
+        kind
+    }
+}
+
 /// Assert the derived kind of each body, with LF and with CRLF line endings,
 /// under each stored language label.
 ///
 /// # Arguments
 /// - `contents`: Paste bodies written with LF line endings.
 /// - `languages`: Stored language labels to derive each body under.
-/// - `kind`: The kind every derivation must produce.
+/// - `kind`: The kind the body rules give every body; see [`kind_unless_short`]
+///   for unlabeled bodies too short to classify.
 ///
 /// # Panics
-/// Panics with the body and label when a derived kind differs from `kind`.
+/// Panics with the body and label when a derived kind differs from the expected kind.
 pub(crate) fn assert_derived_kinds(
     contents: &[&str],
     languages: &[Option<&str>],
@@ -123,7 +158,7 @@ pub(crate) fn assert_derived_kinds(
             for language in languages {
                 assert_eq!(
                     crate::semantic::derive(&content, *language).kind,
-                    kind,
+                    kind_unless_short(&content, *language, kind),
                     "{content:?}: {language:?}"
                 );
             }

@@ -170,7 +170,7 @@ mod model_tests {
             Some("fn handle_request")
         );
         assert!(code_meta.derived.terms.iter().any(|term| term == "fsdp2"));
-        assert_eq!(config_meta.derived.kind, crate::semantic::PasteKind::Config);
+        assert_eq!(config_meta.derived.kind, crate::semantic::PasteKind::Short);
         assert_eq!(config_meta.derived.handle.as_deref(), Some("model gpt-4"));
         assert_eq!(link_meta.derived.kind, crate::semantic::PasteKind::Link);
         assert_eq!(link_meta.derived.handle.as_deref(), Some("example.com"));
@@ -219,7 +219,11 @@ mod model_tests {
             let paste = paste::Paste::new(content.to_string(), "fixture".to_string());
             assert_eq!(
                 paste::PasteMeta::from(&paste).derived.kind,
-                expected,
+                crate::test_support::kind_unless_short(
+                    content,
+                    paste.language.as_deref(),
+                    expected
+                ),
                 "language {:?}: {content}",
                 paste.language
             );

@@ -15,33 +15,46 @@ mod magika;
 #[cfg(test)]
 mod tests;
 
-/// Trimmed length, in Unicode characters, at which auto mode classifies a paste.
+/// Trimmed length, in Unicode characters, at which a paste holds enough text to
+/// classify (see [`too_short_to_classify`]).
 const AUTO_DETECT_MIN_CHARS: usize = 64;
-/// Non-blank line count at which auto mode classifies a paste shorter than
-/// [`AUTO_DETECT_MIN_CHARS`].
+/// Non-blank line count at which a paste shorter than [`AUTO_DETECT_MIN_CHARS`]
+/// holds enough text to classify.
 const AUTO_DETECT_MIN_LINES: usize = 3;
 
-/// Detect the language that auto mode locks onto a paste.
+/// Whether content holds too little text to classify.
 ///
-/// Auto mode locks whatever it resolves, so content holding fewer than
+/// This is the single definition of the minimum: fewer than
 /// [`AUTO_DETECT_MIN_CHARS`] trimmed characters and fewer than
-/// [`AUTO_DETECT_MIN_LINES`] non-blank lines stays unresolved: a few words are
-/// too little evidence to tell code from prose. Larger content is classified by
-/// [`detect_language`].
+/// [`AUTO_DETECT_MIN_LINES`] non-blank lines. A few words are too little
+/// evidence to tell code from prose, so auto mode leaves such content without a
+/// language ([`auto_detect_language`]) and retrieval files unlabeled content
+/// this short under the Short kind instead of guessing one
+/// ([`crate::semantic::derive`]).
 ///
 /// # Returns
-/// Canonicalized language label when the content is large enough and detection
-/// succeeds, otherwise `None`.
-pub fn auto_detect_language(content: &str) -> Option<String> {
+/// `true` when the content is below both minimums.
+pub(crate) fn too_short_to_classify(content: &str) -> bool {
     let trimmed = content.trim();
-    let too_few_chars = trimmed.chars().take(AUTO_DETECT_MIN_CHARS).count() < AUTO_DETECT_MIN_CHARS;
-    if too_few_chars
+    trimmed.chars().take(AUTO_DETECT_MIN_CHARS).count() < AUTO_DETECT_MIN_CHARS
         && trimmed
             .lines()
             .filter(|line| !line.trim().is_empty())
             .count()
             < AUTO_DETECT_MIN_LINES
-    {
+}
+
+/// Detect the language that auto mode locks onto a paste.
+///
+/// Auto mode locks whatever it resolves, so content that is too short to
+/// classify (see `too_short_to_classify`) stays unresolved. Larger content is
+/// classified by [`detect_language`].
+///
+/// # Returns
+/// Canonicalized language label when the content is large enough and detection
+/// succeeds, otherwise `None`.
+pub fn auto_detect_language(content: &str) -> Option<String> {
+    if too_short_to_classify(content) {
         return None;
     }
     detect_language(content)

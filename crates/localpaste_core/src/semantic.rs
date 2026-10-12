@@ -41,6 +41,8 @@ pub enum PasteKind {
     Log,
     Link,
     Document,
+    /// Unlabeled content too short to classify (see [`derive()`]).
+    Short,
 }
 
 impl PasteKind {
@@ -56,6 +58,7 @@ impl PasteKind {
             Self::Log => "Log",
             Self::Link => "Link",
             Self::Document => "Document",
+            Self::Short => "Short",
         }
     }
 }
@@ -71,6 +74,13 @@ pub struct DerivedMeta {
 
 /// Derive cheap structural retrieval hints from paste content.
 ///
+/// Content without a language that is too short to classify (see
+/// `detection::too_short_to_classify`) gets the [`PasteKind::Short`] kind
+/// rather than a guess from a few words, except for two shapes that are certain
+/// at any length: a single URL stays a Link, and output that
+/// `logs::looks_like_runtime_log` accepts stays a Log. A short paste with a
+/// language keeps the kind that language gives.
+///
 /// # Arguments
 /// - `content`: Paste body sampled for structural signals and technical terms.
 /// - `language`: Optional stored language label used to bias classification.
@@ -79,18 +89,32 @@ pub struct DerivedMeta {
 /// Persistable semantic retrieval metadata for metadata-only search and UI.
 pub fn derive(content: &str, language: Option<&str>) -> DerivedMeta {
     let sample = sample_prefix(content);
+    let kind = if language.is_none_or(|label| label.trim().is_empty())
+        && crate::detection::too_short_to_classify(content)
+    {
+        if looks_like_single_url(sample) {
+            PasteKind::Link
+        } else if logs::looks_like_runtime_log(sample) {
+            PasteKind::Log
+        } else {
+            PasteKind::Short
+        }
+    } else if sample.trim().is_empty() {
+        if is_document_language(language) {
+            PasteKind::Document
+        } else {
+            PasteKind::Other
+        }
+    } else {
+        classify_kind(content, language)
+    };
     if sample.trim().is_empty() {
         return DerivedMeta {
-            kind: if is_document_language(language) {
-                PasteKind::Document
-            } else {
-                PasteKind::Other
-            },
+            kind,
             ..DerivedMeta::default()
         };
     }
 
-    let kind = classify_kind(content, language);
     let terms = extract_terms(sample, language);
     let handle = extract_definition_handle(sample, language)
         .or_else(|| commands::extract_command_handle(sample))
@@ -863,6 +887,9 @@ mod command_tests;
 /// Structure-based log recognition regression coverage.
 #[cfg(test)]
 mod log_tests;
+/// Short-kind coverage for unlabeled content too short to classify.
+#[cfg(test)]
+mod short_tests;
 /// Derived-term extraction regression coverage.
 #[cfg(test)]
 mod term_tests;

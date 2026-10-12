@@ -76,7 +76,7 @@ fn title_and_metadata_scopes_do_not_deserialize_canonical_bodies() {
 }
 
 #[test]
-fn document_kind_does_not_match_partial_kind_labels() {
+fn document_and_short_kinds_do_not_match_partial_kind_labels() {
     let dir = TempDir::new().unwrap();
     let db = crate::Database::new(dir.path().to_str().unwrap()).unwrap();
     let document = Paste::new_with_language(
@@ -85,14 +85,22 @@ fn document_kind_does_not_match_partial_kind_labels() {
         Some("text".into()),
         true,
     );
-    db.pastes.create(&document).unwrap();
-    assert_eq!(
-        db.pastes.list_meta(1, None).unwrap()[0].derived.kind,
-        crate::semantic::PasteKind::Document
-    );
+    let short = Paste::new("tiny note".into(), "scratch".into());
+    for paste in [&document, &short] {
+        db.pastes.create(paste).unwrap();
+    }
+    let mut kinds: Vec<_> = db
+        .pastes
+        .list_meta(2, None)
+        .unwrap()
+        .into_iter()
+        .map(|meta| meta.derived.kind.label())
+        .collect();
+    kinds.sort_unstable();
+    assert_eq!(kinds, ["Document", "Short"]);
 
     for scope in [SearchScope::All, SearchScope::Metadata] {
-        for query in ["doc", "ment", "cum"] {
+        for query in ["doc", "ment", "cum", "short", "shor", "ort"] {
             assert!(
                 db.pastes
                     .search_scoped_with_options(
@@ -105,7 +113,7 @@ fn document_kind_does_not_match_partial_kind_labels() {
                     )
                     .unwrap()
                     .is_empty(),
-                "{query} unexpectedly matched the Document kind in {scope:?} scope"
+                "{query} unexpectedly matched a kind label in {scope:?} scope"
             );
         }
     }

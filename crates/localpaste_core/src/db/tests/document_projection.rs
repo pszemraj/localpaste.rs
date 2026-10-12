@@ -69,7 +69,7 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
 
 #[test]
 fn semantic_kinds_rebuild_from_prior_versions_and_survive_restart() {
-    for schema_version in [14, 15, 16, 17, 18, 19] {
+    for schema_version in [14, 15, 16, 17, 18, 19, 29] {
         assert_semantic_kinds_rebuild_and_survive_restart(schema_version);
     }
 }
@@ -94,7 +94,7 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
         ("Let me know if the function works for you", "javascript", PasteKind::Code, PasteKind::Document),
         ("Let me know if the function works for you (please)", "javascript", PasteKind::Code, PasteKind::Document),
         ("Let me know if the function works for you; thanks", "javascript", PasteKind::Code, PasteKind::Document),
-        ("make sure it's done before friday", "", PasteKind::Code, PasteKind::Document),
+        ("make sure it's done before friday", "", PasteKind::Code, PasteKind::Short),
         ("```\nLet me know if the function works for you\n```", "markdown", PasteKind::Code, PasteKind::Document),
         ("# Load project rules\ninclude rules.mk\n", "markdown", PasteKind::Document, PasteKind::Code),
         ("# Build recipe\ndefine compile\n\t$(CC) main.c\nendef\n", "markdown", PasteKind::Document, PasteKind::Code),
@@ -551,6 +551,20 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
             "text",
             PasteKind::Document,
             PasteKind::Code,
+        ),
+        // An unlabeled paste too short to classify is Short, whatever kind an
+        // older projection guessed for it; a single URL stays a Link.
+        (
+            "if ready:\n\tresult = 1",
+            "",
+            PasteKind::Document,
+            PasteKind::Short,
+        ),
+        (
+            "https://example.com/some/page",
+            "",
+            PasteKind::Link,
+            PasteKind::Link,
         ),
     ];
     let pastes: Vec<_> = cases

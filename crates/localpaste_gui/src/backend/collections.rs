@@ -550,11 +550,6 @@ mod tests {
                 SidebarCollection::Config,
             ),
             (
-                "{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}\n",
-                PasteKind::Config,
-                SidebarCollection::Config,
-            ),
-            (
                 "~~~sh\necho hello world\n~~~",
                 PasteKind::Code,
                 SidebarCollection::Code,
@@ -575,22 +570,6 @@ mod tests {
                 SidebarCollection::Documents,
             ),
             (
-                "sudo systemctl restart nginx",
-                PasteKind::Code,
-                SidebarCollection::Code,
-            ),
-            ("echo hello world", PasteKind::Code, SidebarCollection::Code),
-            (
-                "INFO Starting the server",
-                PasteKind::Log,
-                SidebarCollection::Logs,
-            ),
-            (
-                "[INFO] Server started successfully",
-                PasteKind::Log,
-                SidebarCollection::Logs,
-            ),
-            (
                 "[INFO] Server started\nINFO Starting worker\nWARN Queue full",
                 PasteKind::Log,
                 SidebarCollection::Logs,
@@ -601,37 +580,12 @@ mod tests {
                 SidebarCollection::Logs,
             ),
             (
-                "info about the current project",
-                PasteKind::Document,
-                SidebarCollection::Documents,
-            ),
-            (
-                "echo chamber is a common metaphor",
-                PasteKind::Document,
-                SidebarCollection::Documents,
-            ),
-            (
-                "Dear team,\nsudo is required only in some environments.",
-                PasteKind::Document,
-                SidebarCollection::Documents,
-            ),
-            (
                 "```\nhello world this is a plain note\n```",
                 PasteKind::Document,
                 SidebarCollection::Documents,
             ),
             (
                 "```text\nhello world\n```",
-                PasteKind::Document,
-                SidebarCollection::Documents,
-            ),
-            (
-                "Python 3.12 is now installed on the workstation.",
-                PasteKind::Document,
-                SidebarCollection::Documents,
-            ),
-            (
-                "Git is down for scheduled maintenance.",
                 PasteKind::Document,
                 SidebarCollection::Documents,
             ),
@@ -645,6 +599,26 @@ mod tests {
             )
         })
         .collect::<Vec<_>>();
+        // Without a language these are too short to classify, so no content
+        // kind claims them on a few words of evidence.
+        for content in [
+            "{\"name\":\"Ada\"}\n{\"name\":\"Grace\"}\n",
+            "sudo systemctl restart nginx",
+            "echo hello world",
+            "INFO Starting the server",
+            "[INFO] Server started successfully",
+            "info about the current project",
+            "echo chamber is a common metaphor",
+            "Dear team,\nsudo is required only in some environments.",
+            "Python 3.12 is now installed on the workstation.",
+            "Git is down for scheduled maintenance.",
+        ] {
+            cases.push((
+                localpaste_core::models::paste::Paste::new(content.into(), "notes".into()),
+                PasteKind::Short,
+                None,
+            ));
+        }
         for (content, kind) in [
             ("# install\napt install -y git curl", PasteKind::Other),
             ("# build\nFOO=bar cargo build --release", PasteKind::Other),
@@ -700,6 +674,19 @@ mod tests {
                     !matches_semantic_collection(&item, SidebarCollection::Documents),
                     "{content}"
                 );
+            }
+            if kind == PasteKind::Short {
+                for collection in [
+                    SidebarCollection::Code,
+                    SidebarCollection::Config,
+                    SidebarCollection::Logs,
+                    SidebarCollection::Links,
+                ] {
+                    assert!(
+                        !matches_semantic_collection(&item, collection.clone()),
+                        "{content}: {collection:?}"
+                    );
+                }
             }
             if kind == PasteKind::Log {
                 assert!(
