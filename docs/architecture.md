@@ -99,7 +99,7 @@ Folder API pathways remain for compatibility and emit deprecation headers; the G
 Version and diff surfaces:
 
 - `/api/paste/:id/versions*` supports list/get/reset-hard/duplicate for historical snapshots.
-- `/api/diff` and `/api/equal` compare head or historical paste references. Distinct references with combined content above 1 MiB return `413 Payload Too Large`; identical references resolve existence and return equality without that size gate.
+- `/api/diff` and `/api/equal` compare head or historical paste references. Distinct references with combined content above 1 MiB return `413 Payload Too Large`; identical references resolve existence and return equality without that size gate. Diff generation has a one-second time budget, so very large inputs that share almost no lines get a correct but possibly non-minimal diff (the unmatched region comes back as one block of `-` lines followed by `+` lines); the GUI Diff window uses the same function.
 - Content-changing writes may persist an older-head snapshot. Snapshot interval and retention behavior are defined in [storage.md#version-history-storage](storage.md#version-history-storage).
 
 Read behavior:
