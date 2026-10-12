@@ -1,21 +1,26 @@
 # LocalPaste Desktop Palette
 
-These palette values are defined in the rewrite theme module:
-[`../../crates/localpaste_gui/src/app/style.rs`](../../crates/localpaste_gui/src/app/style.rs).
+The desktop uses a dark palette defined in the theme module: [`../../crates/localpaste_gui/src/app/style.rs`](../../crates/localpaste_gui/src/app/style.rs).
 
 | Token                       | Hex         | Notes                                   |
 | --------------------------- | ----------- | --------------------------------------- |
 | `COLOR_BG_PRIMARY`          | `#0D1117`   | Window background                       |
 | `COLOR_BG_SECONDARY`        | `#161B22`   | Panels, status bar                      |
-| `COLOR_BG_TERTIARY`         | `#212629`   | Editor frames, inputs                   |
+| `COLOR_BG_TERTIARY`         | `#212629`   | Editor frames, inputs, list-row hover   |
 | `COLOR_TEXT_PRIMARY`        | `#C9D1D9`   | Body text                               |
 | `COLOR_TEXT_SECONDARY`      | `#8B949E`   | Secondary text                          |
-| `COLOR_TEXT_MUTED`          | `#6E7681`   | Labels / metadata                       |
-| `COLOR_ACCENT`              | `#E57000`   | Primary actions, selection              |
-| `COLOR_ACCENT_HOVER`        | `#CE422B`   | Accent hover state                      |
+| `COLOR_TEXT_MUTED`          | `#6E7681`   | Labels, metadata, input placeholders    |
+| `COLOR_ACCENT_TEXT`         | `#D0843A`   | Accent text and links                   |
+| `COLOR_ACCENT_SURFACE`      | `#B86724`   | Filled controls                         |
+| `COLOR_ACCENT_SURFACE_HOVER` | `#C37431`  | Hovered buttons (not list rows)         |
+| `COLOR_MODAL_CHROME`        | `#8A522A`   | Title bars of all floating windows      |
 | `COLOR_SELECTION_STROKE`    | `#3B82F6`   | Selection outline                       |
 | `COLOR_SELECTION_FILL_RGBA` | `#3B82F655` | Selection fill RGBA tuple (`[r,g,b,a]`) |
-| `COLOR_BORDER`              | `#30363D`   | Divider strokes                         |
+| `COLOR_BORDER`              | `#30363D`   | Divider strokes, sidebar-row hover      |
+| `COLOR_DIFF_REMOVED_BG`     | `#301B1E`   | Removed diff rows (`#F85149` at 15% over `COLOR_BG_PRIMARY`) |
+| `COLOR_DIFF_ADDED_BG`       | `#12261E`   | Added diff rows (`#2EA043` at 15% over `COLOR_BG_PRIMARY`)   |
+
+The theme pins ordinary widget text to `COLOR_TEXT_PRIMARY` through egui's text-color override, which also captures plain-string placeholders. Text inputs therefore set placeholders with `MutedHintExt::muted_hint`, which renders them as weak text in `COLOR_TEXT_MUTED`; [`clippy.toml`](../../clippy.toml) rejects raw `TextEdit::hint_text` calls.
 
 ## Editor Font
 

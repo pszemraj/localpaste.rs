@@ -49,10 +49,13 @@ fn backend_rejects_assignment_into_delete_marked_folder() {
 
     backend
         .cmd_tx
-        .send(CoreCmd::GetPaste { id: paste_id })
+        .send(CoreCmd::GetPaste {
+            id: paste_id,
+            selection_epoch: 42,
+        })
         .expect("send get paste");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => {
+        CoreEvent::PasteLoaded { paste, .. } => {
             assert!(paste.folder_id.is_none(), "paste should remain unfiled");
         }
         other => panic!("unexpected event: {:?}", other),
@@ -151,10 +154,11 @@ fn backend_folder_commands_enforce_parenting_rules_and_migrate_on_delete() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: paste_id.clone(),
+            selection_epoch: 42,
         })
         .expect("send get moved paste");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => {
+        CoreEvent::PasteLoaded { paste, .. } => {
             assert_eq!(paste.id, paste_id);
             assert!(paste.folder_id.is_none());
         }

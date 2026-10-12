@@ -3,15 +3,28 @@
 //! Scroll domain is visual rows, not physical lines.
 
 use super::buffer::{RopeBuffer, VirtualEditDelta};
+use eframe::egui::text::TAB_SIZE;
 use std::ops::Range;
 use unicode_width::UnicodeWidthChar;
+
+/// Display columns `ch` occupies in the editor's monospace galleys.
+///
+/// epaint draws `\t` as a fixed advance of `TAB_SIZE` spaces with no tab stops,
+/// so the width never depends on position. Other control characters count as one column.
+fn char_display_columns(ch: char) -> usize {
+    if ch == '\t' {
+        TAB_SIZE
+    } else {
+        UnicodeWidthChar::width(ch).unwrap_or(1)
+    }
+}
 
 /// Wrap metrics for a single physical line.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LineWrapMetrics {
     /// Character count of the line excluding trailing CR/LF.
     pub(crate) chars: usize,
-    /// Display column count (unicode-width aware).
+    /// Display column count (unicode-width aware; a tab counts as `TAB_SIZE`).
     pub(crate) columns: usize,
     /// Number of visual rows occupied under current wrap columns.
     pub(crate) visual_rows: usize,
@@ -437,8 +450,7 @@ impl VisualRowLayoutCache {
             if idx >= char_column {
                 break;
             }
-            consumed_columns =
-                consumed_columns.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(1));
+            consumed_columns = consumed_columns.saturating_add(char_display_columns(ch));
         }
         consumed_columns
     }
@@ -655,7 +667,7 @@ fn measure_line_row_boundaries(
     let mut last_break: Option<(usize, usize)> = None;
     let line_slice = buffer.rope().line(line).slice(..chars);
     for (idx, ch) in line_slice.chars().enumerate() {
-        let width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        let width = char_display_columns(ch);
         if width > 0 && row_columns > 0 && row_columns.saturating_add(width) > cols {
             let mut used_break = false;
             if let Some((break_idx, break_cols)) = last_break {
@@ -688,15 +700,18 @@ fn measure_line_row_boundaries(
 
 fn measure_line_columns(buffer: &RopeBuffer, idx: usize, chars: usize) -> (usize, bool) {
     let line_slice = buffer.rope().line(idx).slice(..chars);
-    if line_slice.chunks().all(|chunk| chunk.is_ascii()) {
+    // Tabs are ASCII but wider than one column, so they leave the 1:1 fast path.
+    if line_slice
+        .chunks()
+        .all(|chunk| chunk.is_ascii() && !chunk.contains('\t'))
+    {
         return (chars, true);
     }
 
-    use unicode_width::UnicodeWidthChar;
     let columns = line_slice
         .chars()
         .filter(|c| *c != '\n' && *c != '\r')
-        .map(|c| UnicodeWidthChar::width(c).unwrap_or(1))
+        .map(char_display_columns)
         .sum();
     (columns, false)
 }
@@ -718,7 +733,7 @@ fn line_row_char_range(
     let mut row_columns = 0usize;
     let line_slice = buffer.rope().line(line).slice(..chars);
     for (idx, ch) in line_slice.chars().enumerate() {
-        let width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        let width = char_display_columns(ch);
         // Only wrap after at least one visible glyph has been placed in this row.
         // This prevents empty leading rows when a single glyph is wider than `cols`.
         if width > 0 && row_columns > 0 && row_columns.saturating_add(width) > cols {
@@ -751,13 +766,11 @@ fn line_char_for_display_columns(
         return target_columns.min(metrics.chars);
     }
 
-    use unicode_width::UnicodeWidthChar;
-
     let mut consumed_columns = 0usize;
     let mut consumed_chars = 0usize;
     let line_slice = buffer.rope().line(line).slice(..metrics.chars);
     for ch in line_slice.chars() {
-        let width = UnicodeWidthChar::width(ch).unwrap_or(1);
+        let width = char_display_columns(ch);
         if width == 0 {
             // Keep leading zero-width codepoints anchored to visual column 0 so
             // row starts/cursor mapping never skip them.

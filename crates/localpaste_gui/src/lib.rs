@@ -7,6 +7,7 @@ mod app;
 /// Backend worker + protocol types used by the GUI and headless tests.
 pub mod backend;
 mod lock_owner;
+mod text_search;
 
 use app::LocalPasteApp;
 use eframe::egui;
@@ -348,7 +349,30 @@ pub fn run() -> eframe::Result<()> {
     }
 
     let app = LocalPasteApp::new().map_err(|err| eframe::Error::AppCreation(Box::new(err)))?;
+    let options = native_options(&app);
 
+    eframe::run_native(
+        "LocalPaste.rs",
+        options,
+        Box::new(move |cc| {
+            let mut app = app;
+            app.ensure_style(&cc.egui_ctx);
+            app.attach_highlight_repaint_context(&cc.egui_ctx);
+            app.restore_gui_storage(cc.storage);
+            Ok(Box::new(app))
+        }),
+    )
+}
+
+/// Builds the native window options for `app`.
+///
+/// eframe keeps window geometry, egui memory, and the app's storage keys in
+/// one state file, so the options point it at the file chosen for the
+/// database `app` opened.
+///
+/// # Returns
+/// Window options with the database's GUI state file as the persistence path.
+fn native_options(app: &LocalPasteApp) -> eframe::NativeOptions {
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size(app::DEFAULT_WINDOW_SIZE)
         .with_min_inner_size(app::MIN_WINDOW_SIZE)
@@ -363,21 +387,12 @@ pub fn run() -> eframe::Result<()> {
         viewport = viewport.with_icon(icon);
     }
 
-    let options = eframe::NativeOptions {
+    eframe::NativeOptions {
         viewport,
+        // eframe's docs say folder, but it reads and writes this exact file.
+        persistence_path: app.gui_state_path(),
         ..Default::default()
-    };
-
-    eframe::run_native(
-        "LocalPaste.rs",
-        options,
-        Box::new(move |cc| {
-            let mut app = app;
-            app.ensure_style(&cc.egui_ctx);
-            app.restore_gui_storage(cc.storage);
-            Ok(Box::new(app))
-        }),
-    )
+    }
 }
 
 #[cfg(test)]

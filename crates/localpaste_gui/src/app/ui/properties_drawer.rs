@@ -17,7 +17,7 @@ const AUTO_LANGUAGE: &str = "__auto__";
 /// - `metadata_dirty`: Dirty marker toggled when the choice changes metadata.
 /// - `language_choice`: Newly selected combo-box value.
 /// - `current_manual_value`: Canonicalized current manual-language option.
-pub(super) fn apply_language_choice(
+fn apply_language_choice(
     edit_language_is_manual: &mut bool,
     edit_language: &mut Option<String>,
     metadata_dirty: &mut bool,
@@ -57,14 +57,6 @@ fn selected_language_choice_text(language_choice: &str, auto_label: &str) -> Str
         .to_string()
 }
 
-/// Returns the sentinel key used for auto language mode options.
-///
-/// # Returns
-/// Stable option-key string representing auto mode in language selectors.
-pub(super) fn auto_language_choice_key() -> &'static str {
-    AUTO_LANGUAGE
-}
-
 /// Returns the compact label used for the auto language selector state.
 ///
 /// # Returns
@@ -99,68 +91,212 @@ fn render_derived_meta_section(ui: &mut egui::Ui, derived: &DerivedMeta) {
     ui.label(format!("Terms: {}", format_derived_terms(&derived.terms)));
 }
 
-fn language_typeahead_target(letter: char) -> Option<&'static str> {
-    let mut normalized = letter.to_lowercase();
-    let letter = normalized.next()?;
-    if !letter.is_alphabetic() {
-        return None;
+/// Seconds without typing after which a language popup's type-ahead starts over.
+const LANGUAGE_TYPEAHEAD_RESET_SECS: f64 = 1.0;
+
+/// Language selector options in display order as `(value, label)`: `Auto`, then the manual languages.
+fn language_options() -> impl Iterator<Item = (&'static str, &'static str)> {
+    std::iter::once((AUTO_LANGUAGE, "Auto")).chain(
+        localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
+            .iter()
+            .map(|option| (option.value, option.label)),
+    )
+}
+
+/// Type-ahead state of one open language popup, kept in egui temp memory.
+///
+/// Typed characters accumulate until [`LANGUAGE_TYPEAHEAD_RESET_SECS`] pass
+/// without typing. The buffer selects the first option whose label starts with
+/// it, ignoring case. A buffer of one character typed repeatedly instead cycles
+/// through the options starting with that character, wrapping at the end. A
+/// buffer that matches no label keeps the current choice.
+#[derive(Clone, Default)]
+struct LanguageTypeahead {
+    /// Lowercased characters typed since the buffer last started over.
+    buffer: String,
+    /// egui input time of the latest keystroke, in seconds.
+    last_typed: f64,
+}
+
+impl LanguageTypeahead {
+    /// Feeds one typed character and moves `language_choice` to the option it selects.
+    ///
+    /// # Arguments
+    /// - `ch`: Typed character.
+    /// - `now`: egui input time of the keystroke, in seconds.
+    /// - `language_choice`: Selected option value, updated in place.
+    ///
+    /// # Returns
+    /// `true` when `language_choice` changed.
+    fn type_char(&mut self, ch: char, now: f64, language_choice: &mut String) -> bool {
+        if now - self.last_typed >= LANGUAGE_TYPEAHEAD_RESET_SECS {
+            self.buffer.clear();
+        }
+        self.last_typed = now;
+        self.buffer.extend(ch.to_lowercase());
+        match self.target(language_choice) {
+            Some(target) if target != language_choice.as_str() => {
+                *language_choice = target.to_string();
+                true
+            }
+            _ => false,
+        }
     }
-    if letter == 'a' {
-        return Some(AUTO_LANGUAGE);
+
+    /// The option value the buffer selects from `current`, or `None` when nothing matches.
+    fn target(&self, current: &str) -> Option<&'static str> {
+        let first = self.buffer.chars().next()?;
+        let label_starts_with =
+            |label: &str, prefix: &str| label.to_lowercase().starts_with(prefix);
+        let repeated =
+            self.buffer.len() > first.len_utf8() && self.buffer.chars().all(|ch| ch == first);
+        if !repeated {
+            return language_options()
+                .find(|(_, label)| label_starts_with(label, &self.buffer))
+                .map(|(value, _)| value);
+        }
+        let prefix = first.to_string();
+        let cycle = language_options()
+            .filter(|(_, label)| label_starts_with(label, &prefix))
+            .map(|(value, _)| value)
+            .collect::<Vec<_>>();
+        let next = cycle
+            .iter()
+            .position(|value| *value == current)
+            .map_or(0, |index| (index + 1) % cycle.len());
+        cycle.get(next).copied()
     }
-    let prefix = letter.to_string();
-    localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS
+}
+
+/// Characters typed this frame that extend a type-ahead buffer.
+///
+/// Whitespace and control characters are dropped. Everything else is kept,
+/// including `#` and `+` so `c#` and `c+` reach C# and C++.
+fn typeahead_chars(events: &[egui::Event]) -> String {
+    events
         .iter()
-        .find(|option| {
-            option
-                .label
-                .to_ascii_lowercase()
-                .starts_with(prefix.as_str())
+        .filter_map(|event| match event {
+            egui::Event::Text(text) => Some(text.as_str()),
+            _ => None,
         })
-        .map(|option| option.value)
+        .flat_map(str::chars)
+        .filter(|ch| !ch.is_whitespace() && !ch.is_control())
+        .collect()
 }
 
-fn apply_language_selector_typeahead(
-    language_choice: &mut String,
+/// Applies this frame's typing to a language popup's type-ahead.
+///
+/// A closed popup ignores typing and drops its buffer, so reopening starts a
+/// new one. Time comes from egui's input clock, which tests control through
+/// `RawInput::time`.
+///
+/// # Arguments
+/// - `ui`: UI that renders the combo box.
+/// - `combo_id`: Widget id of the combo box.
+/// - `popup_open`: Whether the combo's popup is open this frame.
+/// - `language_choice`: Selected option value, updated in place.
+///
+/// # Returns
+/// `true` when the typed characters changed `language_choice`.
+fn apply_language_typeahead(
+    ui: &egui::Ui,
+    combo_id: egui::Id,
     popup_open: bool,
-    typed_letter: Option<char>,
+    language_choice: &mut String,
 ) -> bool {
+    let state_id = combo_id.with("language_typeahead");
     if !popup_open {
+        ui.data_mut(|data| data.remove::<LanguageTypeahead>(state_id));
         return false;
     }
-    let Some(target) = typed_letter.and_then(language_typeahead_target) else {
-        return false;
-    };
-    if language_choice == target {
+    let (typed, now) = ui.input(|input| (typeahead_chars(&input.events), input.time));
+    if typed.is_empty() {
         return false;
     }
-    *language_choice = target.to_string();
-    true
-}
-
-fn typed_letter_from_events(events: &[egui::Event]) -> Option<char> {
-    events.iter().find_map(|event| match event {
-        egui::Event::Text(text) => text.chars().find(|ch| ch.is_alphabetic()),
-        _ => None,
+    ui.data_mut(|data| {
+        let state = data.get_temp_mut_or_default::<LanguageTypeahead>(state_id);
+        let mut changed = false;
+        for ch in typed.chars() {
+            changed |= state.type_char(ch, now, language_choice);
+        }
+        changed
     })
 }
 
-/// Renders a language combo box with open-only letter-jump selection.
+/// Returns the widget id egui assigns to a language combo box.
+///
+/// `ComboBox::from_id_salt` wraps its argument in `Id::new` and derives the
+/// widget id with `ui.make_persistent_id`, and `ComboBox::is_open` expects that
+/// widget id. Looking up a bare `Id::new(salt)` yields a different id, so the
+/// popup state is never found and the combo always reads as closed.
+///
+/// # Arguments
+/// - `ui`: UI the combo box is added to.
+/// - `combo_id_salt`: Id salt passed to `ComboBox::from_id_salt`.
+fn language_combo_id(ui: &egui::Ui, combo_id_salt: &str) -> egui::Id {
+    ui.make_persistent_id(egui::Id::new(combo_id_salt))
+}
+
+/// A language popup opening or being cancelled during one frame.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LanguagePopupEvent {
+    /// The popup opened; the current choice is the one a cancel returns to.
+    Opened,
+    /// Escape closed the popup to cancel the choices made while it was open.
+    Cancelled,
+}
+
+/// Whether a text field or the editor holds keyboard focus, and so owns typing.
+///
+/// A focused combo button or popup option does not count: those leave typing
+/// to the open popup.
+fn text_input_focused(ctx: &egui::Context) -> bool {
+    ctx.memory(|memory| memory.focused()).is_some_and(|id| {
+        id == egui::Id::new(VIRTUAL_EDITOR_ID) || egui::TextEdit::load_state(ctx, id).is_some()
+    })
+}
+
+/// Renders a language combo box with open-only type-ahead selection.
+///
+/// While the popup is open, typing selects an option as described on
+/// [`LanguageTypeahead`] and scrolls it to the center of the popup so the jump
+/// is visible. Enter closes the popup and keeps the choice. Escape closes it
+/// and reports [`LanguagePopupEvent::Cancelled`] so the caller can restore the
+/// choice from when it opened. Both keys are consumed, so no later handler in
+/// the frame also acts on them. When a text field or the editor takes focus,
+/// such as the query of a palette opened by its shortcut, the popup closes and
+/// keeps the choice like a click outside, so that input receives the typing,
+/// Enter, and Escape instead.
 ///
 /// # Arguments
 /// - `ui`: Parent UI receiving the combo box.
 /// - `combo_id_salt`: Stable egui id salt for the combo instance.
 /// - `width`: Optional explicit combo width override.
 /// - `language_choice`: Mutable selected option value.
-pub(super) fn render_language_choice_combo(
+///
+/// # Returns
+/// The popup event of this frame, if any.
+fn render_language_choice_combo(
     ui: &mut egui::Ui,
     combo_id_salt: &str,
     width: Option<f32>,
     language_choice: &mut String,
-) {
-    let typed_letter = ui.input(|input| typed_letter_from_events(&input.events));
-    let popup_open = egui::ComboBox::is_open(ui.ctx(), egui::Id::new(combo_id_salt));
-    let _changed = apply_language_selector_typeahead(language_choice, popup_open, typed_letter);
+) -> Option<LanguagePopupEvent> {
+    let combo_id = language_combo_id(ui, combo_id_salt);
+    let was_open = egui::ComboBox::is_open(ui.ctx(), combo_id);
+    let yielded = was_open && text_input_focused(ui.ctx());
+    let popup_open = was_open && !yielded;
+    let (cancel, accept) = if popup_open {
+        ui.input_mut(|input| {
+            (
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+            )
+        })
+    } else {
+        (false, false)
+    };
+    let jumped = apply_language_typeahead(ui, combo_id, popup_open, language_choice);
 
     let auto_label = auto_language_status_label();
     let selected_language_text =
@@ -171,27 +307,226 @@ pub(super) fn render_language_choice_combo(
         combo = combo.width(width);
     }
     combo.show_ui(ui, |ui| {
-        ui.selectable_value(
-            language_choice,
-            auto_language_choice_key().to_string(),
-            "Auto",
-        );
-        for option in localpaste_core::detection::canonical::MANUAL_LANGUAGE_OPTIONS {
-            ui.selectable_value(language_choice, option.value.to_string(), option.label);
+        if cancel || accept || yielded {
+            ui.close();
+        }
+        for (value, label) in language_options() {
+            let response = ui.selectable_value(language_choice, value.to_string(), label);
+            if jumped && language_choice.as_str() == value {
+                response.scroll_to_me(Some(egui::Align::Center));
+            }
         }
     });
+    if cancel {
+        Some(LanguagePopupEvent::Cancelled)
+    } else if !was_open && egui::ComboBox::is_open(ui.ctx(), combo_id) {
+        Some(LanguagePopupEvent::Opened)
+    } else {
+        None
+    }
+}
+
+/// Language draft of one paste, captured when a language popup opens so Escape can restore it.
+#[derive(Clone, Default)]
+struct LanguageDraft {
+    /// Paste the draft belongs to; a cancel after another paste loads restores nothing.
+    paste_id: Option<String>,
+    /// `edit_language` when the popup opened.
+    language: Option<String>,
+    /// `edit_language_is_manual` when the popup opened.
+    is_manual: bool,
+    /// Whether the draft differed from the loaded paste's language when the popup opened.
+    staged: bool,
+}
+
+/// A metadata draft string edited in a single-line text field.
+#[derive(Clone, Copy)]
+pub(super) enum MetadataTextField {
+    /// `edit_name`, edited by the toolbar title and the drawer's Name field.
+    Name,
+    /// `edit_tags` as comma-separated text, edited by the drawer's Tags field.
+    Tags,
+}
+
+/// A metadata text field's draft when the field gained focus, kept so Escape can restore it.
+#[derive(Clone, Default)]
+struct FieldDraft {
+    /// Paste the draft belongs to; a draft captured before another paste loaded is not restored.
+    paste_id: Option<String>,
+    /// The field's text when it gained focus.
+    value: String,
 }
 
 impl LocalPasteApp {
+    /// Recomputes `metadata_dirty` from whether the metadata draft differs from the loaded paste.
+    pub(in crate::app) fn refresh_metadata_dirty(&mut self) {
+        if let Some(paste) = self.selected_paste.as_ref() {
+            self.metadata_dirty = self.edit_name != paste.name
+                || self.edit_language != paste.language
+                || self.edit_language_is_manual != paste.language_is_manual
+                || self.edit_tags != paste.tags.join(", ");
+        }
+    }
+
+    /// The draft string `field` edits.
+    fn metadata_text_mut(&mut self, field: MetadataTextField) -> &mut String {
+        match field {
+            MetadataTextField::Name => &mut self.edit_name,
+            MetadataTextField::Tags => &mut self.edit_tags,
+        }
+    }
+
+    /// The loaded paste's value of `field`, in the form the draft holds it.
+    fn saved_metadata_text(&self, field: MetadataTextField) -> Option<String> {
+        let paste = self.selected_paste.as_ref()?;
+        Some(match field {
+            MetadataTextField::Name => paste.name.clone(),
+            MetadataTextField::Tags => paste.tags.join(", "),
+        })
+    }
+
+    /// Renders a single-line text field bound to a metadata draft string.
+    ///
+    /// Typing dirties metadata. Escape cancels the edit made since the field
+    /// gained focus: the draft returns to its text from that moment, or to the
+    /// loaded paste's value when another paste has loaded since, and
+    /// `metadata_dirty` is recomputed against the loaded paste, so edits made
+    /// elsewhere stay staged. egui releases focus on Escape before widgets
+    /// render, so the field detects the key by having held focus last frame and
+    /// consumes it.
+    ///
+    /// # Arguments
+    /// - `ui`: Parent UI receiving the field.
+    /// - `id`: Widget id of the text field.
+    /// - `field`: Draft string the field edits.
+    /// - `style`: Applies the field's width, font, and placeholder.
+    ///
+    /// # Returns
+    /// The field's response, and whether Escape cancelled its edit this frame.
+    pub(super) fn render_metadata_text_field(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: egui::Id,
+        field: MetadataTextField,
+        style: impl for<'t> FnOnce(egui::TextEdit<'t>) -> egui::TextEdit<'t>,
+    ) -> (egui::Response, bool) {
+        let draft_id = id.with("focus_draft");
+        let had_focus = ui.memory(|memory| memory.had_focus_last_frame(id));
+        let cancelled = had_focus
+            && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        if cancelled {
+            let restored = ui
+                .data_mut(|data| data.remove_temp::<FieldDraft>(draft_id))
+                .filter(|draft| draft.paste_id == self.selected_id)
+                .map(|draft| draft.value)
+                .or_else(|| self.saved_metadata_text(field));
+            if let Some(value) = restored {
+                *self.metadata_text_mut(field) = value;
+                self.refresh_metadata_dirty();
+            }
+        }
+        // The field applies this frame's typing before it reports gaining focus,
+        // so the value Escape returns to is read before the field runs.
+        let before_input = (!had_focus).then(|| self.metadata_text_mut(field).clone());
+        self.claim_discovery_focus(ui, id);
+        let response = ui.add(style(
+            egui::TextEdit::singleline(self.metadata_text_mut(field)).id(id),
+        ));
+        if let Some(value) = before_input.filter(|_| response.gained_focus()) {
+            let draft = FieldDraft {
+                paste_id: self.selected_id.clone(),
+                value,
+            };
+            ui.data_mut(|data| data.insert_temp(draft_id, draft));
+        }
+        if response.changed() {
+            self.metadata_dirty = true;
+        }
+        (response, cancelled)
+    }
+
+    /// Renders a language combo bound to the metadata draft.
+    ///
+    /// A click or type-ahead in the popup applies its choice to the draft at
+    /// once. Escape restores the draft captured when the popup opened and
+    /// recomputes `metadata_dirty` against the loaded paste, so a cancelled
+    /// choice leaves nothing to save. The captured draft keeps the language
+    /// auto-detection resolved, which re-applying `Auto` would clear. A draft
+    /// that staged no language change returns to the loaded paste's language
+    /// instead, so one a content save detected while the popup was open is
+    /// not sent back as an explicit switch to `Auto`.
+    ///
+    /// # Arguments
+    /// - `ui`: Parent UI receiving the combo box.
+    /// - `combo_id_salt`: Stable egui id salt for the combo instance.
+    /// - `width`: Optional explicit combo width override.
+    pub(super) fn render_language_field(
+        &mut self,
+        ui: &mut egui::Ui,
+        combo_id_salt: &str,
+        width: Option<f32>,
+    ) {
+        let draft_id = language_combo_id(ui, combo_id_salt).with("language_draft");
+        let current_manual_value = self
+            .edit_language
+            .as_deref()
+            .map(localpaste_core::detection::canonical::canonicalize)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "text".to_string());
+        let mut language_choice = if self.edit_language_is_manual {
+            current_manual_value.clone()
+        } else {
+            AUTO_LANGUAGE.to_string()
+        };
+        let previous_language_choice = language_choice.clone();
+        match render_language_choice_combo(ui, combo_id_salt, width, &mut language_choice) {
+            Some(LanguagePopupEvent::Opened) => {
+                let draft = LanguageDraft {
+                    paste_id: self.selected_id.clone(),
+                    language: self.edit_language.clone(),
+                    is_manual: self.edit_language_is_manual,
+                    staged: self
+                        .selected_paste
+                        .as_ref()
+                        .is_some_and(|loaded| !self.draft_language_matches(loaded)),
+                };
+                ui.data_mut(|data| data.insert_temp(draft_id, draft));
+            }
+            Some(LanguagePopupEvent::Cancelled) => {
+                let draft = ui.data_mut(|data| data.remove_temp::<LanguageDraft>(draft_id));
+                if let Some(draft) = draft.filter(|draft| draft.paste_id == self.selected_id) {
+                    let loaded = self.selected_paste.as_ref().filter(|_| !draft.staged);
+                    (self.edit_language, self.edit_language_is_manual) = match loaded {
+                        Some(loaded) => (loaded.language.clone(), loaded.language_is_manual),
+                        None => (draft.language, draft.is_manual),
+                    };
+                    self.refresh_metadata_dirty();
+                }
+                return;
+            }
+            None => {}
+        }
+        if language_choice != previous_language_choice {
+            apply_language_choice(
+                &mut self.edit_language_is_manual,
+                &mut self.edit_language,
+                &mut self.metadata_dirty,
+                language_choice.as_str(),
+                current_manual_value.as_str(),
+            );
+        }
+    }
+
     /// Renders the side drawer used for less-frequent metadata edits.
     pub(crate) fn render_properties_drawer(&mut self, ctx: &egui::Context) {
         if !self.properties_drawer_open || self.selected_id.is_none() {
             return;
         }
 
-        let mutation_block_reason = self.mutation_shortcut_block_reason();
         let save_blocked = self.save_block_reason().is_some();
-        let background_mutation_blocked = mutation_block_reason.is_some();
+        // The editor shows the reason beside the paste id; an extra row here would
+        // shift the drawer whenever a block starts or ends.
+        let background_mutation_blocked = self.mutation_shortcut_block_reason().is_some();
         let mut keep_open = true;
         egui::SidePanel::right("properties_drawer")
             .default_width(320.0)
@@ -218,60 +553,28 @@ impl LocalPasteApp {
 
                 ui.add_enabled_ui(!background_mutation_blocked, |ui| {
                     ui.label(RichText::new("Name").small().color(COLOR_TEXT_MUTED));
-                    if ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.edit_name)
-                                .id(egui::Id::new(PROPERTIES_NAME_INPUT_ID))
-                                .desired_width(f32::INFINITY),
-                        )
-                        .changed()
-                    {
-                        self.metadata_dirty = true;
-                    }
+                    self.render_metadata_text_field(
+                        ui,
+                        egui::Id::new(PROPERTIES_NAME_INPUT_ID),
+                        MetadataTextField::Name,
+                        |edit| edit.desired_width(f32::INFINITY),
+                    );
 
                     ui.add_space(6.0);
                     ui.label(RichText::new("Language").small().color(COLOR_TEXT_MUTED));
-                    let current_manual_value = self
-                        .edit_language
-                        .as_deref()
-                        .map(localpaste_core::detection::canonical::canonicalize)
-                        .filter(|value| !value.is_empty())
-                        .unwrap_or_else(|| "text".to_string());
-                    let mut language_choice = if self.edit_language_is_manual {
-                        current_manual_value.clone()
-                    } else {
-                        AUTO_LANGUAGE.to_string()
-                    };
-                    let previous_language_choice = language_choice.clone();
-                    render_language_choice_combo(
-                        ui,
-                        "drawer_language_select",
-                        None,
-                        &mut language_choice,
-                    );
-                    if language_choice != previous_language_choice {
-                        apply_language_choice(
-                            &mut self.edit_language_is_manual,
-                            &mut self.edit_language,
-                            &mut self.metadata_dirty,
-                            language_choice.as_str(),
-                            current_manual_value.as_str(),
-                        );
-                    }
+                    self.render_language_field(ui, "drawer_language_select", None);
 
                     ui.add_space(6.0);
                     ui.label(RichText::new("Tags").small().color(COLOR_TEXT_MUTED));
-                    if ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.edit_tags)
-                                .id(egui::Id::new(PROPERTIES_TAGS_INPUT_ID))
-                                .desired_width(f32::INFINITY)
-                                .hint_text("comma,separated,tags"),
-                        )
-                        .changed()
-                    {
-                        self.metadata_dirty = true;
-                    }
+                    self.render_metadata_text_field(
+                        ui,
+                        egui::Id::new(PROPERTIES_TAGS_INPUT_ID),
+                        MetadataTextField::Tags,
+                        |edit| {
+                            edit.desired_width(f32::INFINITY)
+                                .muted_hint("comma,separated,tags")
+                        },
+                    );
                 });
                 ui.add_space(10.0);
                 ui.horizontal_wrapped(|ui| {
@@ -285,10 +588,6 @@ impl LocalPasteApp {
                         self.save_metadata_now();
                     }
                 });
-                if let Some(reason) = mutation_block_reason {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(reason).small().color(COLOR_TEXT_MUTED));
-                }
                 if let Some(summary) = self.selected_paste_summary() {
                     render_derived_meta_section(ui, &summary.derived);
                 }
@@ -307,8 +606,8 @@ impl LocalPasteApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_language_choice, apply_language_selector_typeahead, auto_language_status_label,
-        format_derived_terms, language_typeahead_target, typed_letter_from_events, AUTO_LANGUAGE,
+        apply_language_choice, auto_language_status_label, format_derived_terms, language_options,
+        typeahead_chars, LanguageTypeahead, AUTO_LANGUAGE,
     };
     use eframe::egui;
 
@@ -383,42 +682,59 @@ mod tests {
     }
 
     #[test]
-    fn language_typeahead_target_uses_first_matching_option_matrix() {
-        assert_eq!(language_typeahead_target('a'), Some(AUTO_LANGUAGE));
-        assert_eq!(language_typeahead_target('m'), Some("markdown"));
-        assert_eq!(language_typeahead_target('p'), Some("perl"));
-        assert_eq!(language_typeahead_target('L'), Some("latex"));
-        assert_eq!(language_typeahead_target('1'), None);
-        assert_eq!(language_typeahead_target('?'), None);
+    fn only_auto_starts_with_a_so_a_alone_selects_it() {
+        let starting_with_a = language_options()
+            .filter(|(_, label)| label.to_lowercase().starts_with('a'))
+            .map(|(value, _)| value)
+            .collect::<Vec<_>>();
+        assert_eq!(starting_with_a, [AUTO_LANGUAGE]);
     }
 
     #[test]
-    fn apply_language_selector_typeahead_requires_open_popup() {
-        let mut language_choice = "lua".to_string();
-        assert!(!apply_language_selector_typeahead(
-            &mut language_choice,
-            false,
-            Some('m'),
-        ));
-        assert_eq!(language_choice, "lua");
-
-        assert!(apply_language_selector_typeahead(
-            &mut language_choice,
-            true,
-            Some('m'),
-        ));
-        assert_eq!(language_choice, "markdown");
-    }
-
-    #[test]
-    fn typed_letter_from_events_ignores_non_letters_and_uses_first_letter() {
-        let events = vec![
-            egui::Event::Text(" ".to_string()),
-            egui::Event::Text("3".to_string()),
-            egui::Event::Text("m".to_string()),
-            egui::Event::Text("p".to_string()),
+    fn language_typeahead_script_matrix() {
+        // (key, input time, choice afterwards, whether the key changed it)
+        let script = [
+            ('P', 10.0, "perl", true),
+            ('Y', 10.2, "python", true),
+            ('t', 10.4, "python", false),
+            ('z', 10.6, "python", false),
+            ('c', 12.0, "c", true),
+            ('#', 12.1, "cs", true),
+            ('p', 14.0, "perl", true),
+            ('p', 14.1, "text", true),
+            ('p', 14.2, "powershell", true),
+            ('p', 14.3, "python", true),
+            ('p', 14.4, "perl", true),
+            ('a', 16.0, AUTO_LANGUAGE, true),
+            ('a', 16.1, AUTO_LANGUAGE, false),
+            ('1', 18.0, AUTO_LANGUAGE, false),
         ];
-        assert_eq!(typed_letter_from_events(&events), Some('m'));
+        let mut state = LanguageTypeahead::default();
+        let mut choice = "lua".to_string();
+        for (key, time, expected, changed) in script {
+            assert_eq!(
+                state.type_char(key, time, &mut choice),
+                changed,
+                "{key} at {time}"
+            );
+            assert_eq!(choice, expected, "{key} at {time}");
+        }
+    }
+
+    #[test]
+    fn typeahead_chars_drop_whitespace_and_controls() {
+        let events = vec![
+            egui::Event::Text(" c".to_string()),
+            egui::Event::Key {
+                key: egui::Key::P,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::Text("+\t+".to_string()),
+        ];
+        assert_eq!(typeahead_chars(&events), "c++");
     }
 
     #[test]

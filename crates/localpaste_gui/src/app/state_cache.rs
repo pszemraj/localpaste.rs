@@ -38,8 +38,12 @@ impl LocalPasteApp {
     }
 
     /// Recomputes the visible sidebar projection from the canonical paste cache.
+    ///
+    /// Callers only recompute while the search query is empty; searched rows
+    /// come from backend replies instead.
     pub(super) fn recompute_visible_pastes(&mut self) {
         Self::sort_paste_summaries_by_recency(&mut self.all_pastes);
-        self.pastes = self.filter_by_collection(&self.all_pastes);
+        self.pastes = self.filter_by_collection(&self.all_pastes).into();
+        self.note_sidebar_rows_filter();
     }
 }

@@ -63,11 +63,69 @@ mod model_tests {
     #[test]
     fn test_paste_new_stores_detected_language_as_locked() {
         let paste = paste::Paste::new(
-            "fn main() {\n    let value = 5;\n    println!(\"{value}\");\n}".to_string(),
+            "fn main() {\n    let greeting = \"hello from LocalPaste\";\n    println!(\"{greeting}\");\n}".to_string(),
             "rust".to_string(),
         );
         assert_eq!(paste.language.as_deref(), Some("rust"));
         assert!(paste.language_is_manual);
+    }
+
+    #[test]
+    fn test_paste_new_leaves_short_content_unresolved() {
+        let content = "fn main() { println!(\"hi\"); }";
+        assert_eq!(
+            crate::detection::detect_language(content).as_deref(),
+            Some("rust")
+        );
+        let paste = paste::Paste::new(content.to_string(), "short".to_string());
+        assert_eq!(paste.language, None);
+        assert!(!paste.language_is_manual);
+    }
+
+    #[test]
+    fn test_auto_detect_language_requires_64_chars_and_3_non_blank_lines() {
+        use crate::detection::{auto_detect_language, detect_language};
+        // A one-line Rust item whose string literal pads it to `len` characters.
+        let rust_line = |len: usize, pad: char| {
+            let base = "fn f() -> &'static str { \"\" }";
+            let padding = pad.to_string().repeat(len - base.chars().count());
+            format!("fn f() -> &'static str {{ \"{padding}\" }}")
+        };
+        let rust_block = |len: usize, pad: char| {
+            let base = "fn f() -> &'static str {\n    \"\"\n}";
+            let padding = pad.to_string().repeat(len - base.chars().count());
+            format!("fn f() -> &'static str {{\n    \"{padding}\"\n}}")
+        };
+        for unresolved in [
+            rust_line(63, 'x'),
+            rust_line(64, 'x'),
+            rust_line(128, 'x'),
+            rust_block(63, 'x'),
+            format!("\n  {}\t\n", rust_block(63, 'x')),
+            rust_block(63, 'é'),
+            format!("{}\n\n  \n// second nonblank line", rust_line(64, 'x')),
+            "fn main() {\n\n  \n    println!(\"hi\"); }".to_string(),
+            "fn main() {\n    println!(\"hi\");\n}".to_string(),
+        ] {
+            assert_eq!(
+                detect_language(&unresolved).as_deref(),
+                Some("rust"),
+                "{unresolved:?}"
+            );
+            assert_eq!(auto_detect_language(&unresolved), None, "{unresolved:?}");
+        }
+        for detected in [
+            rust_block(64, 'x'),
+            rust_block(64, 'é'),
+            format!("\n  {}\t\n", rust_block(64, 'x')),
+            rust_block(64, 'x').replace('\n', "\r\n"),
+        ] {
+            assert_eq!(
+                auto_detect_language(&detected).as_deref(),
+                Some("rust"),
+                "{detected:?}"
+            );
+        }
     }
 
     #[test]
@@ -105,7 +163,8 @@ mod model_tests {
     #[test]
     fn test_paste_meta_from_populates_derived_retrieval_fields() {
         let code = paste::Paste::new(
-            "fn handle_request() {\n    let fsdp2 = \"cublaslt\";\n}\n".to_string(),
+            "fn handle_request() {\n    let fsdp2 = \"cublaslt\";\n    println!(\"{fsdp2}\");\n}\n"
+                .to_string(),
             "random-slug".to_string(),
         );
         let config = paste::Paste::new(
@@ -124,10 +183,105 @@ mod model_tests {
             Some("fn handle_request")
         );
         assert!(code_meta.derived.terms.iter().any(|term| term == "fsdp2"));
-        assert_eq!(config_meta.derived.kind, crate::semantic::PasteKind::Config);
+        assert_eq!(config_meta.derived.kind, crate::semantic::PasteKind::Short);
         assert_eq!(config_meta.derived.handle.as_deref(), Some("model gpt-4"));
         assert_eq!(link_meta.derived.kind, crate::semantic::PasteKind::Link);
         assert_eq!(link_meta.derived.handle.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn test_paste_new_classifies_structural_runtime_fixtures() {
+        use crate::semantic::PasteKind;
+
+        let cases = [
+            (
+                "# setup environment\nexport MODE=dev\nsource .env\nmkdir -p out\ncargo build --release\n",
+                PasteKind::Code,
+            ),
+            (
+                "```text\nINFO (main) Starting worker\nERROR (main) Worker stopped\n```",
+                PasteKind::Log,
+            ),
+            (
+                "yarn install v1.22.22\ninfo Resolving packages\nwarning Retrying request\nsuccess Saved lockfile",
+                PasteKind::Log,
+            ),
+            (
+                "yarn install v1.22.22\ninfo resolving package graph\ninfo fetching packages",
+                PasteKind::Log,
+            ),
+            (
+                "INFO\tStarting worker\nERROR\tWorker stopped",
+                PasteKind::Log,
+            ),
+            (
+                "info about the meeting is below\nerror handling is a topic we should discuss",
+                PasteKind::Document,
+            ),
+            ("cd app\nsudo is required for installation", PasteKind::Document),
+            (
+                "fn main() {\n    println!(\"ready\");\n    // thread 'main' panicked at src/main.rs:12:5\n}",
+                PasteKind::Code,
+            ),
+            (
+                "# Runtime report\n\n```text\nthread 'main' panicked at src/main.rs:12:5\n```\n",
+                PasteKind::Document,
+            ),
+        ];
+        for (content, expected) in cases {
+            let paste = paste::Paste::new(content.to_string(), "fixture".to_string());
+            assert_eq!(
+                paste::PasteMeta::from(&paste).derived.kind,
+                crate::test_support::kind_unless_short(
+                    content,
+                    paste.language.as_deref(),
+                    expected
+                ),
+                "language {:?}: {content}",
+                paste.language
+            );
+        }
+
+        let manual_markdown = paste::Paste::new_with_language(
+            "# setup environment\nexport MODE=dev\nsource .env\nmkdir -p out\ncargo build --release\n"
+                .to_string(),
+            "manual notes".to_string(),
+            Some("markdown".to_string()),
+            true,
+        );
+        assert_eq!(
+            paste::PasteMeta::from(&manual_markdown).derived.kind,
+            PasteKind::Code
+        );
+        assert_eq!(manual_markdown.language.as_deref(), Some("markdown"));
+        assert!(manual_markdown.language_is_manual);
+        assert!(manual_markdown.is_markdown);
+        let manual_command = paste::Paste::new_with_language(
+            "# Todo\ngit pull".into(),
+            "manual command".into(),
+            Some("markdown".into()),
+            true,
+        );
+        assert_eq!(
+            paste::PasteMeta::from(&manual_command).derived.kind,
+            PasteKind::Code
+        );
+        assert_eq!(manual_command.language.as_deref(), Some("markdown"));
+        assert!(manual_command.language_is_manual);
+        let manual_note = paste::Paste::new_with_language(
+            "# Setup notes\n\nThese commands prepare the environment.\n\ncargo build --release"
+                .to_string(),
+            "manual notes".to_string(),
+            Some("markdown".to_string()),
+            true,
+        );
+        assert_eq!(
+            paste::PasteMeta::from(&manual_note).derived.kind,
+            PasteKind::Document
+        );
+        assert_eq!(manual_note.language.as_deref(), Some("markdown"));
+        assert!(manual_note.language_is_manual);
+        assert!(manual_note.is_markdown);
     }
 
     #[test]

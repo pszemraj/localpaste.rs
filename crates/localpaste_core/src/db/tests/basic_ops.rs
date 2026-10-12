@@ -849,8 +849,17 @@ fn language_mode_transitions_cover_auto_and_manual_lock_behaviors() {
         "language should be pending auto-detect after switch"
     );
 
+    for content in [
+        "fn main() {\n    println!(\"hi\");\n}",
+        "fn main() { println!(\"this one-line source has more than sixty-four characters\"); }",
+    ] {
+        let short_edit = update_request(Some(content), None, None, None);
+        let pending = update_existing_paste(&db, &paste_id, short_edit, "short content update");
+        assert!(pending.language.is_none() && !pending.language_is_manual);
+    }
+
     let auto_detect_and_lock = update_request(
-        Some("def main():\n    import sys\n    print('hello')"),
+        Some("def main():\n    import sys\n    print('hello from LocalPaste', sys.version)"),
         None,
         None,
         None,
@@ -861,6 +870,14 @@ fn language_mode_transitions_cover_auto_and_manual_lock_behaviors() {
         redetected.language_is_manual,
         "auto detect should lock once a concrete language is resolved"
     );
+    let locked = update_existing_paste(
+        &db,
+        &paste_id,
+        update_request(Some("fn main() {}"), None, None, None),
+        "content update after detection locks",
+    );
+    assert_eq!(locked.language.as_deref(), Some("python"));
+    assert!(locked.language_is_manual);
 
     let auto_with_resolved_language = Paste::new_with_language(
         "fn main() {\n    println!(\"hello\");\n}".to_string(),

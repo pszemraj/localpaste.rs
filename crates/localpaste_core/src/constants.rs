@@ -17,8 +17,6 @@ pub const DEFAULT_PASTE_VERSION_RETENTION_LIMIT: usize = 200;
 /// Maximum accepted value for historical snapshots retained per paste under the serialized metadata model.
 pub const MAX_PASTE_VERSION_RETENTION_LIMIT: usize = 1_000;
 
-/// Default list and search limits used by GUI list pagination.
-pub const DEFAULT_LIST_PASTES_LIMIT: usize = 512;
 /// Default upper bound for sidebar search result sets.
 pub const DEFAULT_SEARCH_PASTES_LIMIT: usize = 512;
 

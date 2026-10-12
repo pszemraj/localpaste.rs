@@ -24,6 +24,7 @@ pub(super) struct NavProbe {
     current_raw_events: Vec<ProbeEvent>,
     current_candidate_commands_if_editor_focused: Vec<String>,
     focus_editor_until_acquired: bool,
+    clear_selection_once: bool,
 }
 
 impl NavProbe {
@@ -65,6 +66,7 @@ impl NavProbe {
             current_raw_events: Vec::new(),
             current_candidate_commands_if_editor_focused: Vec::new(),
             focus_editor_until_acquired: env_truthy("LOCALPASTE_NAV_PROBE_FOCUS_EDITOR"),
+            clear_selection_once: env_truthy("LOCALPASTE_NAV_PROBE_CLEAR_SELECTION"),
         })
     }
 
@@ -82,15 +84,24 @@ impl NavProbe {
     }
 
     fn write_frame(&mut self, frame: &NavProbeFrame) {
-        if let Err(err) = serde_json::to_writer(&mut self.file, frame) {
-            warn!("failed to serialize navigation probe frame: {err}");
-            return;
-        }
-        if let Err(err) = self.file.write_all(b"\n").and_then(|_| self.file.flush()) {
+        let record = match serialize_frame_record(frame) {
+            Ok(record) => record,
+            Err(err) => {
+                warn!("failed to serialize navigation probe frame: {err}");
+                return;
+            }
+        };
+        if let Err(err) = self.file.write_all(&record).and_then(|_| self.file.flush()) {
             warn!("failed to write navigation probe frame: {err}");
         }
         self.frame_index = self.frame_index.saturating_add(1);
     }
+}
+
+fn serialize_frame_record(frame: &NavProbeFrame) -> Result<Vec<u8>, serde_json::Error> {
+    let mut record = serde_json::to_vec(frame)?;
+    record.push(b'\n');
+    Ok(record)
 }
 
 #[derive(Debug, Serialize)]
@@ -135,6 +146,7 @@ struct FocusSnapshot {
     virtual_editor: bool,
     sidebar_search: bool,
     editor_title: bool,
+    editor_find: bool,
     command_palette_query: bool,
     properties_name: bool,
     properties_tags: bool,
@@ -166,6 +178,10 @@ struct EditorSnapshot {
     wrap_width: f32,
     pending_scroll_offset_y: Option<f32>,
     follow_cursor_next_frame: bool,
+    caret_visible: bool,
+    viewport_bounds: Option<[f32; 4]>,
+    caret_bounds: Option<[f32; 4]>,
+    scroll_offset_y: f32,
 }
 
 #[derive(Debug, Serialize)]
@@ -190,6 +206,23 @@ impl LocalPasteApp {
     /// Captures raw input and clears per-frame command state before UI code can consume keyboard events.
     pub(super) fn nav_probe_begin_frame(&mut self, ctx: &egui::Context) {
         self.nav_probe_applied_commands.clear();
+        // Wait for the persisted startup selection to finish loading, then expose
+        // the no-open state once. Subsequent selection and paste use normal paths.
+        let clear_selection = self.nav_probe.as_ref().is_some_and(|probe| {
+            probe.clear_selection_once
+                && !self.pastes.is_empty()
+                && self.selected_paste.is_some()
+                && self.save_status == super::SaveStatus::Saved
+        });
+        if clear_selection {
+            if let Some(probe) = self.nav_probe.as_mut() {
+                probe.clear_selection_once = false;
+                probe.focus_editor_until_acquired = false;
+            }
+            self.clear_selection();
+            self.focus_editor_next = false;
+            ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new(VIRTUAL_EDITOR_ID)));
+        }
         if let Some(probe) = self.nav_probe.as_mut() {
             probe.capture_begin_frame(ctx);
         }
@@ -210,6 +243,13 @@ impl LocalPasteApp {
     pub(super) fn nav_probe_write_frame(&mut self, ctx: &egui::Context) {
         if self.nav_probe.is_none() {
             return;
+        }
+        if ctx.input(|input| input.focused)
+            && ctx.memory(|memory| memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID)))
+        {
+            if let Some(probe) = self.nav_probe.as_mut() {
+                probe.focus_editor_until_acquired = false;
+            }
         }
         if self
             .nav_probe
@@ -294,6 +334,7 @@ impl LocalPasteApp {
                 || self.virtual_editor_state.has_focus,
             sidebar_search: memory.has_focus(egui::Id::new(SEARCH_INPUT_ID)),
             editor_title: memory.has_focus(egui::Id::new(TITLE_INPUT_ID)),
+            editor_find: memory.has_focus(egui::Id::new(super::EDITOR_FIND_INPUT_ID)),
             command_palette_query: memory.has_focus(egui::Id::new(COMMAND_PALETTE_INPUT_ID)),
             properties_name: memory.has_focus(egui::Id::new(PROPERTIES_NAME_INPUT_ID)),
             properties_tags: memory.has_focus(egui::Id::new(PROPERTIES_TAGS_INPUT_ID)),
@@ -340,7 +381,17 @@ impl LocalPasteApp {
                 line_height: self.virtual_line_height,
                 wrap_width: self.virtual_wrap_width,
                 pending_scroll_offset_y: self.virtual_pending_scroll_offset_y,
-                follow_cursor_next_frame: self.virtual_follow_cursor_next_frame,
+                follow_cursor_next_frame: self.virtual_cursor_reveal.is_some(),
+                caret_visible: self.virtual_viewport.caret_visible(),
+                viewport_bounds: self
+                    .virtual_viewport
+                    .rect
+                    .map(|r| [r.min.x, r.min.y, r.max.x, r.max.y]),
+                caret_bounds: self
+                    .virtual_viewport
+                    .caret
+                    .map(|r| [r.min.x, r.min.y, r.max.x, r.max.y]),
+                scroll_offset_y: self.virtual_viewport.offset_y,
             },
             app: AppSnapshot {
                 selected_id: self.selected_id.clone(),
@@ -488,5 +539,83 @@ mod tests {
         );
         assert_eq!(parse_nav_probe_seed_cursor("", &buffer), None);
         assert_eq!(parse_nav_probe_seed_cursor("bad", &buffer), None);
+    }
+
+    #[test]
+    fn frame_record_is_a_self_contained_ndjson_line() {
+        let frame = NavProbeFrame {
+            event: "nav_probe_frame",
+            scenario: Some("scenario\nlabel".to_string()),
+            platform: "macos",
+            frame_index: 4,
+            elapsed_ms: 12,
+            raw_events: vec![ProbeEvent {
+                kind: "key".to_string(),
+                key: Some("ArrowUp".to_string()),
+                physical_key: None,
+                pressed: Some(true),
+                repeat: Some(false),
+                modifiers: ModifierSnapshot::default(),
+                text_chars: None,
+            }],
+            candidate_commands_if_editor_focused: vec!["MoveUp".to_string()],
+            applied_commands: vec!["MoveUp".to_string()],
+            focus: FocusSnapshot {
+                virtual_editor: true,
+                sidebar_search: false,
+                editor_title: false,
+                editor_find: false,
+                command_palette_query: false,
+                properties_name: false,
+                properties_tags: false,
+                diff_query: false,
+                wants_keyboard_input: true,
+            },
+            cursor: CursorSnapshot {
+                char_index: 0,
+                line: 0,
+                col: 0,
+                buffer_len_chars: 0,
+            },
+            selection: None,
+            editor: EditorSnapshot {
+                buffer_hash: "0000000000000000".to_string(),
+                buffer_len_chars: 0,
+                buffer_revision: 0,
+                viewport_height: 0.0,
+                line_height: 0.0,
+                wrap_width: 0.0,
+                pending_scroll_offset_y: None,
+                follow_cursor_next_frame: false,
+                caret_visible: true,
+                viewport_bounds: None,
+                caret_bounds: None,
+                scroll_offset_y: 0.0,
+            },
+            app: AppSnapshot {
+                selected_id: None,
+                search_query_len: 0,
+                search_query_hash: "0000000000000000".to_string(),
+                edit_name_len: 0,
+                edit_name_hash: "0000000000000000".to_string(),
+                edit_tags_len: 0,
+                edit_tags_hash: "0000000000000000".to_string(),
+                command_palette_query_len: 0,
+                command_palette_query_hash: "0000000000000000".to_string(),
+                command_palette_open: false,
+                properties_drawer_open: false,
+                shortcut_help_open: false,
+                history_modal_open: false,
+                diff_modal_open: false,
+            },
+        };
+
+        let record = serialize_frame_record(&frame).expect("serializes frame");
+        assert_eq!(record.last(), Some(&b'\n'));
+        assert!(!record[..record.len() - 1].contains(&b'\n'));
+        let decoded: serde_json::Value =
+            serde_json::from_slice(&record[..record.len() - 1]).expect("valid JSON record");
+        assert_eq!(decoded["event"], "nav_probe_frame");
+        assert_eq!(decoded["scenario"], "scenario\nlabel");
     }
 }

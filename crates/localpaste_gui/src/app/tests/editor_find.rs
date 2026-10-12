@@ -10,7 +10,15 @@ fn editor_find_selects_first_match_and_wraps_navigation() {
         .reset_virtual_editor("alpha needle beta needle gamma");
 
     harness.app.open_editor_find();
-    harness.app.set_editor_find_query("needle".to_string());
+    for query in ["n", "ne", "nee", "need", "needl", "needle"] {
+        harness.app.set_editor_find_query(query.to_string());
+        assert_eq!(harness.app.editor_find.active_match, Some(0), "{query}");
+        assert_eq!(
+            harness.app.virtual_editor_state.selection_range(),
+            Some(6..6 + query.len()),
+            "growing a query must retain the match at its selection start"
+        );
+    }
 
     assert_eq!(harness.app.editor_find.matches, vec![6..12, 18..24]);
     assert_eq!(harness.app.editor_find.active_match, Some(0));
@@ -18,7 +26,7 @@ fn editor_find_selects_first_match_and_wraps_navigation() {
         harness.app.virtual_editor_state.selection_range(),
         Some(6..12)
     );
-    assert!(harness.app.virtual_follow_cursor_next_frame);
+    assert!(harness.app.virtual_cursor_reveal.is_some());
 
     harness.app.editor_find_next();
     assert_eq!(harness.app.editor_find.active_match, Some(1));
@@ -63,6 +71,32 @@ fn editor_find_rebuilds_after_buffer_revision_changes() {
 }
 
 #[test]
+fn editor_find_selects_first_match_after_switching_pastes() {
+    for scope in [SearchScope::All, SearchScope::Title] {
+        let mut harness = make_app();
+        harness.app.search_scope = scope;
+        harness.app.reset_virtual_editor("needle old needle");
+        harness.app.open_editor_find();
+        harness.app.set_editor_find_query("needle".into());
+        harness.app.editor_find_next();
+        let paste = Paste::new("new needle then needle".into(), "Next paste".into());
+        harness.app.select_loaded_paste(paste);
+        let ctx = egui::Context::default();
+        run_full_update(&mut harness.app, &ctx, vec![]);
+        assert_eq!(harness.app.editor_find.active_match, Some(0));
+        assert_eq!(
+            harness.app.virtual_editor_state.selection_range(),
+            Some(4..10)
+        );
+        harness.app.editor_find_next();
+        assert_eq!(
+            harness.app.virtual_editor_state.selection_range(),
+            Some(16..22)
+        );
+    }
+}
+
+#[test]
 fn editor_find_reopen_with_saved_query_selects_active_match() {
     let mut harness = make_app();
     harness.app.editor_find.query = "needle".to_string();
@@ -75,6 +109,48 @@ fn editor_find_reopen_with_saved_query_selects_active_match() {
         harness.app.virtual_editor_state.selection_range(),
         Some(6..12)
     );
+    let ctx = egui::Context::default();
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    assert!(!harness.app.editor_find.open);
+    assert_eq!(harness.app.editor_find.query, "needle");
+    harness.app.open_editor_find();
+    assert_eq!(harness.app.editor_find.active_match, Some(0));
+}
+
+#[test]
+fn editor_find_escape_returns_focus_and_allows_replacing_the_match() {
+    let mut harness = make_app();
+    harness.app.reset_virtual_editor("alpha needle beta");
+    harness.app.open_editor_find();
+    harness.app.set_editor_find_query("needle".to_string());
+    let ctx = egui::Context::default();
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    assert!(ctx.memory(|m| m.has_focus(egui::Id::new(EDITOR_FIND_INPUT_ID))));
+
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+
+    assert!(!harness.app.editor_find.open);
+    assert_eq!(harness.app.editor_find.query, "needle");
+    assert_eq!(
+        harness.app.virtual_editor_state.selection_range(),
+        Some(6..12)
+    );
+    assert!(ctx.memory(|m| m.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))));
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Text("replacement".to_string())],
+    );
+    assert_eq!(harness.app.active_snapshot(), "alpha replacement beta");
 }
 
 #[test]

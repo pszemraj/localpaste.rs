@@ -82,26 +82,36 @@ fn backend_virtual_update_and_api_delete_race_keeps_consistent_visibility() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: paste_id.clone(),
+            selection_epoch: 42,
         })
         .expect("get after race");
     if delete_status.is_success() {
         match recv_event(&backend.evt_rx) {
-            CoreEvent::PasteMissing { id } => assert_eq!(id, paste_id),
+            CoreEvent::PasteSelectionMissing {
+                id,
+                selection_epoch,
+            } => {
+                assert_eq!(id, paste_id);
+                assert_eq!(selection_epoch, 42);
+            }
             other => panic!("unexpected post-race get result: {:?}", other),
         }
     } else {
         match recv_event(&backend.evt_rx) {
-            CoreEvent::PasteLoaded { paste } => assert_eq!(paste.id, paste_id),
+            CoreEvent::PasteLoaded {
+                paste,
+                selection_epoch,
+            } => {
+                assert_eq!(paste.id, paste_id);
+                assert_eq!(selection_epoch, 42);
+            }
             other => panic!("unexpected post-race get result: {:?}", other),
         }
     }
 
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 20,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("list after race");
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteList { items } => {
@@ -253,7 +263,6 @@ fn api_folder_changes_are_visible_to_backend_state() {
     backend
         .cmd_tx
         .send(CoreCmd::ListPastes {
-            limit: 10,
             folder_id: Some(folder_id.clone()),
         })
         .expect("list folder");
@@ -276,10 +285,11 @@ fn api_folder_changes_are_visible_to_backend_state() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: created_paste.id.clone(),
+            selection_epoch: 42,
         })
         .expect("get migrated paste");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => assert!(paste.folder_id.is_none()),
+        CoreEvent::PasteLoaded { paste, .. } => assert!(paste.folder_id.is_none()),
         other => panic!("unexpected event: {:?}", other),
     }
 
@@ -361,10 +371,13 @@ fn folder_delete_marker_rejects_new_assignments_server_and_gui() {
 
     backend
         .cmd_tx
-        .send(CoreCmd::GetPaste { id: paste_id })
+        .send(CoreCmd::GetPaste {
+            id: paste_id,
+            selection_epoch: 42,
+        })
         .expect("get paste");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => assert!(paste.folder_id.is_none()),
+        CoreEvent::PasteLoaded { paste, .. } => assert!(paste.folder_id.is_none()),
         other => panic!("unexpected event: {:?}", other),
     }
 }

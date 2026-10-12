@@ -119,7 +119,7 @@ impl RopeBuffer {
         line_start + column.min(self.line_len_chars(line))
     }
 
-    /// Returns a line as UTF-8 without trailing `\\r?\\n`.
+    /// Returns a line as UTF-8 without its Rope line terminator.
     ///
     /// # Returns
     /// The requested line content without trailing newline markers.
@@ -130,7 +130,7 @@ impl RopeBuffer {
         out
     }
 
-    /// Writes a line as UTF-8 without trailing `\\r?\\n` into `out`.
+    /// Writes a line as UTF-8 without its Rope line terminator into `out`.
     ///
     /// # Arguments
     /// - `line`: Zero-based line index to copy.
@@ -149,7 +149,7 @@ impl RopeBuffer {
         }
     }
 
-    /// Returns the character length of a line without trailing `\\r?\\n`.
+    /// Returns the character length of a line without its Rope line terminator.
     ///
     /// # Returns
     /// Visible character count for `line`, excluding trailing newline markers.
@@ -168,7 +168,10 @@ impl RopeBuffer {
             if len > 0 && line_slice.char(len - 1) == '\r' {
                 len = len.saturating_sub(1);
             }
-        } else if last_char == '\r' {
+        } else if matches!(
+            last_char,
+            '\r' | '\u{b}' | '\u{c}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+        ) {
             len = len.saturating_sub(1);
         }
         len
@@ -285,12 +288,19 @@ mod tests {
 
     #[test]
     fn line_without_newline_into_overwrites_existing_buffer() {
-        let buf = RopeBuffer::new("alpha\nbeta");
-        let mut out = String::from("stale");
-        buf.line_without_newline_into(0, &mut out);
-        assert_eq!(out, "alpha");
-        buf.line_without_newline_into(1, &mut out);
-        assert_eq!(out, "beta");
+        for separator in [
+            "\r", "\n", "\r\n", "\u{b}", "\u{c}", "\u{85}", "\u{2028}", "\u{2029}",
+        ] {
+            let text = format!("alpha{separator}beta");
+            let buf = RopeBuffer::new(&text);
+            let mut out = String::from("stale");
+            buf.line_without_newline_into(0, &mut out);
+            assert_eq!(out, "alpha", "line separator {separator:?}");
+            assert_eq!(buf.line_len_chars(0), 5);
+            buf.line_without_newline_into(1, &mut out);
+            assert_eq!(out, "beta");
+            assert_eq!(buf.to_string(), text);
+        }
     }
 
     #[test]

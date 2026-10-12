@@ -24,7 +24,14 @@ impl LocalPasteApp {
                         if has_primary_item {
                             ui.separator();
                         }
-                        ui.label(egui::RichText::new(&status.text).color(egui::Color32::YELLOW));
+                        // Failures and warnings keep the attention color; routine
+                        // confirmations and progress read as ordinary status text.
+                        let color = if status.alert {
+                            egui::Color32::YELLOW
+                        } else {
+                            COLOR_TEXT_SECONDARY
+                        };
+                        ui.label(egui::RichText::new(&status.text).color(color));
                         has_primary_item = true;
                     }
                     if has_primary_item {
@@ -57,9 +64,13 @@ impl LocalPasteApp {
                     if self.selected_id.is_some() {
                         ui.separator();
                         ui.label(
-                            egui::RichText::new(format!("{} chars", self.active_text_chars()))
-                                .small()
-                                .color(COLOR_TEXT_MUTED),
+                            egui::RichText::new(count_label(
+                                self.active_text_chars(),
+                                "char",
+                                "chars",
+                            ))
+                            .small()
+                            .color(COLOR_TEXT_MUTED),
                         );
                     }
                 });

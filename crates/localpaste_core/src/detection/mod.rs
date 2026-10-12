@@ -2,11 +2,65 @@
 
 /// Language canonicalization and manual UI option tables.
 pub mod canonical;
+mod extensions;
+pub use extensions::preferred_extension;
 mod heuristic;
+mod python;
+mod rust;
+pub(crate) use heuristic::looks_like_python_source;
+#[cfg(test)]
+mod batch_tests;
+#[cfg(test)]
+mod classification_tests;
 #[cfg(feature = "magika")]
 mod magika;
 #[cfg(test)]
 mod tests;
+
+/// Trimmed length, in Unicode characters, required alongside
+/// [`AUTO_DETECT_MIN_LINES`] before a paste holds enough text to classify.
+const AUTO_DETECT_MIN_CHARS: usize = 64;
+/// Non-blank line count required alongside [`AUTO_DETECT_MIN_CHARS`] before
+/// a paste holds enough text to classify.
+const AUTO_DETECT_MIN_LINES: usize = 3;
+
+/// Whether content holds too little text to classify.
+///
+/// This is the single definition of the minimum: classification requires both
+/// [`AUTO_DETECT_MIN_CHARS`] trimmed characters and
+/// [`AUTO_DETECT_MIN_LINES`] non-blank lines. A few words are too little
+/// evidence to tell code from prose, so auto mode leaves such content without a
+/// language ([`auto_detect_language`]) and retrieval files unlabeled content
+/// this short under the Short kind instead of guessing one
+/// ([`crate::semantic::derive`]).
+///
+/// # Returns
+/// `true` when the content is below either required minimum.
+pub(crate) fn too_short_to_classify(content: &str) -> bool {
+    let trimmed = content.trim();
+    trimmed.chars().take(AUTO_DETECT_MIN_CHARS).count() < AUTO_DETECT_MIN_CHARS
+        || trimmed
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count()
+            < AUTO_DETECT_MIN_LINES
+}
+
+/// Detect the language that auto mode locks onto a paste.
+///
+/// Auto mode locks whatever it resolves, so content that is too short to
+/// classify (see `too_short_to_classify`) stays unresolved. Larger content is
+/// classified by [`detect_language`].
+///
+/// # Returns
+/// Canonicalized language label when the content is large enough and detection
+/// succeeds, otherwise `None`.
+pub fn auto_detect_language(content: &str) -> Option<String> {
+    if too_short_to_classify(content) {
+        return None;
+    }
+    detect_language(content)
+}
 
 /// Detect language/type of text content.
 ///
@@ -16,7 +70,32 @@ pub fn detect_language(content: &str) -> Option<String> {
     if markdown_fence_override_applies(content) {
         return Some("markdown".to_string());
     }
+    if let Some(language) = heuristic::shebang_language(content) {
+        return Some(language.to_string());
+    }
+    if python::compound_body(content) && heuristic::looks_like_python_source(content) {
+        return Some("python".to_string());
+    }
+    // Magika reports many short Rust functions as generic text, and some (a
+    // `where` clause, an HTML string body) as Swift or HCL.
+    if rust::leading_item(content) {
+        return Some("rust".to_string());
+    }
+    if crate::semantic::makefile_note_body(content) {
+        return Some("markdown".to_string());
+    }
+    if crate::semantic::makefile_body_language(content) == Some("makefile") {
+        return Some("makefile".to_string());
+    }
+    if crate::semantic::commands::looks_like_shell_command_sequence(content) {
+        return Some("shell".to_string());
+    }
+    if crate::semantic::logs::looks_like_runtime_log(content) {
+        return Some("log".to_string());
+    }
 
+    #[cfg(test)]
+    MODEL_STEP_CALLS.with(|calls| calls.set(calls.get().saturating_add(1)));
     #[cfg(feature = "magika")]
     {
         if let Some(label) = magika::detect(content) {
@@ -27,9 +106,34 @@ pub fn detect_language(content: &str) -> Option<String> {
         }
     }
 
+    detect_heuristically(content)
+}
+
+/// Detect structural language hints without statistical inference or a model lock.
+///
+/// # Returns
+/// A canonical language hint suitable for synchronous metadata derivation.
+pub(crate) fn detect_heuristically(content: &str) -> Option<String> {
     heuristic::detect(content)
         .map(|label| canonical::canonicalize(&label))
         .filter(|label| !label.is_empty() && label != "text")
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Times the current test thread reached the Magika step of
+    /// `detect_language`, counted in every build so tests without the
+    /// feature still prove a path never asks for model inference.
+    static MODEL_STEP_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+/// Return how often the current test thread reached the Magika step.
+///
+/// # Returns
+/// Calls observed on the current thread, with or without the `magika` feature.
+pub(crate) fn model_step_call_count() -> usize {
+    MODEL_STEP_CALLS.with(std::cell::Cell::get)
 }
 
 #[derive(Clone, Copy)]
@@ -39,35 +143,47 @@ struct MarkdownFence {
 }
 
 fn markdown_fence_override_applies(content: &str) -> bool {
-    if !crate::models::paste::is_markdown_content(content) {
-        return false;
-    }
-    is_standalone_fenced_markdown_block(content)
+    standalone_fenced_block(content).is_some()
 }
 
-fn is_standalone_fenced_markdown_block(content: &str) -> bool {
-    let lines: Vec<&str> = content.lines().collect();
-    let Some((start_idx, fence)) = lines.iter().enumerate().find_map(|(idx, line)| {
-        (!line.trim().is_empty())
-            .then(|| parse_markdown_fence_opener(line).map(|fence| (idx, fence)))
-            .flatten()
-    }) else {
-        return false;
+/// Extract the info word and body when the entire paste is one fenced block.
+///
+/// The borrowed body excludes fence delimiters; surrounding prose prevents a
+/// match so real Markdown documents retain their document classification.
+///
+/// # Returns
+/// The optional info word and body when matching fences surround the entire paste.
+pub(crate) fn standalone_fenced_block(content: &str) -> Option<(&str, &str)> {
+    let trimmed = content.trim_end();
+    let mut lines = trimmed.split_inclusive('\n');
+    let mut offset = 0;
+    let first = loop {
+        let line = lines.next()?;
+        if !line.trim().is_empty() {
+            break line;
+        }
+        offset += line.len();
     };
-
-    let Some(end_idx) = lines
-        .iter()
-        .enumerate()
-        .skip(start_idx.saturating_add(1))
-        .find_map(|(idx, line)| line_closes_markdown_fence(line, fence).then_some(idx))
-    else {
-        return false;
-    };
-
-    lines
-        .iter()
-        .skip(end_idx.saturating_add(1))
-        .all(|line| line.trim().is_empty())
+    let fence = parse_markdown_fence_opener(first)?;
+    let opener = first.trim();
+    let info = opener
+        .get(fence.len..)?
+        .split_whitespace()
+        .next()
+        .unwrap_or("");
+    let body_start = offset + first.len();
+    offset = body_start;
+    for line in lines {
+        if line_closes_markdown_fence(line, fence) {
+            return trimmed
+                .get(offset + line.len()..)?
+                .trim()
+                .is_empty()
+                .then_some((info, trimmed.get(body_start..offset)?));
+        }
+        offset += line.len();
+    }
+    None
 }
 
 fn parse_markdown_fence_opener(line: &str) -> Option<MarkdownFence> {
@@ -110,6 +226,26 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
     if markdown_fence_override_applies(content) {
         return Some("markdown".to_string());
     }
+    if label == "makefile" && python::compound_body(content) {
+        return Some("python".to_string());
+    }
+    // Magika also calls heading-led notes with a colon and an indented sentence
+    // Makefiles. Unknown Make syntax is not prose evidence; require a whole note.
+    if label == "makefile" && crate::semantic::makefile_note_body(content) {
+        return Some("markdown".to_string());
+    }
+    if label == "makefile" && crate::semantic::makefile_rules_read_as_prose(content) {
+        return None;
+    }
+    if label == "markdown" {
+        if let Some(technical) = crate::semantic::markdown_technical_language(content) {
+            return (technical != "text").then(|| technical.to_string());
+        }
+    }
+
+    if label == "python" && heuristic::has_python_document_wrapper(content) {
+        return None;
+    }
 
     if label == "yaml" && !looks_like_yaml(content) && !looks_like_flat_config_yaml(content) {
         return None;
@@ -119,7 +255,55 @@ fn refine_magika_label(label: &str, content: &str) -> Option<String> {
         return Some("css".to_string());
     }
 
+    if label == "gitattributes" && !looks_like_gitattributes(content) {
+        return None;
+    }
+
+    if label == "batch" && crate::semantic::looks_like_batch_prose(content) {
+        return None;
+    }
+
+    // Magika uses either JSON label for both single values and record streams.
+    // Establish the record format from multiple valid lines in the sample.
+    if matches!(label, "json" | "jsonl") {
+        return Some(if heuristic::looks_like_json_lines(content) {
+            "jsonl".to_string()
+        } else {
+            "json".to_string()
+        });
+    }
+
     Some(label.to_string())
+}
+
+/// Require an attribute assignment or a path pattern before trusting Magika's
+/// gitattributes label, which otherwise also matches short whitespace prose.
+#[cfg(any(feature = "magika", test))]
+fn looks_like_gitattributes(content: &str) -> bool {
+    content.lines().take(512).any(|line| {
+        let mut parts = line.split_whitespace();
+        let Some(pattern) = parts.next() else {
+            return false;
+        };
+        if pattern.starts_with('#') {
+            return false;
+        }
+        let path_pattern = pattern.contains(['*', '?', '/', '.']);
+        let attributes: Vec<_> = parts.collect();
+        !attributes.is_empty()
+            && attributes.iter().all(|attribute| {
+                attribute.contains('=')
+                    || attribute.starts_with(['-', '!'])
+                    || matches!(
+                        *attribute,
+                        "text" | "binary" | "diff" | "merge" | "export-ignore"
+                    )
+                    || (path_pattern
+                        && attribute
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.')))
+            })
+    })
 }
 
 /// Heuristically checks whether content resembles YAML mapping/sequence syntax.

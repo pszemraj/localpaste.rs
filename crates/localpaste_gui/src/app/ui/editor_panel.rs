@@ -1,11 +1,8 @@
 //! Central editor panel rendering for the virtual editor.
 
+use super::super::shortcuts::runtime_shortcut_label;
 use super::super::*;
 use super::editor_panel_virtual::VirtualEditorRenderOptions;
-use super::properties_drawer::{
-    apply_language_choice, auto_language_choice_key, render_language_choice_combo,
-};
-use crate::app::util::parse_tags_csv;
 use eframe::egui;
 
 impl LocalPasteApp {
@@ -23,186 +20,72 @@ impl LocalPasteApp {
                     ctx.memory(|m| m.has_focus(editor_id)) || self.virtual_editor_state.has_focus;
                 let language = self.edit_language.clone();
                 let is_large = self.active_text_len_bytes() >= HIGHLIGHT_PLAIN_THRESHOLD;
-                let visible_tags = parse_tags_csv(self.edit_tags.as_str())
-                    .into_iter()
-                    .take(4)
-                    .collect::<Vec<_>>();
                 let mutation_block_reason = self.mutation_shortcut_block_reason();
-                let save_blocked = self.save_block_reason().is_some();
-                let background_mutation_blocked = mutation_block_reason.is_some();
-                let mut preserve_virtual_editor_focus = false;
-                let mut pending_tag_search: Option<String> = None;
-                let mut apply_metadata = false;
-                let mut copy_requested = false;
-                let mut copy_link_requested = false;
-                let mut duplicate_requested = false;
-                let mut export_requested = false;
-                let mut find_requested = false;
-                let mut open_properties = false;
-                let mut delete_requested = false;
-                ui.scope(|ui| {
-                    apply_compact_meta_row_style(ui);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.add_enabled_ui(!background_mutation_blocked, |ui| {
-                            let title_width = (ui.available_width() * 0.32).clamp(180.0, 380.0);
-                            let name_response = ui.add(
-                                egui::TextEdit::singleline(&mut self.edit_name)
-                                    .id(egui::Id::new(TITLE_INPUT_ID))
-                                    .font(egui::TextStyle::Button)
-                                    .desired_width(title_width)
-                                    .hint_text("Untitled paste"),
-                            );
-                            if name_response.changed() {
-                                self.metadata_dirty = true;
-                            }
-                            if name_response.lost_focus() && self.metadata_dirty {
-                                apply_metadata = true;
-                            }
-                            if name_response.has_focus()
-                                && ui.input(|input| input.key_pressed(egui::Key::Enter))
-                            {
-                                apply_metadata = true;
-                            }
-                            if name_response.has_focus()
-                                && ui.input(|input| input.key_pressed(egui::Key::Escape))
-                            {
-                                if let Some(paste) = self.selected_paste.as_ref() {
-                                    self.edit_name = paste.name.clone();
-                                    self.metadata_dirty = self.edit_name != paste.name
-                                        || self.edit_language != paste.language
-                                        || self.edit_language_is_manual != paste.language_is_manual
-                                        || self.edit_tags != paste.tags.join(", ");
-                                }
-                            }
-
-                            let current_manual_value = self
-                                .edit_language
-                                .as_deref()
-                                .map(localpaste_core::detection::canonical::canonicalize)
-                                .filter(|value| !value.is_empty())
-                                .unwrap_or_else(|| "text".to_string());
-                            let mut language_choice = if self.edit_language_is_manual {
-                                current_manual_value.clone()
-                            } else {
-                                auto_language_choice_key().to_string()
-                            };
-                            let previous_language_choice = language_choice.clone();
-                            render_language_choice_combo(
-                                ui,
-                                "header_language_select",
-                                Some(160.0),
-                                &mut language_choice,
-                            );
-                            if language_choice != previous_language_choice {
-                                apply_language_choice(
-                                    &mut self.edit_language_is_manual,
-                                    &mut self.edit_language,
-                                    &mut self.metadata_dirty,
-                                    language_choice.as_str(),
-                                    current_manual_value.as_str(),
-                                );
-                            }
-                        });
-                        for tag in &visible_tags {
-                            if non_focusable_small_toolbar_button(ui, format!("#{}", tag)).clicked()
-                            {
-                                pending_tag_search = Some(tag.clone());
-                            }
-                        }
-                        ui.separator();
-                        if ui
-                            .add_enabled(
-                                !save_blocked && self.metadata_dirty && !self.metadata_save_in_flight,
-                                toolbar_button("Apply"),
-                            )
-                            .clicked()
-                        {
-                            apply_metadata = true;
-                        }
-                        if non_focusable_small_toolbar_button(ui, "Copy").clicked() {
-                            copy_requested = true;
-                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-                        }
-                        if non_focusable_small_toolbar_button(ui, "Copy Link").clicked() {
-                            copy_link_requested = true;
-                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-                        }
-                        if ui
-                            .add_enabled(!background_mutation_blocked, toolbar_button("Duplicate"))
-                            .clicked()
-                        {
-                            duplicate_requested = true;
-                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-                        }
-                        if non_focusable_small_toolbar_button(ui, "Export").clicked() {
-                            export_requested = true;
-                            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-                        }
-                        if non_focusable_small_toolbar_button(ui, "Find").clicked() {
-                            find_requested = true;
-                        }
-                        if non_focusable_small_toolbar_button(ui, "Properties").clicked() {
-                            open_properties = true;
-                        }
-                        if ui
-                            .add_enabled(!background_mutation_blocked, toolbar_button("Delete"))
-                            .clicked()
-                        {
-                            delete_requested = true;
-                        }
-                        preserve_virtual_editor_focus |=
-                            self.render_version_toolbar(ui, editor_had_virtual_focus);
-                    });
-                });
-                if let Some(tag) = pending_tag_search {
+                let toolbar = self.render_editor_toolbar(ui, editor_had_virtual_focus);
+                if let Some(tag) = toolbar.tag_search {
                     self.set_search_query(tag);
                 }
-                if apply_metadata {
+                if toolbar.apply_metadata {
                     self.save_metadata_now();
                 }
-                if copy_requested {
-                    self.clipboard_outgoing = Some(self.active_snapshot());
+                if toolbar.copy {
+                    self.queue_clipboard_text(self.active_snapshot());
                     self.set_status("Copied paste content.");
                 }
-                if copy_link_requested {
-                    self.clipboard_outgoing =
-                        Some(super::super::util::api_paste_link_for_copy(self.server_addr, &id));
+                if toolbar.copy_link {
+                    self.queue_clipboard_text(super::super::util::api_paste_link_for_copy(self.server_addr, &id));
                     self.set_status("Copied API paste link.");
                 }
-                if duplicate_requested {
+                if toolbar.duplicate {
                     self.create_new_paste_with_content(self.active_snapshot());
                     self.set_status("Duplicated paste into a new draft.");
                 }
-                if export_requested {
+                if toolbar.export {
                     self.export_selected_paste();
                 }
-                if find_requested {
+                if toolbar.find {
                     self.open_editor_find();
                 }
-                if open_properties {
+                if toolbar.properties {
                     self.properties_drawer_open = true;
                 }
-                if delete_requested {
+                if toolbar.delete {
                     self.delete_selected();
                 }
+                if toolbar.diff {
+                    self.open_diff_modal();
+                }
+                if toolbar.history {
+                    self.open_history_modal();
+                }
+                let preserve_virtual_editor_focus = toolbar.preserve_editor_focus;
 
                 self.render_editor_find_bar(ui);
                 if self.editor_find.open {
                     ui.add_space(4.0);
                 }
 
-                ui.label(
-                    RichText::new(id.clone())
-                        .small()
-                        .monospace()
-                        .color(COLOR_TEXT_MUTED),
+                // A block reason shares the id's row, so it never pushes the editor down.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), ui.text_style_height(&TextStyle::Monospace)),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.label(
+                            RichText::new(id.clone())
+                                .small()
+                                .monospace()
+                                .color(COLOR_TEXT_MUTED),
+                        );
+                        if let Some(reason) = mutation_block_reason {
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(reason).small().color(COLOR_TEXT_MUTED),
+                                )
+                                .truncate(),
+                            );
+                        }
+                    },
                 );
-                if let Some(reason) = mutation_block_reason {
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(reason).small().color(COLOR_TEXT_MUTED),
-                    );
-                }
                 ui.add_space(6.0);
                 let editor_height = ui.available_height();
                 let editor_style = TextStyle::Name(EDITOR_TEXT_STYLE.into());
@@ -242,6 +125,10 @@ impl LocalPasteApp {
                         debounce_active,
                         id.as_str(),
                     );
+                self.track_highlight_debounce_wake(
+                    async_mode && debounce_active && !should_request,
+                    debounce_window,
+                );
                 if should_request {
                     let request_text =
                         HighlightRequestText::Rope(self.virtual_editor_buffer.rope().clone());
@@ -330,7 +217,7 @@ impl LocalPasteApp {
                             None
                         }
                     });
-                let row_height = ui.text_style_height(&editor_style);
+                let row_height = ui.fonts_mut(|fonts| fonts.row_height(&editor_font));
                 self.render_virtual_editor_panel(
                     ui,
                     row_height,
@@ -347,47 +234,59 @@ impl LocalPasteApp {
             } else if self.selected_id.is_some() {
                 ui.label(RichText::new("Loading paste...").color(COLOR_TEXT_MUTED));
             } else {
-                ui.label(RichText::new("Select a paste from the sidebar.").color(COLOR_TEXT_MUTED));
+                render_empty_editor_state(ui);
             }
         });
     }
 }
 
-fn toolbar_button(label: impl Into<egui::WidgetText>) -> egui::Button<'static> {
-    egui::Button::new(label).sense(non_focusable_click_sense())
-}
+/// Shortcut hints under the empty editor message, in display order.
+const EMPTY_STATE_HINTS: [(&str, RuntimeShortcutAction); 5] = [
+    ("New paste", RuntimeShortcutAction::NewPaste),
+    ("Paste as new paste", RuntimeShortcutAction::PlainPaste),
+    ("Open a paste", RuntimeShortcutAction::TogglePastePicker),
+    (
+        "Command palette",
+        RuntimeShortcutAction::ToggleCommandPalette,
+    ),
+    (
+        "Keyboard shortcuts",
+        RuntimeShortcutAction::ToggleShortcutHelp,
+    ),
+];
+/// Width of the hint block; descriptions sit left and keys right within it.
+const EMPTY_STATE_WIDTH: f32 = 280.0;
 
-fn non_focusable_small_toolbar_button(
-    ui: &mut egui::Ui,
-    label: impl Into<egui::WidgetText>,
-) -> egui::Response {
-    ui.add(toolbar_button(label).small())
-}
-
-fn apply_compact_meta_row_style(ui: &mut egui::Ui) {
-    let mut compact_style = (**ui.style()).clone();
-    if let Some(body_font) = compact_style
-        .text_styles
-        .get(&egui::TextStyle::Body)
-        .cloned()
-    {
-        compact_style.text_styles.insert(
-            egui::TextStyle::Body,
-            egui::FontId::new((body_font.size - 2.0).max(10.0), body_font.family),
-        );
+/// Renders the centered placeholder shown when no paste is selected.
+///
+/// Labels are real widgets so the message stays in the accessibility tree.
+/// Key labels come from the runtime shortcut registry, so they read `Cmd` on
+/// macOS and `Ctrl` elsewhere.
+fn render_empty_editor_state(ui: &mut egui::Ui) {
+    let area = ui.available_rect_before_wrap();
+    ui.allocate_rect(area, egui::Sense::hover());
+    let line_height = ui.spacing().interact_size.y;
+    let title_gap = line_height * 0.75;
+    let width = EMPTY_STATE_WIDTH.min(area.width());
+    let block_height = line_height * (EMPTY_STATE_HINTS.len() + 1) as f32 + title_gap;
+    let mut line = egui::Rect::from_center_size(
+        egui::pos2(
+            area.center().x,
+            area.center().y - (block_height - line_height) / 2.0,
+        ),
+        egui::vec2(width, line_height),
+    );
+    let mut child = |rect: egui::Rect, layout: egui::Layout| {
+        ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout))
+    };
+    child(line, egui::Layout::top_down(egui::Align::Center))
+        .label(RichText::new("Select a paste from the sidebar.").color(COLOR_TEXT_SECONDARY));
+    line = line.translate(egui::vec2(0.0, line_height + title_gap));
+    for (description, action) in EMPTY_STATE_HINTS {
+        child(line, egui::Layout::left_to_right(egui::Align::Center))
+            .label(RichText::new(description).color(COLOR_TEXT_MUTED));
+        child(line, egui::Layout::right_to_left(egui::Align::Center))
+            .label(RichText::new(runtime_shortcut_label(action)).color(COLOR_TEXT_MUTED));
+        line = line.translate(egui::vec2(0.0, line_height));
     }
-    if let Some(button_font) = compact_style
-        .text_styles
-        .get(&egui::TextStyle::Button)
-        .cloned()
-    {
-        compact_style.text_styles.insert(
-            egui::TextStyle::Button,
-            egui::FontId::new((button_font.size - 2.0).max(10.0), button_font.family),
-        );
-    }
-    compact_style.spacing.button_padding = egui::vec2(8.0, 4.0);
-    compact_style.spacing.item_spacing = egui::vec2(8.0, 6.0);
-    compact_style.spacing.interact_size.y = 28.0;
-    ui.set_style(compact_style);
 }

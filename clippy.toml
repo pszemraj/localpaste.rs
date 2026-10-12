@@ -1,0 +1,4 @@
+# Placeholders must use the muted token; see `MutedHintExt` in the GUI theme module.
+disallowed-methods = [
+    { path = "egui::TextEdit::hint_text", reason = "use `MutedHintExt::muted_hint` so placeholders render in COLOR_TEXT_MUTED" },
+]

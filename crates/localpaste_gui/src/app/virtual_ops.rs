@@ -10,6 +10,26 @@ use std::ops::Range;
 use std::time::Instant;
 
 impl LocalPasteApp {
+    /// Completes a forward target across CRLF, treating it as one line terminator.
+    ///
+    /// # Arguments
+    /// - `cursor`: Current character index.
+    /// - `target`: Requested forward position within the buffer.
+    ///
+    /// # Returns
+    /// The target past the complete line ending, before render-extent clamping.
+    pub(super) fn complete_virtual_forward_target(&self, cursor: usize, target: usize) -> usize {
+        if target > cursor
+            && target < self.virtual_editor_buffer.len_chars()
+            && self.virtual_editor_buffer.rope().char(target - 1) == '\r'
+            && self.virtual_editor_buffer.rope().char(target) == '\n'
+        {
+            target + 1
+        } else {
+            target
+        }
+    }
+
     /// Clamps the active cursor after layout changes that shorten renderable line spans.
     ///
     /// # Returns
@@ -57,14 +77,14 @@ impl LocalPasteApp {
     /// A cursor index guaranteed to land within buffer bounds and rendered line extent.
     pub(super) fn clamp_virtual_cursor_for_render(&self, char_index: usize) -> usize {
         let clamped = char_index.min(self.virtual_editor_buffer.len_chars());
-        let (line, column) = self.virtual_editor_buffer.char_to_line_col(clamped);
+        let line = self.virtual_editor_buffer.char_to_line_col(clamped).0;
         let render_chars = self.virtual_line_render_chars(line);
-        if column <= render_chars {
-            clamped
-        } else {
+        // char_to_line_col already clips columns inside CRLF to the line end.
+        // Compare absolute positions so that clipping cannot hide an invalid index.
+        clamped.min(
             self.virtual_editor_buffer
-                .line_col_to_char(line, render_chars)
-        }
+                .line_col_to_char(line, render_chars),
+        )
     }
 
     fn virtual_line_row_range(&self, line: usize, row_in_line: usize) -> Range<usize> {
@@ -228,8 +248,10 @@ impl LocalPasteApp {
         self.reset_virtual_caret_blink();
         self.highlight_edit_hint = None;
         self.virtual_drag_active = false;
-        self.virtual_pending_scroll_offset_y = None;
-        self.virtual_follow_cursor_next_frame = false;
+        self.virtual_pointer_press_modifiers = None;
+        // The scroll area retains its state across paste selection changes.
+        self.virtual_pending_scroll_offset_y = Some(0.0);
+        self.virtual_cursor_reveal = None;
         self.invalidate_editor_find_matches();
         self.reset_virtual_click_streak();
     }

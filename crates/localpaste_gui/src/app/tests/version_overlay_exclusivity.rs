@@ -3,9 +3,9 @@
 use super::*;
 use crossbeam_channel::TryRecvError;
 
-const REENTRY_STATUS: &str = "Close the open version window before opening another one.";
-const CREATE_DEFERRED_STATUS: &str =
-    "Created new paste; current selection stays pinned until the version workflow finishes.";
+const REENTRY_STATUS: &str = "Close History or Diff before opening another one.";
+const MUTATION_STATUS: &str = "Close History or Diff to create, edit, or delete pastes.";
+const CREATE_DEFERRED_STATUS: &str = "Created new paste; it opens once you close History or Diff.";
 const RESET_STATUS: &str = "Reset in progress; editor is temporarily read-only.";
 
 #[test]
@@ -104,7 +104,7 @@ fn closing_version_overlays_reconciles_hidden_selection_back_to_visible_projecti
 
     for overlay in [OverlayCase::History, OverlayCase::Diff] {
         let mut harness = make_app();
-        harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)];
+        harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)].into();
 
         match overlay {
             OverlayCase::History => {
@@ -123,9 +123,62 @@ fn closing_version_overlays_reconciles_hidden_selection_back_to_visible_projecti
             "closing a detached version workflow should restore a visible main-view selection"
         );
         match recv_cmd(&harness.cmd_rx) {
-            CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+            CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
             other => panic!("expected GetPaste command, got {:?}", other),
         }
+    }
+}
+
+#[test]
+fn refused_version_overlay_selection_preserves_picker_pin_and_queued_state() {
+    for history in [false, true] {
+        let mut harness = make_app();
+        harness.app.pastes = vec![test_summary("beta", "Beta", None, 4)].into();
+        harness.app.picker_selection_pin = Some("alpha".into());
+        harness.app.version_ui.history_modal_open = history;
+        harness.app.version_ui.diff_modal_open = !history;
+        harness.app.pending_selection_id = Some("queued".into());
+        harness.app.pending_picker_open = Some(PendingPickerOpen {
+            id: "queued".into(),
+            query: "needle".into(),
+            scope: SearchScope::Body,
+            case_sensitive: true,
+            input_events: vec![egui::Event::Text("retained input".into())],
+            input_ready: false,
+        });
+        harness.app.pending_delete_id = Some("alpha".into());
+
+        for target in ["beta", "alpha"] {
+            assert!(!harness.app.select_paste(target.into()));
+            assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+            assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
+            assert_eq!(harness.app.pending_selection_id.as_deref(), Some("queued"));
+            assert_eq!(harness.app.pending_delete_id.as_deref(), Some("alpha"));
+            let opening = harness.app.pending_picker_open.as_ref().unwrap();
+            assert_eq!(opening.id, "queued");
+            assert_eq!(opening.query, "needle");
+            assert_eq!(opening.scope, SearchScope::Body);
+            assert!(opening.case_sensitive);
+            assert_eq!(
+                opening.input_events,
+                vec![egui::Event::Text("retained input".into())]
+            );
+            assert!(!opening.input_ready);
+            assert!(harness.cmd_rx.try_recv().is_err());
+        }
+
+        // Once unrelated queued work is removed, closing the version window
+        // must leave the picker-opened paste selected outside the sidebar filter.
+        harness.app.clear_pending_selection_request();
+        harness.app.cancel_pending_delete();
+        if history {
+            harness.app.close_history_modal();
+        } else {
+            harness.app.close_diff_modal();
+        }
+        assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+        assert_eq!(harness.app.picker_selection_pin.as_deref(), Some("alpha"));
+        assert!(harness.cmd_rx.try_recv().is_err());
     }
 }
 
@@ -230,7 +283,7 @@ fn paste_created_during_version_overlay_defers_selection_until_overlay_closes() 
     assert_eq!(harness.app.selected_id.as_deref(), Some("new-id"));
     assert!(harness.app.pending_selection_id.is_none());
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "new-id"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "new-id"),
         other => panic!("expected GetPaste command, got {:?}", other),
     }
 }
@@ -273,4 +326,212 @@ fn reset_in_flight_rejects_opening_version_overlays_after_history_closes() {
         harness.cmd_rx.try_recv(),
         Err(TryRecvError::Empty)
     ));
+}
+
+#[test]
+fn toolbar_version_opens_close_discovery_and_allow_save_with_blocked_mutation_feedback() {
+    for history in [false, true] {
+        for discovery in 0..3 {
+            let (mut harness, _event_tx) = make_app_with_event_tx();
+            let ctx = egui::Context::default();
+            harness.app.paste_picker_open = discovery == 0;
+            harness.app.command_palette_open = discovery == 1;
+            harness.app.shortcut_help_open = discovery == 2;
+            if history {
+                harness.app.open_history_modal();
+            } else {
+                harness.app.open_diff_modal();
+            }
+            assert!(
+                !harness.app.paste_picker_open
+                    && !harness.app.command_palette_open
+                    && !harness.app.shortcut_help_open
+            );
+            harness.cmd_rx.try_iter().for_each(drop);
+            set_active_content(&mut harness.app, "dirty before version window");
+            harness.app.mark_dirty();
+            run_full_update(
+                &mut harness.app,
+                &ctx,
+                vec![command_key_event(egui::Key::S)],
+            );
+            assert!(harness
+                .cmd_rx
+                .try_iter()
+                .any(|cmd| matches!(cmd, CoreCmd::UpdatePasteVirtual { .. })));
+            for key in [egui::Key::N, egui::Key::Delete] {
+                harness.app.status = None;
+                if let Some(id) = ctx.memory(|memory| memory.focused()) {
+                    ctx.memory_mut(|memory| memory.surrender_focus(id));
+                }
+                run_full_update(&mut harness.app, &ctx, vec![command_key_event(key)]);
+                assert_eq!(harness.app.status.as_ref().unwrap().text, MUTATION_STATUS);
+                assert!(!harness.cmd_rx.try_iter().any(|cmd| matches!(
+                    cmd,
+                    CoreCmd::CreatePaste { .. } | CoreCmd::DeletePaste { .. }
+                )));
+            }
+            run_full_update(
+                &mut harness.app,
+                &ctx,
+                vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+            );
+            assert!(!harness.app.version_overlay_open());
+        }
+    }
+}
+
+#[test]
+fn floating_query_focus_waits_until_its_accessibility_node_can_render() {
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let id = egui::Id::new(DIFF_QUERY_INPUT_ID);
+    let mut requested = true;
+    let mut query = String::new();
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.scope_builder(egui::UiBuilder::new().sizing_pass().invisible(), |ui| {
+                if requested && super::super::ui::focus_visible_query(ui, id) {
+                    requested = false;
+                }
+                ui.add(egui::TextEdit::singleline(&mut query).id(id));
+            });
+        });
+    });
+    assert!(
+        requested,
+        "invisible sizing must retain the one-shot request"
+    );
+    assert!(!ctx.memory(|memory| memory.has_focus(id)));
+    assert_accessible_focus(&output);
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if requested && super::super::ui::focus_visible_query(ui, id) {
+                requested = false;
+            }
+            ui.add(egui::TextEdit::singleline(&mut query).id(id));
+        });
+    });
+    assert!(!requested);
+    assert!(ctx.memory(|memory| memory.has_focus(id)));
+    assert_accessible_focus(&output);
+}
+
+#[test]
+fn diff_open_focuses_query_once_for_toolbar_and_palette() {
+    for palette in [false, true] {
+        let (mut harness, _event_tx) = make_app_with_event_tx();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        harness.app.focus_editor_next = true;
+        let output = run_full_update_with_input(
+            &mut harness.app,
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 900.0),
+                )),
+                ..Default::default()
+            },
+        );
+        assert_accessible_focus(&output);
+        if palette {
+            harness.app.command_palette_open = true;
+            harness.app.command_palette_query = "compare".into();
+            run_full_update(&mut harness.app, &ctx, vec![]);
+            run_full_update(
+                &mut harness.app,
+                &ctx,
+                vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
+            );
+        } else {
+            let target = output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .unwrap()
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some("Diff"))
+                .unwrap()
+                .0;
+            assert_accessible_focus(&run_full_update_with_input(
+                &mut harness.app,
+                &ctx,
+                egui::RawInput {
+                    events: vec![egui::Event::AccessKitActionRequest(
+                        egui::accesskit::ActionRequest {
+                            action: egui::accesskit::Action::Click,
+                            target,
+                            data: None,
+                        },
+                    )],
+                    ..Default::default()
+                },
+            ));
+        }
+        for _ in 0..3 {
+            assert_accessible_focus(&run_full_update_with_input(
+                &mut harness.app,
+                &ctx,
+                egui::RawInput::default(),
+            ));
+        }
+        assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new(DIFF_QUERY_INPUT_ID))));
+        run_full_update(
+            &mut harness.app,
+            &ctx,
+            vec![egui::Event::Text("beta".into())],
+        );
+        assert_eq!(harness.app.version_ui.diff_query, "beta");
+        assert_eq!(harness.app.active_snapshot(), "content");
+        ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new(DIFF_QUERY_INPUT_ID)));
+        run_full_update(&mut harness.app, &ctx, vec![]);
+        assert!(!ctx.memory(|memory| memory.has_focus(egui::Id::new(DIFF_QUERY_INPUT_ID))));
+    }
+}
+
+#[test]
+fn diff_focuses_its_query_on_every_toolbar_open() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let query = egui::Id::new(DIFF_QUERY_INPUT_ID);
+    for open in 1..=3 {
+        let output = run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
+        let diff_button = rendered_label_center(&output, "Diff");
+        for pressed in [true, false] {
+            assert_accessible_focus(&run_discovery_frame_once(
+                &mut harness.app,
+                &ctx,
+                primary_pointer_events(diff_button, pressed),
+            ));
+        }
+        for _ in 0..3 {
+            assert_accessible_focus(&run_discovery_frame_once(
+                &mut harness.app,
+                &ctx,
+                Vec::new(),
+            ));
+        }
+        assert!(harness.app.version_ui.diff_modal_open, "open {open}");
+        assert!(
+            ctx.memory(|memory| memory.has_focus(query)),
+            "open {open} should focus the compare query"
+        );
+        run_discovery_frame_once(
+            &mut harness.app,
+            &ctx,
+            vec![egui::Event::Text("beta".into())],
+        );
+        assert_eq!(harness.app.version_ui.diff_query, "beta", "open {open}");
+
+        run_discovery_frame_once(
+            &mut harness.app,
+            &ctx,
+            vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+        );
+        assert!(!harness.app.version_ui.diff_modal_open, "open {open}");
+    }
 }

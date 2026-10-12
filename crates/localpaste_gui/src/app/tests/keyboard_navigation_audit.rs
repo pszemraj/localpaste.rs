@@ -270,6 +270,25 @@ fn vertical_column_affinity_restores_target_after_short_line_and_resets_after_ho
 }
 
 #[test]
+fn vertical_moves_measure_a_tab_at_its_drawn_width() {
+    let mut harness = make_app();
+    configure_virtual_editor_with_wrap(&mut harness.app, "\tab\n    cd\n", 400.0);
+    let ctx = egui::Context::default();
+
+    // After the tab the caret is four columns in, level with `c` on the next line.
+    set_virtual_cursor_at(&mut harness.app, 0, 1);
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveDown { select: false }]);
+    assert_cursor_line_col(&harness.app, (1, 4));
+
+    let _ = harness
+        .app
+        .apply_virtual_commands(&ctx, &[VirtualInputCommand::MoveUp { select: false }]);
+    assert_cursor_line_col(&harness.app, (0, 1));
+}
+
+#[test]
 fn line_end_then_vertical_arrows_use_the_line_end_column() {
     let mut harness = make_app();
     configure_virtual_editor_with_wrap(&mut harness.app, "0123456789\nshort\nabcdefghij\n", 400.0);

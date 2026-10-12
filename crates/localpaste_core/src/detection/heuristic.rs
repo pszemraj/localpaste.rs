@@ -16,6 +16,12 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     if trimmed.is_empty() {
         return None;
     }
+    if crate::semantic::logs::looks_like_runtime_log(trimmed) {
+        return Some("log".to_string());
+    }
+    if crate::semantic::commands::looks_like_shell_command_sequence(trimmed) {
+        return Some("shell".to_string());
+    }
     let sample = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
     let lower = sample.to_ascii_lowercase();
     let lines = || sample.lines().take(SAMPLE_MAX_LINES);
@@ -30,9 +36,20 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     if matches!(shebang.as_deref(), Some("node" | "nodejs" | "deno" | "bun")) {
         return Some("javascript".to_string());
     }
+    if super::python::compound_body(trimmed) && looks_like_python_source(trimmed) {
+        return Some("python".to_string());
+    }
+    // A lone Rust function has too few keywords for the scores below.
+    if super::rust::leading_item(trimmed) {
+        return Some("rust".to_string());
+    }
 
-    // JSON: structural check without full parsing (avoids expensive serde_json).
+    // JSON Lines needs independently valid records; ordinary JSON keeps the
+    // cheap structural fallback for large or sampled payloads.
     if sample.starts_with('{') || sample.starts_with('[') {
+        if looks_like_json_lines(trimmed) {
+            return Some("jsonl".to_string());
+        }
         // When sampling truncates very large JSON payloads, the prefix may not end
         // with the final closing delimiter. Keep large-document detection stable.
         let sample_truncated = sample.len() < trimmed.len();
@@ -130,7 +147,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some("toml".to_string());
     }
 
-    if looks_like_python_from_import(sample) {
+    if looks_like_python_from_import(sample) && looks_like_python_source(sample) {
         return Some("python".to_string());
     }
 
@@ -143,6 +160,9 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     let yaml_like = looks_like_yaml(sample) || looks_like_flat_config_yaml(sample);
 
     if is_markdown_content(sample) && !yaml_like {
+        if let Some(language) = crate::semantic::markdown_technical_language(trimmed) {
+            return Some(language.to_string());
+        }
         return Some("markdown".to_string());
     }
 
@@ -167,14 +187,14 @@ pub(crate) fn detect(content: &str) -> Option<String> {
     if lower.contains('{') && lower.contains('}') && lower.contains(':') && lower.contains(';') {
         let css_tokens = [
             "color:",
-            "background",
-            "margin",
-            "padding",
+            "background:",
+            "margin:",
+            "padding:",
             "font-",
-            "display",
-            "position",
-            "flex",
-            "grid",
+            "display:",
+            "position:",
+            "flex:",
+            "grid:",
         ];
         if css_tokens.iter().any(|token| lower.contains(token)) {
             return Some("css".to_string());
@@ -228,7 +248,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
             "rust",
             &[
                 "fn ", "impl", "crate::", "let ", "mut ", "pub ", "struct ", "enum", "match ",
-                "trait", "println!",
+                "trait", "println!", "panic!",
             ],
             2,
         ),
@@ -396,6 +416,10 @@ pub(crate) fn detect(content: &str) -> Option<String> {
 
     let mut best_match: Option<(&str, usize)> = None;
     for (lang, keywords, threshold) in scored_languages {
+        // `let` and `function` also co-occur in ordinary English sentences.
+        if *lang == "javascript" && crate::semantic::javascript_keyword_prose(sample) {
+            continue;
+        }
         let hits = keyword_hits(keywords);
         if hits >= *threshold {
             match best_match {
@@ -409,7 +433,76 @@ pub(crate) fn detect(content: &str) -> Option<String> {
         return Some(lang.to_string());
     }
 
+    if looks_like_python_source(sample) {
+        return Some("python".to_string());
+    }
+
     None
+}
+
+/// Accept JSON Lines only with at least two valid object/array records in the
+/// bounded sample; a single JSON value cannot establish a line-record format.
+///
+/// # Returns
+/// Whether the sample consists of multiple independently valid JSON records.
+pub(super) fn looks_like_json_lines(content: &str) -> bool {
+    let trimmed = content.trim();
+    let prefix = utf8_prefix_by_bytes(trimmed, TEXT_SAMPLE_MAX_BYTES);
+    // Validate every record that begins inside the bounded prefix. When the
+    // boundary cuts that final record, finish it only if the record itself also
+    // fits the byte cap. This keeps work bounded per record while allowing two
+    // independently valid records that are each larger than half the sample.
+    let sample = complete_crossing_jsonl_record(trimmed, prefix);
+    let mut record_count = 0usize;
+    for line in sample.lines().filter(|line| !line.trim().is_empty()) {
+        if !serde_json::from_str::<serde_json::Value>(line)
+            .is_ok_and(|value| value.is_object() || value.is_array())
+        {
+            return false;
+        }
+        record_count += 1;
+    }
+    record_count >= 2
+}
+
+fn complete_crossing_jsonl_record<'a>(content: &'a str, prefix: &'a str) -> &'a str {
+    if prefix.len() == content.len()
+        || prefix.ends_with(['\n', '\r'])
+        || content
+            .get(prefix.len()..)
+            .unwrap_or_default()
+            .starts_with(['\n', '\r'])
+    {
+        return prefix;
+    }
+
+    let record_start = prefix.rfind('\n').map_or(0, |idx| idx.saturating_add(1));
+    let remainder = content.get(prefix.len()..).unwrap_or_default();
+    let prefix_record_bytes = prefix.len().saturating_sub(record_start);
+    let remaining_budget = TEXT_SAMPLE_MAX_BYTES.saturating_sub(prefix_record_bytes);
+    let bounded_remainder = utf8_prefix_by_bytes(remainder, remaining_budget.saturating_add(1));
+    if let Some(newline) = bounded_remainder.find('\n') {
+        return &content[..prefix.len().saturating_add(newline)];
+    }
+    if remainder.len() <= remaining_budget {
+        content
+    } else {
+        &prefix[..record_start]
+    }
+}
+
+/// Resolve a recognized source interpreter before ambiguous body structure.
+///
+/// # Returns
+/// A canonical language for a leading supported shebang, otherwise `None`.
+pub(super) fn shebang_language(sample: &str) -> Option<&'static str> {
+    match shebang_interpreter(sample.trim())?.as_str() {
+        "python" | "python2" | "python3" | "pypy" | "pypy3" => Some("python"),
+        "node" | "nodejs" | "deno" | "bun" => Some("javascript"),
+        "perl" => Some("perl"),
+        "sh" | "bash" | "zsh" | "ksh" | "dash" | "fish" | "ash" => Some("shell"),
+        _ => None,
+    }
 }
 
 fn shebang_interpreter(sample: &str) -> Option<String> {
@@ -443,13 +536,192 @@ fn path_basename(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-fn looks_like_python_from_import(sample: &str) -> bool {
+/// Keep Python source anchors unless surrounding Markdown or prose supplies stronger evidence.
+///
+/// # Returns
+/// Whether a shebang, imports, definitions, or compound statements anchor source.
+pub(crate) fn looks_like_python_source(sample: &str) -> bool {
+    matches!(
+        python_body_evidence(sample),
+        PythonBodyEvidence::AnchoredSource
+    )
+}
+
+/// Recognize surrounding documents without requiring an import or definition.
+///
+/// # Returns
+/// Whether positive prose or Markdown evidence wraps the apparent Python body.
+#[cfg(any(feature = "magika", test))]
+pub(super) fn has_python_document_wrapper(sample: &str) -> bool {
+    matches!(python_body_evidence(sample), PythonBodyEvidence::Document)
+}
+
+enum PythonBodyEvidence {
+    AnchoredSource,
+    Unanchored,
+    Document,
+}
+
+fn python_body_evidence(sample: &str) -> PythonBodyEvidence {
+    let sample = utf8_prefix_by_bytes(sample, TEXT_SAMPLE_MAX_BYTES);
+    let mut anchored =
+        shebang_language(sample) == Some("python") || super::python::compound_body(sample);
+    let mut string_block: Option<&str> = None;
+    for raw_line in sample.lines().take(512) {
+        let mut line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(quote) = string_block {
+            if line.matches(quote).count() % 2 == 1 {
+                string_block = None;
+            }
+            continue;
+        }
+        if line.starts_with('#') {
+            continue;
+        }
+        if let Some(quote) = ["\"\"\"", "'''"]
+            .into_iter()
+            .find(|quote| line.contains(*quote))
+        {
+            if line.matches(quote).count() % 2 == 1 {
+                string_block = Some(quote);
+            }
+            continue;
+        }
+        while let Some((statement, tail)) = line.split_once(';') {
+            if !looks_like_python_import(statement) && !looks_like_python_from_import(statement) {
+                break;
+            }
+            anchored = true;
+            line = tail.trim_start();
+        }
+        if looks_like_python_import(line)
+            || looks_like_python_from_import(line)
+            || super::python::definition_header(line)
+        {
+            anchored = true;
+            continue;
+        }
+        // A prose definition heading cannot become Python through a model label
+        // either, including `class is ...`, where `is` resembles an operator.
+        if ["def ", "async def ", "class "]
+            .iter()
+            .any(|prefix| line.starts_with(prefix))
+        {
+            return PythonBodyEvidence::Document;
+        }
+        if ["```", "~~~", "> "]
+            .iter()
+            .any(|prefix| line.starts_with(*prefix))
+            || (!raw_line.starts_with(char::is_whitespace)
+                && (["- ", "* ", "+ "]
+                    .iter()
+                    .any(|prefix| line.starts_with(*prefix))
+                    || crate::models::paste::is_markdown_ordered_list_line(line)))
+            || (line.starts_with('[') && (line.contains("](") || line.contains("]:")))
+        {
+            return PythonBodyEvidence::Document;
+        }
+        let words: Vec<_> = line.split_whitespace().collect();
+        let plain_words = words.iter().all(|word| {
+            let word = word.trim_matches(['.', ',', '!', '?', ';']);
+            word.chars().any(char::is_alphabetic)
+                && word
+                    .chars()
+                    .all(|ch| ch.is_alphabetic() || matches!(ch, '-' | '’'))
+        });
+        let prose_lead = words.len() >= 3
+            && words
+                .iter()
+                .take(2)
+                .all(|word| word.chars().all(char::is_alphabetic));
+        let statement_keyword = words.first().is_some_and(|word| {
+            matches!(
+                *word,
+                "return"
+                    | "raise"
+                    | "yield"
+                    | "await"
+                    | "assert"
+                    | "del"
+                    | "global"
+                    | "nonlocal"
+                    | "if"
+                    | "elif"
+                    | "for"
+                    | "while"
+                    | "with"
+                    | "except"
+                    | "match"
+                    | "case"
+                    | "async"
+                    | "pass"
+                    | "break"
+                    | "continue"
+            )
+        });
+        let expression_operator = words
+            .iter()
+            .any(|word| matches!(*word, "is" | "in" | "not" | "and" | "or" | "if" | "else"));
+        let sentence_start = words.first().is_some_and(|word| {
+            [
+                "this", "that", "the", "these", "those", "here", "we", "you", "our", "please",
+            ]
+            .iter()
+            .any(|start| word.eq_ignore_ascii_case(start))
+        });
+        if (plain_words || prose_lead)
+            && !raw_line.starts_with(char::is_whitespace)
+            && !statement_keyword
+            && words.len() >= 2
+            && (!expression_operator || sentence_start)
+        {
+            return PythonBodyEvidence::Document;
+        }
+    }
+    if anchored {
+        PythonBodyEvidence::AnchoredSource
+    } else {
+        PythonBodyEvidence::Unanchored
+    }
+}
+
+fn looks_like_python_import(sample: &str) -> bool {
     sample.lines().take(512).any(|line| {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             return false;
         }
-        let Some(rest) = trimmed.strip_prefix("from ") else {
+        if let Some(rest) = trimmed.strip_prefix("import ") {
+            let rest = rest.split(['#', ';']).next().unwrap_or_default().trim_end();
+            let rest = rest.strip_suffix('\\').unwrap_or(rest).trim_end();
+            let rest = rest.strip_suffix(',').unwrap_or(rest);
+            return rest.split(',').all(|module| {
+                let mut parts = module.split_whitespace();
+                let module = parts.next().unwrap_or_default();
+                let module_valid = !module.is_empty()
+                    && module
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.'));
+                module_valid
+                    && match parts.next() {
+                        None => true,
+                        Some("as") => {
+                            parts.next().is_some_and(is_sql_identifier) && parts.next().is_none()
+                        }
+                        _ => false,
+                    }
+            });
+        }
+        false
+    })
+}
+
+fn looks_like_python_from_import(sample: &str) -> bool {
+    sample.lines().take(512).any(|line| {
+        let Some(rest) = line.trim().strip_prefix("from ") else {
             return false;
         };
         let Some((module, imported)) = rest.split_once(" import ") else {

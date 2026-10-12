@@ -1,52 +1,26 @@
 //! Version-history and diff modal state/helpers for the editor panel.
 
 use super::deferred_saves::rollback_deferred_save_dispatches;
-use super::ui::diff_modal::{
-    inline_diff_preview_from_response, InlineDiffPreview, MAX_INLINE_DIFF_BYTES,
-};
-use super::{
-    editor::EditorLineIndex, highlight::hash_bytes, non_focusable_click_sense, LocalPasteApp,
-    SaveStatus, SEARCH_DEBOUNCE,
-};
+use super::ui::diff_modal::InlineDiffPreview;
+use super::{editor::EditorLineIndex, LocalPasteApp, SaveStatus, SEARCH_DEBOUNCE};
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use eframe::egui;
-use localpaste_core::diff::DiffResponse;
 use localpaste_core::models::paste::{Paste, VersionMeta, VersionSnapshot};
 use std::time::Instant;
+
+mod cache;
+
+use cache::{ActiveSnapshotCacheKey, DiffPreviewCacheKey, HistoryPreviewCacheKey};
 
 const MAX_DIFF_CANDIDATES: usize = 40;
 const RESET_TRANSITION_BLOCKED_STATUS: &str = "Reset in progress; editor is temporarily read-only.";
 const RESET_FLUSH_BLOCKED_STATUS: &str =
     "Saving current paste before reset; editor is temporarily read-only.";
 const VERSION_OVERLAY_MUTATION_BLOCKED_STATUS: &str =
-    "Close the open version window before mutating the selected paste.";
-const VERSION_OVERLAY_SELECTION_BLOCKED_STATUS: &str =
-    "Close the open version window before changing selection.";
+    "Close History or Diff to create, edit, or delete pastes.";
+const VERSION_OVERLAY_SELECTION_BLOCKED_STATUS: &str = "Close History or Diff to switch pastes.";
 const VERSION_OVERLAY_REENTRY_BLOCKED_STATUS: &str =
-    "Close the open version window before opening another one.";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ActiveSnapshotCacheKey {
-    paste_id: String,
-    buffer_epoch: u64,
-    revision: u64,
-    text_len: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct HistoryPreviewCacheKey {
-    paste_id: String,
-    version_id_ms: u64,
-    len: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DiffPreviewCacheKey {
-    lhs: ActiveSnapshotCacheKey,
-    rhs_paste_id: String,
-    rhs_content_len: usize,
-    rhs_content_hash: u64,
-}
+    "Close History or Diff before opening another one.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingHistoryReset {
@@ -75,6 +49,8 @@ pub(crate) struct VersionUiState {
     pub(super) history_preview_lines: EditorLineIndex,
     pub(super) diff_modal_open: bool,
     pub(super) diff_query: String,
+    /// One-shot query focus request, retained until the diff window is rendered.
+    pub(super) diff_query_focus_requested: bool,
     pub(super) diff_target_id: Option<String>,
     pub(super) diff_target_paste: Option<Paste>,
     pub(super) diff_loading_target: bool,
@@ -89,18 +65,6 @@ impl VersionUiState {
     pub(super) fn clear_history_reset_confirm(&mut self) {
         self.history_reset_confirm_open = false;
         self.history_reset_confirm_target = None;
-    }
-
-    fn clear_active_snapshot_cache(&mut self) {
-        self.active_snapshot_cache_key = None;
-        self.active_snapshot_cache_text.clear();
-        self.active_snapshot_preview_lines.reset();
-    }
-
-    fn clear_history_preview_cache(&mut self) {
-        self.history_preview_cache_key = None;
-        self.history_preview_text.clear();
-        self.history_preview_lines.reset();
     }
 
     fn clear_history_snapshot_state(&mut self) {
@@ -177,14 +141,13 @@ impl VersionUiState {
         self.diff_target_id = None;
         self.diff_target_paste = None;
         self.diff_loading_target = false;
-        self.diff_preview_cache_key = None;
-        self.diff_preview_pending_request_id = None;
-        self.diff_preview = None;
+        self.clear_diff_preview_cache();
     }
 
     /// Clears diff-target selection state.
     pub(super) fn clear_diff_selection(&mut self) {
         self.diff_query.clear();
+        self.diff_query_focus_requested = false;
         self.clear_diff_target_state();
     }
 
@@ -196,54 +159,40 @@ impl VersionUiState {
         self.clear_diff_selection();
         self.clear_active_snapshot_cache();
     }
-
-    fn next_diff_preview_request_id(&mut self) -> u64 {
-        self.diff_preview_request_seq = self.diff_preview_request_seq.wrapping_add(1);
-        self.diff_preview_request_seq
-    }
 }
 
 impl LocalPasteApp {
-    /// Advances the active-buffer identity token after a full buffer replacement.
-    ///
-    /// # Notes
-    /// Editor revisions cover incremental edits, but selection changes and load
-    /// acks can replace the entire buffer while resetting revision counters.
-    pub(super) fn bump_active_buffer_epoch(&mut self) {
-        self.active_buffer_epoch = self.active_buffer_epoch.wrapping_add(1);
-        self.version_ui.clear_active_snapshot_cache();
-    }
-
-    fn active_snapshot_cache_key(&self) -> Option<ActiveSnapshotCacheKey> {
-        Some(ActiveSnapshotCacheKey {
-            paste_id: self.selected_id.clone()?,
-            buffer_epoch: self.active_buffer_epoch,
-            revision: self.active_revision(),
-            text_len: self.active_text_len_bytes(),
-        })
-    }
-
     fn ensure_selected_paste_for_version_modal(&mut self) -> bool {
         if self.selected_id.is_some() {
             return true;
         }
-        self.set_status("Nothing selected.");
+        self.notify("Nothing selected.");
         false
     }
 
     fn begin_version_overlay(&mut self) -> bool {
+        if self.picker_delete_transition_active() {
+            self.set_picker_delete_transition_blocked_status();
+            return false;
+        }
         if !self.ensure_selected_paste_for_version_modal() {
             return false;
         }
         if self.reset_transition_active() {
-            self.set_status(RESET_TRANSITION_BLOCKED_STATUS);
+            self.notify(RESET_TRANSITION_BLOCKED_STATUS);
             return false;
         }
         if self.version_overlay_open() {
-            self.set_status(VERSION_OVERLAY_REENTRY_BLOCKED_STATUS);
+            self.notify(VERSION_OVERLAY_REENTRY_BLOCKED_STATUS);
             return false;
         }
         self.clear_pending_selection_request();
+        // Toolbar and palette actions share the same ownership transfer.
+        self.command_palette_open = false;
+        self.close_paste_picker();
+        self.shortcut_help_open = false;
+        self.shortcut_help_focus_requested = false;
+        self.discovery_return_focus = None;
         true
     }
 
@@ -345,6 +294,7 @@ impl LocalPasteApp {
         }
         self.version_ui.diff_modal_open = true;
         self.version_ui.clear_diff_selection();
+        self.version_ui.diff_query_focus_requested = true;
     }
 
     /// Requests version metadata rows for the currently selected paste.
@@ -357,7 +307,7 @@ impl LocalPasteApp {
             id,
             limit: self.version_history_limit,
         }) {
-            self.set_status("List versions failed: backend unavailable.");
+            self.notify("List versions failed: backend unavailable.");
         }
     }
 
@@ -368,155 +318,8 @@ impl LocalPasteApp {
         self.version_ui.history_loading_snapshot_id = Some(version_id_ms);
         if !self.dispatch_backend_cmd(CoreCmd::GetPasteVersion { id, version_id_ms }) {
             self.version_ui.clear_history_snapshot_state();
-            self.set_status("Load version failed: backend unavailable.");
+            self.notify("Load version failed: backend unavailable.");
         }
-    }
-
-    /// Refreshes the cached current editor snapshot only when the active buffer identity changes.
-    ///
-    /// # Returns
-    /// `true` when a fresh owned snapshot had to be cloned from the editor buffer.
-    pub(super) fn sync_active_snapshot_cache(&mut self) -> bool {
-        let Some(cache_key) = self.active_snapshot_cache_key() else {
-            self.version_ui.clear_active_snapshot_cache();
-            return false;
-        };
-        if self.version_ui.active_snapshot_cache_key.as_ref() == Some(&cache_key) {
-            return false;
-        }
-        self.version_ui.active_snapshot_cache_text = self.active_snapshot();
-        self.version_ui.active_snapshot_preview_lines.rebuild(
-            cache_key.revision,
-            self.version_ui.active_snapshot_cache_text.as_str(),
-        );
-        self.version_ui.active_snapshot_cache_key = Some(cache_key);
-        true
-    }
-
-    /// Refreshes the cached read-only history preview body for the selected stored snapshot.
-    ///
-    /// # Returns
-    /// `true` when the snapshot body had to be cloned into preview storage.
-    pub(super) fn sync_history_preview_cache(&mut self) -> bool {
-        let Some(snapshot) = self.version_ui.history_snapshot.as_ref() else {
-            self.version_ui.clear_history_preview_cache();
-            return false;
-        };
-        let cache_key = HistoryPreviewCacheKey {
-            paste_id: snapshot.paste_id.clone(),
-            version_id_ms: snapshot.version_id_ms,
-            len: snapshot.len,
-        };
-        if self.version_ui.history_preview_cache_key.as_ref() == Some(&cache_key) {
-            return false;
-        }
-        self.version_ui.history_preview_text = snapshot.content.clone();
-        self.version_ui.history_preview_lines.rebuild(
-            snapshot.version_id_ms,
-            self.version_ui.history_preview_text.as_str(),
-        );
-        self.version_ui.history_preview_cache_key = Some(cache_key);
-        true
-    }
-
-    /// Refreshes detached diff preview state when the left or right side changes.
-    ///
-    /// At most one worker diff request stays in flight. While a request is pending,
-    /// newer editor revisions wait for that result to drain and then enqueue the
-    /// freshest preview on the next repaint.
-    ///
-    /// # Returns
-    /// `true` when preview state changed or a fresh worker request was queued.
-    pub(super) fn sync_diff_preview_cache(&mut self) -> bool {
-        let Some(lhs_cache_key) = self.active_snapshot_cache_key() else {
-            self.version_ui.clear_active_snapshot_cache();
-            self.version_ui.diff_preview_cache_key = None;
-            self.version_ui.diff_preview_pending_request_id = None;
-            self.version_ui.diff_preview = None;
-            return false;
-        };
-        let Some(cache_key) =
-            self.version_ui
-                .diff_target_paste
-                .as_ref()
-                .map(|rhs| DiffPreviewCacheKey {
-                    lhs: lhs_cache_key,
-                    rhs_paste_id: rhs.id.clone(),
-                    rhs_content_len: rhs.content.len(),
-                    // Diff output depends on the exact right-hand content, not
-                    // on incidental metadata like timestamps.
-                    rhs_content_hash: hash_bytes(rhs.content.as_bytes()),
-                })
-        else {
-            self.version_ui.diff_preview_cache_key = None;
-            self.version_ui.diff_preview_pending_request_id = None;
-            self.version_ui.diff_preview = None;
-            return false;
-        };
-        if self.version_ui.diff_preview_cache_key.as_ref() == Some(&cache_key) {
-            return false;
-        }
-
-        let lhs_bytes = self.active_text_len_bytes();
-        let rhs_bytes = cache_key.rhs_content_len;
-        if lhs_bytes.saturating_add(rhs_bytes) > MAX_INLINE_DIFF_BYTES {
-            self.version_ui.diff_preview = Some(InlineDiffPreview::TooLarge {
-                lhs_bytes,
-                rhs_bytes,
-            });
-            self.version_ui.diff_preview_cache_key = Some(cache_key);
-            self.version_ui.diff_preview_pending_request_id = None;
-            return true;
-        }
-
-        if self.version_ui.diff_preview_pending_request_id.is_some() {
-            return false;
-        }
-
-        let _recomputed_snapshot = self.sync_active_snapshot_cache();
-        let Some(right_text) = self
-            .version_ui
-            .diff_target_paste
-            .as_ref()
-            .map(|rhs| rhs.content.clone())
-        else {
-            self.version_ui.diff_preview_cache_key = None;
-            self.version_ui.diff_preview_pending_request_id = None;
-            self.version_ui.diff_preview = None;
-            return false;
-        };
-        let request_id = self.version_ui.next_diff_preview_request_id();
-        if !self.dispatch_backend_cmd(CoreCmd::ComputeDiffPreview {
-            request_id,
-            left_text: self.version_ui.active_snapshot_cache_text.clone(),
-            right_text,
-        }) {
-            self.version_ui.diff_preview_cache_key = None;
-            self.version_ui.diff_preview_pending_request_id = None;
-            self.version_ui.diff_preview = None;
-            self.set_status("Diff preview failed: backend unavailable.");
-            return false;
-        }
-        self.version_ui.diff_preview_cache_key = Some(cache_key);
-        self.version_ui.diff_preview_pending_request_id = Some(request_id);
-        self.version_ui.diff_preview = None;
-        true
-    }
-
-    /// Applies a completed detached diff preview response for the active request.
-    ///
-    /// Stale worker replies are ignored so background diff jobs cannot overwrite
-    /// a newer modal request after the target or editor snapshot changed.
-    ///
-    /// # Arguments
-    /// - `request_id`: Worker request id associated with the currently active modal preview.
-    /// - `diff`: Worker-computed unified diff payload for that request.
-    pub(super) fn apply_diff_preview_response(&mut self, request_id: u64, diff: DiffResponse) {
-        if self.version_ui.diff_preview_pending_request_id != Some(request_id) {
-            return;
-        }
-        self.version_ui.diff_preview_pending_request_id = None;
-        self.version_ui.diff_preview = Some(inline_diff_preview_from_response(diff));
     }
 
     /// Requests backend duplication for the selected historical snapshot.
@@ -532,7 +335,7 @@ impl LocalPasteApp {
             version_id_ms: meta.version_id_ms,
             name: None,
         }) {
-            self.set_status("Duplicate version failed: backend unavailable.");
+            self.notify("Duplicate version failed: backend unavailable.");
             return;
         }
         self.set_status("Duplicating historical version...");
@@ -610,6 +413,8 @@ impl LocalPasteApp {
             Some(RESET_TRANSITION_BLOCKED_STATUS)
         } else if self.history_reset_flush_active() {
             Some(RESET_FLUSH_BLOCKED_STATUS)
+        } else if self.picker_delete_transition_active() {
+            Some(super::delete_flow::PICKER_DELETE_TRANSITION_BLOCKED_STATUS)
         } else if self.version_overlay_open() {
             Some(VERSION_OVERLAY_SELECTION_BLOCKED_STATUS)
         } else {
@@ -631,6 +436,8 @@ impl LocalPasteApp {
             Some(reason)
         } else if self.history_reset_flush_active() {
             Some(RESET_FLUSH_BLOCKED_STATUS)
+        } else if self.picker_delete_transition_active() {
+            Some(super::delete_flow::PICKER_DELETE_TRANSITION_BLOCKED_STATUS)
         } else if self.version_overlay_open() {
             Some(VERSION_OVERLAY_MUTATION_BLOCKED_STATUS)
         } else {
@@ -669,7 +476,7 @@ impl LocalPasteApp {
 
     fn set_blocked_status(&mut self, reason: &'static str) {
         if self.status.as_ref().map(|status| status.text.as_str()) != Some(reason) {
-            self.set_status(reason);
+            self.notify(reason);
         }
     }
 
@@ -707,7 +514,7 @@ impl LocalPasteApp {
     /// Requests backend reset to a specific confirmed historical snapshot.
     fn reset_history_version_by_id(&mut self, version_id_ms: u64) {
         if let Some(reason) = self.history_reset_queue_block_reason() {
-            self.set_status(reason);
+            self.notify(reason);
             return;
         }
         let Some(id) = self.selected_id.clone() else {
@@ -726,7 +533,7 @@ impl LocalPasteApp {
             version_id_ms,
             preserve_current_head: true,
         }) {
-            self.set_status("Reset hard failed: backend unavailable.");
+            self.notify("Reset hard failed: backend unavailable.");
             return;
         }
         self.version_ui.begin_history_reset_for(id);
@@ -751,7 +558,7 @@ impl LocalPasteApp {
         if content_dispatch_failed || metadata_dispatch_failed {
             rollback_deferred_save_dispatches(self, content_save_needed, metadata_save_needed);
             self.version_ui.clear_history_reset_queue();
-            self.set_status("Reset cancelled because current paste could not be saved.");
+            self.notify("Reset canceled because current paste could not be saved.");
             return;
         }
 
@@ -773,7 +580,7 @@ impl LocalPasteApp {
         };
         if self.selected_id.as_deref() != Some(pending.paste_id.as_str()) {
             self.version_ui.clear_history_reset_queue();
-            self.set_status("Reset cancelled because the selected paste changed.");
+            self.notify("Reset canceled because the selected paste changed.");
             return;
         }
         if self.history_reset_flush_needed() {
@@ -790,7 +597,7 @@ impl LocalPasteApp {
             preserve_current_head: pending.preserve_current_head,
         }) {
             self.version_ui.clear_history_reset_queue();
-            self.set_status("Reset hard failed: backend unavailable.");
+            self.notify("Reset hard failed: backend unavailable.");
             return;
         }
         self.version_ui.clear_history_reset_queue();
@@ -811,12 +618,10 @@ impl LocalPasteApp {
         self.version_ui.diff_target_id = Some(id.clone());
         self.version_ui.diff_target_paste = None;
         self.version_ui.diff_loading_target = true;
-        self.version_ui.diff_preview_cache_key = None;
-        self.version_ui.diff_preview_pending_request_id = None;
-        self.version_ui.diff_preview = None;
+        self.version_ui.clear_diff_preview_cache();
         if !self.dispatch_backend_cmd(CoreCmd::GetDiffTargetPaste { id }) {
             self.version_ui.clear_diff_target_state();
-            self.set_status("Diff load failed: backend unavailable.");
+            self.notify("Diff load failed: backend unavailable.");
         }
     }
 
@@ -833,9 +638,7 @@ impl LocalPasteApp {
         if self.version_ui.diff_target_id.as_deref() == Some(paste.id.as_str()) {
             self.version_ui.diff_target_paste = Some(paste.clone());
             self.version_ui.diff_loading_target = false;
-            self.version_ui.diff_preview_cache_key = None;
-            self.version_ui.diff_preview_pending_request_id = None;
-            self.version_ui.diff_preview = None;
+            self.version_ui.clear_diff_preview_cache();
         }
     }
 
@@ -949,7 +752,7 @@ impl LocalPasteApp {
                     return;
                 }
                 self.version_ui.clear_history_snapshot_state();
-                self.set_status(message.clone());
+                self.notify(message.clone());
             }
             CoreEvent::PasteResetToVersion { paste } => {
                 let paste_id = paste.id.clone();
@@ -982,7 +785,7 @@ impl LocalPasteApp {
                     return;
                 }
                 self.version_ui.clear_diff_target_state();
-                self.set_status(message.clone());
+                self.notify(message.clone());
             }
             CoreEvent::PasteMissing { id } => {
                 if self.history_reset_pending_for(id.as_str()) {
@@ -1007,50 +810,11 @@ impl LocalPasteApp {
         }
     }
 
-    /// Renders history/diff entry points in the editor toolbar.
-    ///
-    /// # Arguments
-    /// - `ui`: Toolbar UI row receiving the version-action buttons.
-    /// - `editor_had_virtual_focus`: Whether the virtual editor owned keyboard
-    ///   focus before the toolbar action was triggered this frame.
-    ///
-    /// # Returns
-    /// Returns whether the virtual editor should keep keyboard focus after this
-    /// frame because a mouse-first toolbar action fired.
-    pub(super) fn render_version_toolbar(
-        &mut self,
-        ui: &mut egui::Ui,
-        editor_had_virtual_focus: bool,
-    ) -> bool {
-        let mut preserve_virtual_editor_focus = false;
-        ui.separator();
-        if ui
-            .add(
-                egui::Button::new("Diff")
-                    .small()
-                    .sense(non_focusable_click_sense()),
-            )
-            .clicked()
-        {
-            self.open_diff_modal();
-            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-        }
-        if ui
-            .add(
-                egui::Button::new("History")
-                    .small()
-                    .sense(non_focusable_click_sense()),
-            )
-            .clicked()
-        {
-            self.open_history_modal();
-            preserve_virtual_editor_focus |= editor_had_virtual_focus;
-        }
-        preserve_virtual_editor_focus
-    }
-
     /// Renders detached history and diff modal dialogs.
     pub(super) fn render_version_dialogs(&mut self, ctx: &egui::Context) {
+        if self.shortcut_help_open {
+            return;
+        }
         self.render_history_modal(ctx);
         self.render_diff_modal(ctx);
     }

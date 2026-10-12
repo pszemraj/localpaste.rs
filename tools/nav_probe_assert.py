@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Assert LocalPaste navigation-probe NDJSON against a compact JSON spec."""
 
+from __future__ import annotations
+
 import argparse
 import json
 import platform
 import re
 import sys
 from pathlib import Path, PureWindowsPath
+from typing import Any
 
 WINDOWS_SEND_KEY_NAMES = (
     "LEFT",
@@ -25,14 +28,20 @@ WINDOWS_SEND_KEY_RE = re.compile(
 )
 WINDOWS_RUNNER_SWITCH_RE = re.compile(r'^\s*"([A-Z0-9_]+)"\s*\{', re.MULTILINE)
 MACOS_ALLOWED_MODIFIERS = {"command", "option", "shift", "control"}
-MACOS_KNOWN_KEY_CODES = {51, 115, 116, 117, 119, 121, 123, 124, 125, 126}
+# Find and help regressions type queries and "x", with Cmd+K, F1, Return, and Escape.
+MACOS_KNOWN_KEY_CODES = {
+    2, 3, 6, 7, 9, 14, 34, 36, 37, 40, 45, 48, 51, 53,
+    115, 116, 117, 119, 121, 122, 123, 124, 125, 126,
+}
 
 
 def host() -> str:
+    """Return the host platform name, mapping Darwin to macos."""
     return {"darwin": "macos"}.get(platform.system().lower(), platform.system().lower())
 
 
-def dotted(value, path):
+def dotted(value: Any, path: str) -> Any:
+    """Look up a dot-separated key path in nested dicts, raising KeyError when absent."""
     cur = value
     for part in path.split("."):
         if not isinstance(cur, dict) or part not in cur:
@@ -41,7 +50,8 @@ def dotted(value, path):
     return cur
 
 
-def matches_subset(value, expected) -> bool:
+def matches_subset(value: Any, expected: dict[str, Any]) -> bool:
+    """Return whether every dotted key in expected is present in value with an equal value."""
     for key, expected_value in expected.items():
         try:
             actual = dotted(value, key)
@@ -52,7 +62,10 @@ def matches_subset(value, expected) -> bool:
     return True
 
 
-def selected_frames(matching):
+def selected_frames(
+    matching: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Pick the frame that carries the key event and the final state frame to assert on."""
     state_frame = matching[-1]
     applied = [frame for frame in matching if frame.get("applied_commands")]
     candidates = [
@@ -85,14 +98,16 @@ def selected_frames(matching):
     return event_frame, state_frame
 
 
-def frame_has_window_blur(frame) -> bool:
+def frame_has_window_blur(frame: dict[str, Any]) -> bool:
+    """Return whether the frame logged a WindowFocused(false) raw event."""
     raw_events = frame.get("raw_events")
     if not isinstance(raw_events, list):
         return False
     return any(event.get("kind") == "WindowFocused(false)" for event in raw_events)
 
 
-def modifier_names(modifiers) -> list[str]:
+def modifier_names(modifiers: Any) -> list[str]:
+    """Return the names of the modifier flags set in a raw key event's modifiers dict."""
     if not isinstance(modifiers, dict):
         return []
     names = []
@@ -102,7 +117,8 @@ def modifier_names(modifiers) -> list[str]:
     return names
 
 
-def key_event_summary(frame) -> str:
+def key_event_summary(frame: dict[str, Any]) -> str:
+    """Summarize the pressed key events of a frame as event=mods+key,..."""
     raw_events = frame.get("raw_events")
     if not isinstance(raw_events, list):
         return "event=?"
@@ -121,7 +137,8 @@ def key_event_summary(frame) -> str:
     return "event=" + ",".join(parts)
 
 
-def focus_summary(frame) -> str:
+def focus_summary(frame: dict[str, Any]) -> str:
+    """Summarize which UI surfaces hold focus in a frame as focus=a|b or focus=none."""
     focus = frame.get("focus")
     if not isinstance(focus, dict):
         return "focus=?"
@@ -131,6 +148,7 @@ def focus_summary(frame) -> str:
             "virtual_editor",
             "sidebar_search",
             "editor_title",
+            "editor_find",
             "command_palette_query",
             "properties_name",
             "properties_tags",
@@ -141,7 +159,8 @@ def focus_summary(frame) -> str:
     return "focus=" + ("|".join(owners) if owners else "none")
 
 
-def cursor_summary(frame) -> str:
+def cursor_summary(frame: dict[str, Any]) -> str:
+    """Summarize a frame's cursor as cursor=line:col@char_index/buffer_len_chars."""
     cursor = frame.get("cursor")
     if not isinstance(cursor, dict):
         return "cursor=?"
@@ -153,7 +172,8 @@ def cursor_summary(frame) -> str:
     )
 
 
-def selection_summary(frame) -> str:
+def selection_summary(frame: dict[str, Any]) -> str:
+    """Summarize a frame's selection as selection=start..end, null, or ?."""
     selection = frame.get("selection")
     if selection is None:
         return "selection=null"
@@ -162,7 +182,8 @@ def selection_summary(frame) -> str:
     return "selection={}..{}".format(selection.get("start", "?"), selection.get("end", "?"))
 
 
-def command_summary(frame, key: str) -> str:
+def command_summary(frame: dict[str, Any], key: str) -> str:
+    """Summarize the command list stored under key in a frame as key=a;b, none, or ?."""
     commands = frame.get(key)
     if not isinstance(commands, list):
         return f"{key}=?"
@@ -171,7 +192,12 @@ def command_summary(frame, key: str) -> str:
     return f"{key}=" + ";".join(str(command) for command in commands)
 
 
-def scenario_summary(scenario_id: str, event_frame, state_frame) -> str:
+def scenario_summary(
+    scenario_id: str,
+    event_frame: dict[str, Any],
+    state_frame: dict[str, Any],
+) -> str:
+    """Build the one-line evidence summary for a scenario from its event and state frames."""
     return " | ".join(
         [
             scenario_id,
@@ -180,12 +206,14 @@ def scenario_summary(scenario_id: str, event_frame, state_frame) -> str:
             command_summary(event_frame, "applied_commands"),
             focus_summary(state_frame),
             cursor_summary(state_frame),
+            "caret_visible=" + str(state_frame.get("editor", {}).get("caret_visible", "?")),
             selection_summary(state_frame),
         ]
     )
 
 
 def parse_scenario_aliases(values: list[str]) -> dict[str, str]:
+    """Parse SPEC_ID=LOG_ID alias arguments into a dict, rejecting malformed or duplicates."""
     aliases = {}
     for value in values:
         if "=" not in value:
@@ -201,9 +229,10 @@ def parse_scenario_aliases(values: list[str]) -> dict[str, str]:
     return aliases
 
 
-def load_json_file(path: Path, label: str):
+def load_json_file(path: Path, label: str) -> Any:
+    """Load a JSON file, printing an error and returning None when it is unreadable or invalid."""
     try:
-        return json.loads(path.read_text("utf-8"))
+        return json.loads(path.read_text("utf-8-sig"))
     except OSError as exc:
         print(f"failed to read navigation probe {label} {path}: {exc}", file=sys.stderr)
     except json.JSONDecodeError as exc:
@@ -214,7 +243,8 @@ def load_json_file(path: Path, label: str):
     return None
 
 
-def load_ndjson_frames(path: Path):
+def load_ndjson_frames(path: Path) -> list[dict[str, Any]] | None:
+    """Load NDJSON probe frames, printing an error and returning None on a read or parse failure."""
     try:
         lines = path.read_text("utf-8").splitlines()
     except OSError as exc:
@@ -238,6 +268,7 @@ def load_ndjson_frames(path: Path):
 
 
 def windows_send_key_name(chord: str) -> str | None:
+    """Return the key name inside a supported Windows SendKeys chord, or None if unsupported."""
     match = WINDOWS_SEND_KEY_RE.fullmatch(chord)
     if match is None:
         return None
@@ -245,10 +276,12 @@ def windows_send_key_name(chord: str) -> str | None:
 
 
 def windows_runner_supported_keys(path: Path) -> set[str]:
+    """Return the key names handled by the Send-NavChord switch in the Windows runner script."""
     return set(WINDOWS_RUNNER_SWITCH_RE.findall(path.read_text("utf-8")))
 
 
-def validate_spec(spec, windows_runner: Path | None = None) -> list[str]:
+def validate_spec(spec: dict[str, Any], windows_runner: Path | None = None) -> list[str]:
+    """Return failures for malformed scenarios or drivers and unimplemented Windows keys."""
     failures = []
     seen = set()
     used_windows_keys = set()
@@ -319,7 +352,8 @@ def validate_spec(spec, windows_runner: Path | None = None) -> list[str]:
     return failures
 
 
-def validate_scenario_aliases(spec, aliases: dict[str, str]) -> list[str]:
+def validate_scenario_aliases(spec: dict[str, Any], aliases: dict[str, str]) -> list[str]:
+    """Return failures for aliases whose spec scenario id does not exist."""
     scenario_ids = {
         scenario.get("id")
         for scenario in spec.get("scenarios", [])
@@ -331,7 +365,8 @@ def validate_scenario_aliases(spec, aliases: dict[str, str]) -> list[str]:
     ]
 
 
-def validate_manifest(manifest) -> list[str]:
+def validate_manifest(manifest: Any) -> list[str]:
+    """Return failures for a Windows probe manifest that is not a complete, successful run."""
     failures = []
     if not isinstance(manifest, dict):
         return ["manifest must be a JSON object"]
@@ -424,7 +459,11 @@ def validate_manifest(manifest) -> list[str]:
     return failures
 
 
-def windows_manifest_expected_scenarios(manifest, spec) -> tuple[list[str], list[str]]:
+def windows_manifest_expected_scenarios(
+    manifest: dict[str, Any],
+    spec: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    """Return the Windows scenario ids a manifest selects, plus failures for unknown ids."""
     failures = []
     only_raw = manifest.get("only", [])
     only = set(only_raw) if isinstance(only_raw, list) else set()
@@ -450,7 +489,8 @@ def windows_manifest_expected_scenarios(manifest, spec) -> tuple[list[str], list
     return expected, failures
 
 
-def validate_manifest_selection(manifest, spec) -> list[str]:
+def validate_manifest_selection(manifest: Any, spec: dict[str, Any]) -> list[str]:
+    """Return failures when manifest runs do not exactly cover the selected Windows scenarios."""
     failures = []
     if not isinstance(manifest, dict):
         return failures
@@ -511,12 +551,13 @@ def validate_manifest_selection(manifest, spec) -> list[str]:
 
 
 def validate_manifest_requirements(
-    manifest,
-    spec,
+    manifest: Any,
+    spec: dict[str, Any],
     *,
     require_full_windows_ctrl: bool,
     min_repeat_count: int | None,
 ) -> list[str]:
+    """Return failures when the manifest misses the requested repeat count or full ctrl coverage."""
     failures = []
     if not isinstance(manifest, dict):
         return failures
@@ -562,7 +603,8 @@ def validate_manifest_requirements(
     return failures
 
 
-def windows_scenario_ids(spec, ctrl_only: bool = False) -> list[str]:
+def windows_scenario_ids(spec: dict[str, Any], ctrl_only: bool = False) -> list[str]:
+    """Return the ids of spec scenarios with a Windows driver, optionally only the ctrl_ ones."""
     scenario_ids = []
     for scenario in spec.get("scenarios", []):
         scenario_id = scenario.get("id")
@@ -585,6 +627,7 @@ def synthetic_windows_manifest(
     ctrl_only: bool,
     only: list[str] | None = None,
 ) -> dict:
+    """Build a passing Windows manifest covering scenario_ids repeated repeat_count times."""
     runs = [
         {
             "scenario_id": scenario_id,
@@ -610,7 +653,8 @@ def synthetic_windows_manifest(
     }
 
 
-def self_test_manifest_selection(spec) -> list[str]:
+def self_test_manifest_selection(spec: dict[str, Any]) -> list[str]:
+    """Check that manifest validation rejects incomplete synthetic manifests."""
     failures = []
     ctrl_ids = windows_scenario_ids(spec, ctrl_only=True)
     all_ids = windows_scenario_ids(spec)
@@ -683,6 +727,7 @@ def self_test_manifest_selection(spec) -> list[str]:
 
 
 def manifest_path_candidates(raw_path: str, manifest_path: Path) -> list[Path]:
+    """Return de-duplicated local paths a manifest-recorded (possibly Windows) path may mean."""
     candidates = [Path(raw_path)]
     for name in {Path(raw_path).name, PureWindowsPath(raw_path).name}:
         if name:
@@ -701,7 +746,13 @@ def manifest_path_candidates(raw_path: str, manifest_path: Path) -> list[Path]:
     return deduped
 
 
-def resolve_manifest_path(manifest, key: str, manifest_path: Path, override: Path | None):
+def resolve_manifest_path(
+    manifest: dict[str, Any],
+    key: str,
+    manifest_path: Path,
+    override: Path | None,
+) -> tuple[Path | None, list[str]]:
+    """Resolve a manifest file path to an existing local path, or return failures."""
     if override is not None:
         return override, []
     raw_path = manifest.get(key)
@@ -716,13 +767,14 @@ def resolve_manifest_path(manifest, key: str, manifest_path: Path, override: Pat
 
 
 def assert_scenarios(
-    frames,
-    spec,
+    frames: list[dict[str, Any]],
+    spec: dict[str, Any],
     host_platform: str,
     scenario_filter: set[str],
     scenario_aliases: dict[str, str],
     include_summary: bool,
-):
+) -> tuple[list[str], list[str]]:
+    """Check selected spec scenarios against their logged frames; return failures and summaries."""
     failures = []
     summaries = []
     matched_scenarios = set()
@@ -740,6 +792,16 @@ def assert_scenarios(
             failures.append(f"{scenario_id}: no frames for log scenario {log_scenario_id!r}")
             continue
         event_frame, state_frame = selected_frames(matching)
+        if scenario.get("driver", {}).get("macos", {}).get("paste"):
+            results = [frame for frame in matching if frame.get("event") == "nav_probe_paste_result"]
+            if not results:
+                failures.append(f"{scenario_id}: missing completed native paste result and restart check")
+                continue
+            state_frame = results[-1]
+            paste_frames = [frame for frame in matching
+                            if any(event.get("kind") == "paste" for event in frame.get("raw_events", []))]
+            if paste_frames:
+                event_frame = paste_frames[-1]
         if include_summary:
             summary_id = (
                 scenario_id
@@ -747,6 +809,14 @@ def assert_scenarios(
                 else f"{scenario_id} as {log_scenario_id}"
             )
             summaries.append(scenario_summary(summary_id, event_frame, state_frame))
+            if "paste" in state_frame:
+                paste = state_frame["paste"]
+                summaries.append(f"{summary_id}: pastes={paste['count']}, query={paste['query']!r}, "
+                                 f"restart_equal={paste['restart_equal']}, precondition={paste['precondition_failure']!r}")
+        if state_frame.get("paste", {}).get("precondition_failure"):
+            failures.append(f"{scenario_id}: native precondition not reached: "
+                            + state_frame["paste"]["precondition_failure"])
+            continue
         for key, expected in scenario.get("expect", {}).items():
             try:
                 actual = dotted(state_frame, key)
@@ -783,7 +853,35 @@ def assert_scenarios(
     return failures, summaries
 
 
+def self_test_paste_results() -> list[str]:
+    """Require a completed persisted result, including after teardown frames."""
+    scenario = {"id": "paste_test", "platforms": ["macos"],
+                "driver": {"macos": {"paste": {"mode": "insert"}}},
+                "expect": {"paste.count": 1, "paste.restart_equal": True}}
+    spec = {"scenarios": [scenario]}
+    native = {"scenario": "paste_test", "raw_events": []}
+    result = {"scenario": "paste_test", "event": "nav_probe_paste_result",
+              "paste": {"count": 1, "restart_equal": True, "precondition_failure": None}}
+    failures = []
+
+    def check(frames: list[dict[str, Any]]) -> list[str]:
+        """Return the macOS paste-scenario failures for the given frames."""
+        return assert_scenarios(frames, spec, "macos", set(), {}, False)[0]
+
+    if not check([native]):
+        failures.append("paste self-test: native frames alone must not prove persistence")
+    if check([native, result, native]):
+        failures.append("paste self-test: teardown must not replace the completed result")
+    if not check([dict(result, paste=dict(result["paste"], restart_equal=False))]):
+        failures.append("paste self-test: a restart mismatch must fail")
+    blocked = dict(result, paste=dict(result["paste"], precondition_failure="no native selection state"))
+    if not check([blocked]):
+        failures.append("paste self-test: an unmet native precondition must fail")
+    return failures
+
+
 def main() -> int:
+    """Run the CLI: validate the spec, self-test, or assert a probe log or manifest."""
     parser = argparse.ArgumentParser()
     parser.add_argument("log", type=Path, nargs="?")
     parser.add_argument("spec", type=Path, nargs="?")
@@ -853,6 +951,7 @@ def main() -> int:
             failures.extend(validate_scenario_aliases(spec, scenario_aliases))
         if args.self_test:
             failures.extend(self_test_manifest_selection(spec))
+            failures.extend(self_test_paste_results())
         if failures:
             print("navigation probe validation failed:", file=sys.stderr)
             for failure in failures:

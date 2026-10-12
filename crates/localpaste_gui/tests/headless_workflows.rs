@@ -33,10 +33,7 @@ fn api_updates_are_visible_to_backend_list() {
     let backend = env.spawn_backend();
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 10,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("send list");
 
     match recv_event(&backend.evt_rx) {
@@ -275,7 +272,8 @@ fn backend_delete_rejects_foreign_lock_holder_and_preserves_paste() {
         })
         .expect("send delete");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::Error { message, .. } => {
+        CoreEvent::PasteDeleteFailed { id, message } => {
+            assert_eq!(id, paste_id);
             assert!(
                 message.contains("open for editing"),
                 "expected lock rejection, got: {}",
@@ -289,10 +287,14 @@ fn backend_delete_rejects_foreign_lock_holder_and_preserves_paste() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: paste_id.clone(),
+            selection_epoch: 42,
         })
         .expect("send get after rejected delete");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => assert_eq!(paste.id, paste_id),
+        CoreEvent::PasteLoaded { paste, .. } => {
+            assert_eq!(paste.id, paste_id);
+            assert_eq!(paste.content, "locked body");
+        }
         other => panic!("unexpected event: {:?}", other),
     }
 
@@ -369,10 +371,11 @@ fn backend_update_paths_reject_foreign_lock_holder_and_preserve_paste() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: paste_id.clone(),
+            selection_epoch: 42,
         })
         .expect("send get after rejected updates");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => {
+        CoreEvent::PasteLoaded { paste, .. } => {
             assert_eq!(paste.id, paste_id);
             assert_eq!(paste.content, baseline.content);
             assert_eq!(paste.name, baseline.name);
@@ -457,10 +460,11 @@ fn locked_descendant_blocks_backend_folder_delete() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: paste_id.clone(),
+            selection_epoch: 42,
         })
         .expect("get locked paste");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => {
+        CoreEvent::PasteLoaded { paste, .. } => {
             assert_eq!(paste.id, paste_id);
             assert_eq!(paste.folder_id.as_deref(), Some(folder_id.as_str()));
         }
@@ -546,6 +550,8 @@ fn metadata_update_persists_and_manual_auto_language_transitions_work() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
+            collection: localpaste_gui::backend::SidebarCollection::All,
+            scope: localpaste_core::models::paste::SearchScope::All,
             query: "script".to_string(),
             limit: 10,
             folder_id: Some(folder_id),
@@ -593,6 +599,8 @@ fn backend_search_matches_full_content_and_derived_metadata() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
+            collection: localpaste_gui::backend::SidebarCollection::All,
+            scope: localpaste_core::models::paste::SearchScope::All,
             query: "SEARCHABLE EXACT SUBSTRING".to_string(),
             limit: 10,
             folder_id: None,
@@ -612,6 +620,8 @@ fn backend_search_matches_full_content_and_derived_metadata() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
+            collection: localpaste_gui::backend::SidebarCollection::All,
+            scope: localpaste_core::models::paste::SearchScope::All,
             query: "fsdp2 cublaslt".to_string(),
             limit: 10,
             folder_id: None,
@@ -653,14 +663,11 @@ fn list_and_search_latency_stay_within_reasonable_headless_budget() {
     let list_start = Instant::now();
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 512,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("send list");
     let list_elapsed = list_start.elapsed();
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteList { items } => assert_eq!(items.len(), 512),
+        CoreEvent::PasteList { items } => assert_eq!(items.len(), 1500, "every paste is listed"),
         other => panic!("unexpected event: {:?}", other),
     }
 
@@ -668,6 +675,8 @@ fn list_and_search_latency_stay_within_reasonable_headless_budget() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
+            collection: localpaste_gui::backend::SidebarCollection::All,
+            scope: localpaste_core::models::paste::SearchScope::All,
             query: "needle".to_string(),
             limit: 32,
             folder_id: None,

@@ -22,7 +22,10 @@ impl LocalPasteApp {
     /// # Returns
     /// `true` when a modal keyboard-owning surface is open.
     pub(super) fn keyboard_overlay_open(&self) -> bool {
-        self.command_palette_open || self.shortcut_help_open || self.version_overlay_open()
+        self.command_palette_open
+            || self.paste_picker_open
+            || self.shortcut_help_open
+            || self.version_overlay_open()
     }
 
     /// Returns active buffer length in bytes.

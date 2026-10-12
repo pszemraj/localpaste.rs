@@ -31,6 +31,11 @@ fn paste_list_and_list_meta_order_by_updated_and_honor_limit() {
     assert_eq!(metas.len(), 1);
     assert_eq!(metas[0].id, newer_id);
     assert_ne!(metas[0].id, older_id);
+
+    // The GUI lists every row this way.
+    let every = db.pastes.list_meta(usize::MAX, None).expect("list all");
+    let ids: Vec<&str> = every.iter().map(|meta| meta.id.as_str()).collect();
+    assert_eq!(ids, [newer_id.as_str(), older_id.as_str()]);
 }
 
 #[test]
@@ -399,6 +404,45 @@ fn paste_search_meta_matches_derived_handle_and_terms() {
 }
 
 #[test]
+fn paste_search_meta_normalizes_query_terms_like_derived_terms() {
+    let (db, _temp) = setup_test_db();
+    let flag = Paste::new(
+        "cargo build --release\ncargo build --release\n".to_string(),
+        "silent-forest".to_string(),
+    );
+    let note = Paste::new(
+        "Note: rotate the staging keys\nNote: rotate weekly\n".to_string(),
+        "quiet-river".to_string(),
+    );
+    let unicode = Paste::new(
+        "naïve café menu\nnaïve café\n".to_string(),
+        "untamed-tundra".to_string(),
+    );
+    // `ét` is too short to be a term, so only the handle `name ÉT` can match.
+    let handle = Paste::new("name: ÉT\n".to_string(), "misc".to_string());
+    for paste in [&flag, &note, &unicode, &handle] {
+        db.pastes.create(paste).expect("create");
+    }
+
+    for (query, expected) in [
+        ("--release", &flag.id),
+        ("Note:", &note.id),
+        ("Café", &unicode.id),
+        ("NAÏVE", &unicode.id),
+        ("ÉT", &handle.id),
+    ] {
+        let ids: Vec<String> = db
+            .pastes
+            .search_meta(query, 10, None, None)
+            .expect("search")
+            .into_iter()
+            .map(|meta| meta.id)
+            .collect();
+        assert_eq!(ids, [expected.as_str()], "{query}");
+    }
+}
+
+#[test]
 fn paste_search_meta_keeps_name_above_tags_above_language() {
     let (db, _temp) = setup_test_db();
 
@@ -483,6 +527,34 @@ fn search_language_filters_are_case_insensitive_and_trimmed_for_full_and_meta_qu
                 assert_eq!(results.len(), 1);
                 assert_eq!(results[0].id, python.id);
             }
+        }
+        for language in ["json", "jsonl"] {
+            let paste = Paste::new_with_language(
+                "{\"record\":1}".into(),
+                "record format".into(),
+                Some(language.into()),
+                true,
+            );
+            db.pastes.create(&paste).expect("create record");
+        }
+        for language in ["json", "jsonl"] {
+            let labels: Vec<_> = match case {
+                SearchKind::Full => db
+                    .pastes
+                    .search("record", 10, None, Some(language.into()))
+                    .expect("search record")
+                    .into_iter()
+                    .map(|paste| paste.language)
+                    .collect(),
+                SearchKind::Meta => db
+                    .pastes
+                    .search_meta("record", 10, None, Some(language.into()))
+                    .expect("search record metadata")
+                    .into_iter()
+                    .map(|paste| paste.language)
+                    .collect(),
+            };
+            assert_eq!(labels, vec![Some(language.into())]);
         }
     }
 }
@@ -585,7 +657,7 @@ fn database_new_rebuilds_markerless_current_meta_rows() {
         .into_iter()
         .find(|meta| meta.id == paste_id)
         .expect("meta row");
-    assert_eq!(first_meta.derived.kind, crate::semantic::PasteKind::Code);
+    assert_eq!(first_meta.derived.kind, crate::semantic::PasteKind::Short);
     assert_eq!(first_meta.derived.handle.as_deref(), Some("cargo test"));
     assert!(
         !first_meta
@@ -618,7 +690,7 @@ fn database_new_rebuilds_markerless_current_meta_rows() {
         .into_iter()
         .find(|meta| meta.id == paste_id)
         .expect("meta row");
-    assert_eq!(second_meta.derived.kind, crate::semantic::PasteKind::Code);
+    assert_eq!(second_meta.derived.kind, crate::semantic::PasteKind::Short);
     assert_eq!(second_meta.derived.handle.as_deref(), Some("cargo test"));
     assert!(
         !second_meta
@@ -652,22 +724,7 @@ fn database_new_rebuilds_stale_schema_meta_rows_for_semantic_handle_changes() {
         handle: Some("renderpanel".to_string()),
         terms: vec!["renderpanel".to_string()],
     };
-    let encoded_meta = bincode::serialize(&stale_meta).expect("serialize meta");
-    let old_schema_version = bincode::serialize(&1u64).expect("serialize old schema version");
-    let write_txn = db.db.begin_write().expect("begin write");
-    {
-        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
-        let mut meta_state = write_txn
-            .open_table(PASTES_META_STATE)
-            .expect("open meta state");
-        metas
-            .insert(paste_id.as_str(), encoded_meta.as_slice())
-            .expect("overwrite stale meta");
-        meta_state
-            .insert(META_SCHEMA_VERSION_KEY, old_schema_version.as_slice())
-            .expect("stamp old schema version");
-    }
-    write_txn.commit().expect("commit");
+    install_stale_meta_projection(&db, [stale_meta], 1);
     drop(db);
 
     let reopened = open_test_database(&db_path_str);
@@ -707,65 +764,129 @@ fn database_new_rebuilds_stale_schema_meta_rows_for_semantic_handle_changes() {
 }
 
 #[test]
-fn database_from_shared_rebuilds_markerless_current_meta_rows() {
-    let (db, _temp) = setup_test_db();
-    let paste = Paste::new(
-        "cargo test --package trainer\n".to_string(),
-        "shared-meta".to_string(),
+fn database_new_rebuilds_v3_document_classification() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let db_path = temp_dir.path().join("db");
+    let db_path_str = db_path.to_str().expect("db path").to_string();
+
+    let db = open_test_database(&db_path_str);
+    let paste = Paste::new_with_language(
+        "name,age\nAda,37".to_string(),
+        "contacts.csv".to_string(),
+        Some("text".to_string()),
+        true,
     );
     let paste_id = paste.id.clone();
     db.pastes.create(&paste).expect("create");
 
-    let mut current_meta = PasteMeta::from(&paste);
-    current_meta.derived = crate::semantic::DerivedMeta {
-        kind: crate::semantic::PasteKind::Other,
-        handle: Some("stale-shared-handle".to_string()),
-        terms: vec!["stale-shared-term".to_string()],
-    };
-    let encoded = bincode::serialize(&current_meta).expect("serialize");
-    let write_txn = db.db.begin_write().expect("begin write");
-    {
-        let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
-        let mut meta_state = write_txn
-            .open_table(PASTES_META_STATE)
-            .expect("open meta state");
-        metas
-            .insert(paste_id.as_str(), encoded.as_slice())
-            .expect("overwrite current meta");
-        let _ = meta_state
-            .remove(META_SCHEMA_VERSION_KEY)
-            .expect("remove schema marker");
-    }
-    write_txn.commit().expect("commit");
+    let mut stale_meta = PasteMeta::from(&paste);
+    stale_meta.derived.kind = crate::semantic::PasteKind::Document;
+    install_stale_meta_projection(&db, [stale_meta], 3);
+    drop(db);
 
-    let reopened = Database::from_shared(db.db.clone()).expect("from_shared");
-    let rebuilt_meta = reopened
+    let reopened = open_test_database(&db_path_str);
+    let meta = reopened
         .pastes
         .list_meta(10, None)
         .expect("list")
         .into_iter()
         .find(|meta| meta.id == paste_id)
         .expect("meta row");
-    assert_eq!(rebuilt_meta.derived.kind, crate::semantic::PasteKind::Code);
-    assert_eq!(rebuilt_meta.derived.handle.as_deref(), Some("cargo test"));
-    assert!(
-        !rebuilt_meta
-            .derived
-            .terms
-            .iter()
-            .any(|term| term == "stale-shared-term"),
-        "from_shared must rebuild marker-less metadata before exposing shared-handle search state"
-    );
+    assert_eq!(meta.derived.kind, crate::semantic::PasteKind::Other);
+}
 
-    let read_txn = reopened.db.begin_read().expect("begin read");
-    let meta_state = read_txn
-        .open_table(PASTES_META_STATE)
-        .expect("open meta state");
-    let stored_version = meta_state
-        .get(META_SCHEMA_VERSION_KEY)
-        .expect("schema lookup")
-        .expect("schema row");
-    let stored_version: u64 =
-        bincode::deserialize(stored_version.value()).expect("decode schema version");
-    assert_eq!(stored_version, CURRENT_PASTES_META_SCHEMA_VERSION);
+#[test]
+fn database_from_shared_respects_meta_schema_marker_states() {
+    let cases = [
+        ("missing", None, true),
+        ("malformed", Some(vec![0xff]), true),
+        (
+            "older",
+            Some(bincode::serialize(&(CURRENT_PASTES_META_SCHEMA_VERSION - 1)).expect("serialize")),
+            true,
+        ),
+        (
+            "current",
+            Some(bincode::serialize(&CURRENT_PASTES_META_SCHEMA_VERSION).expect("serialize")),
+            false,
+        ),
+    ];
+    for (case, marker, should_rebuild) in cases {
+        let (db, _temp) = setup_test_db();
+        let paste = Paste::new(
+            "cargo test --package trainer\n".to_string(),
+            "shared-meta".to_string(),
+        );
+        let paste_id = paste.id.clone();
+        db.pastes.create(&paste).expect("create");
+
+        let mut current_meta = PasteMeta::from(&paste);
+        let canonical_derived = current_meta.derived.clone();
+        assert_eq!(canonical_derived.kind, crate::semantic::PasteKind::Short);
+        assert_eq!(canonical_derived.handle.as_deref(), Some("cargo test"));
+        current_meta.derived = crate::semantic::DerivedMeta {
+            kind: crate::semantic::PasteKind::Other,
+            handle: Some("stale-shared-handle".to_string()),
+            terms: vec!["stale-shared-term".to_string()],
+        };
+        let expected_derived = if should_rebuild {
+            canonical_derived
+        } else {
+            current_meta.derived.clone()
+        };
+        let encoded = bincode::serialize(&current_meta).expect("serialize");
+        let write_txn = db.db.begin_write().expect("begin write");
+        {
+            let mut metas = write_txn.open_table(PASTES_META).expect("open metas");
+            let mut meta_state = write_txn
+                .open_table(PASTES_META_STATE)
+                .expect("open meta state");
+            metas
+                .insert(paste_id.as_str(), encoded.as_slice())
+                .expect("overwrite current meta");
+            if let Some(marker) = marker {
+                meta_state
+                    .insert(META_SCHEMA_VERSION_KEY, marker.as_slice())
+                    .expect("set schema marker");
+            } else {
+                let _ = meta_state
+                    .remove(META_SCHEMA_VERSION_KEY)
+                    .expect("remove schema marker");
+            }
+        }
+        write_txn.commit().expect("commit");
+
+        let reopened = Database::from_shared(db.db.clone()).expect("from_shared");
+        for attempt in 0..2 {
+            if attempt > 0 {
+                reopened
+                    .pastes
+                    .ensure_meta_index_current()
+                    .expect("ensure current");
+            }
+            let meta = reopened
+                .pastes
+                .list_meta(10, None)
+                .expect("list")
+                .into_iter()
+                .find(|meta| meta.id == paste_id)
+                .expect("meta row");
+            assert_eq!(meta.derived, expected_derived, "marker state: {case}");
+
+            let read_txn = reopened.db.begin_read().expect("begin read");
+            let meta_state = read_txn
+                .open_table(PASTES_META_STATE)
+                .expect("open meta state");
+            let stored_version = meta_state
+                .get(META_SCHEMA_VERSION_KEY)
+                .expect("schema lookup")
+                .expect("schema row");
+            let stored_version: u64 =
+                bincode::deserialize(stored_version.value()).expect("decode schema version");
+            assert_eq!(
+                stored_version, CURRENT_PASTES_META_SCHEMA_VERSION,
+                "marker state: {case}"
+            );
+        }
+    }
 }

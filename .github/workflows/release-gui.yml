@@ -3,8 +3,6 @@ on:
   push:
     tags:
       - "v[0-9]*.[0-9]*.[0-9]*"
-  schedule:
-    - cron: '0 8 * * 1'
   workflow_dispatch:
     inputs:
       source_mode:
@@ -31,7 +29,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   resolve_tag:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     outputs:
@@ -59,9 +57,7 @@ jobs:
           fi
 
           MODE="release_tag"
-          if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
-            MODE="current_ref"
-          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             MODE="${INPUT_SOURCE_MODE:-}"
             if [[ -z "${MODE}" ]]; then
               MODE="current_ref"

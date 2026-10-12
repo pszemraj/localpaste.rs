@@ -95,7 +95,7 @@ fn get_and_update_decode_legacy_paste_rows_without_manual_language_flag() {
         &db,
         &legacy.id,
         update_request(
-            Some("fn main() { println!(\"hello\"); }\n"),
+            Some("fn main() {\n    let message = \"hello from the updated paste\";\n    println!(\"{message}\");\n}\n"),
             None,
             None,
             None,

@@ -3,28 +3,73 @@
 use super::*;
 
 #[test]
-fn set_status_pushes_toast_feedback() {
+fn routine_status_stays_in_the_status_bar_while_notices_also_toast() {
     let mut harness = make_app();
-    harness.app.set_status("Saved metadata.");
+    harness.app.set_status("Copied paste content.");
 
-    assert!(harness.app.status.is_some());
-    assert_eq!(harness.app.toasts.len(), 1);
+    let status = harness.app.status.as_ref().expect("status");
+    assert_eq!(status.text, "Copied paste content.");
+    assert!(!status.alert);
+    assert!(harness.app.toasts.is_empty());
+
+    harness.app.notify("Export failed: disk full");
+    let status = harness.app.status.as_ref().expect("status");
+    assert_eq!(status.text, "Export failed: disk full");
+    assert!(status.alert);
     assert_eq!(
         harness.app.toasts.back().map(|toast| toast.text.as_str()),
-        Some("Saved metadata.")
+        Some("Export failed: disk full")
     );
+}
+
+#[test]
+fn routine_confirmations_and_progress_do_not_toast() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    // The harness opens `alpha` without its edit lock; switching away releases it.
+    assert!(harness.app.acquire_paste_lock("alpha"));
+    // Copy and new-paste confirmations.
+    harness.app.queue_palette_copy("alpha".into(), false);
+    harness.app.create_new_paste();
+    harness.app.apply_event(CoreEvent::PasteCreated {
+        paste: Paste::new("new".into(), "New".into()),
+    });
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    // Undo restore progress and its result.
+    harness.app.notify_with_action(
+        "Paste deleted.",
+        ToastAction::UndoDelete {
+            undo_token: "undo-alpha".to_string(),
+        },
+    );
+    harness.app.restore_deleted_paste("undo-alpha".to_string());
+    assert_eq!(
+        harness
+            .app
+            .status
+            .as_ref()
+            .map(|status| status.text.as_str()),
+        Some("Restoring deleted paste...")
+    );
+    let texts = harness
+        .app
+        .toasts
+        .iter()
+        .map(|toast| toast.text.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(texts, vec!["Paste deleted."], "only the undo toast remains");
 }
 
 #[test]
 fn toast_queue_dedupes_tail_and_caps_length() {
     let mut harness = make_app();
 
-    harness.app.set_status("Repeated");
-    harness.app.set_status("Repeated");
+    harness.app.notify("Repeated");
+    harness.app.notify("Repeated");
     assert_eq!(harness.app.toasts.len(), 1);
 
     for idx in 0..(TOAST_LIMIT + 2) {
-        harness.app.set_status(format!("Toast {}", idx));
+        harness.app.notify(format!("Toast {}", idx));
     }
     assert_eq!(harness.app.toasts.len(), TOAST_LIMIT);
 }
@@ -33,14 +78,14 @@ fn toast_queue_dedupes_tail_and_caps_length() {
 fn toast_queue_preserves_undo_actions_under_status_pressure() {
     let mut harness = make_app();
 
-    harness.app.set_status_with_action(
+    harness.app.notify_with_action(
         "Paste deleted.",
         ToastAction::UndoDelete {
             undo_token: "undo-alpha".to_string(),
         },
     );
     for idx in 0..(TOAST_LIMIT + 2) {
-        harness.app.set_status(format!("Status {idx}"));
+        harness.app.notify(format!("Status {idx}"));
     }
 
     assert!(
@@ -69,7 +114,7 @@ fn toast_queue_caps_undo_actions_to_backend_limit() {
     let mut harness = make_app();
 
     for idx in 0..(DELETE_UNDO_LIMIT + 3) {
-        harness.app.set_status_with_action(
+        harness.app.notify_with_action(
             format!("Paste deleted {idx}."),
             ToastAction::UndoDelete {
                 undo_token: format!("undo-{idx}"),
@@ -180,13 +225,13 @@ fn paste_deleted_without_undo_token_has_no_undo_action() {
 #[test]
 fn undo_delete_action_dispatches_restore_once_and_keeps_toast_until_ack() {
     let mut harness = make_app();
-    harness.app.set_status_with_action(
+    harness.app.notify_with_action(
         "Paste deleted.",
         ToastAction::UndoDelete {
             undo_token: "undo-alpha".to_string(),
         },
     );
-    harness.app.set_status_with_action(
+    harness.app.notify_with_action(
         "Paste deleted.",
         ToastAction::UndoDelete {
             undo_token: "undo-beta".to_string(),
@@ -243,13 +288,13 @@ fn undo_delete_action_dispatches_restore_once_and_keeps_toast_until_ack() {
 #[test]
 fn paste_restored_ack_removes_matching_undo_toast() {
     let mut harness = make_app();
-    harness.app.set_status_with_action(
+    harness.app.notify_with_action(
         "Paste deleted.",
         ToastAction::UndoDelete {
             undo_token: "undo-alpha".to_string(),
         },
     );
-    harness.app.set_status_with_action(
+    harness.app.notify_with_action(
         "Paste deleted.",
         ToastAction::UndoDelete {
             undo_token: "undo-beta".to_string(),
@@ -297,13 +342,13 @@ fn paste_restored_ack_removes_matching_undo_toast() {
 #[test]
 fn undo_eviction_removes_matching_toast_without_touching_other_undo_actions() {
     let mut harness = make_app();
-    harness.app.set_status_with_action(
+    harness.app.notify_with_action(
         "Paste deleted.",
         ToastAction::UndoDelete {
             undo_token: "undo-alpha".to_string(),
         },
     );
-    harness.app.set_status_with_action(
+    harness.app.notify_with_action(
         "Paste deleted.",
         ToastAction::UndoDelete {
             undo_token: "undo-beta".to_string(),
@@ -344,7 +389,7 @@ fn assert_restore_deleted_command(rx: &Receiver<CoreCmd>, expected_token: &str) 
 
 fn app_with_restore_in_flight(token: &str) -> TestHarness {
     let mut harness = make_app();
-    harness.app.set_status_with_action(
+    harness.app.notify_with_action(
         "Paste deleted.",
         ToastAction::UndoDelete {
             undo_token: token.to_string(),
@@ -415,10 +460,11 @@ fn undo_delete_nonretryable_restore_failure_removes_toast() {
 fn undo_delete_send_failure_keeps_retryable_toast() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
-    app.set_status_with_action(
+    app.notify_with_action(
         "Paste deleted.",
         ToastAction::UndoDelete {
             undo_token: "undo-alpha".to_string(),
@@ -441,7 +487,7 @@ fn undo_delete_send_failure_keeps_retryable_toast() {
 #[test]
 fn backend_event_disconnect_clears_in_flight_undo_restore_token() {
     let (mut harness, evt_tx) = make_app_with_event_tx();
-    harness.app.set_status_with_action(
+    harness.app.notify_with_action(
         "Paste deleted.",
         ToastAction::UndoDelete {
             undo_token: "undo-alpha".to_string(),
@@ -469,5 +515,194 @@ fn backend_event_disconnect_clears_in_flight_undo_restore_token() {
             .as_ref()
             .map(|status| status.text.as_str()),
         Some("Undo delete canceled: backend unavailable.")
+    );
+}
+
+#[test]
+fn toasts_stack_bottom_right_above_the_status_bar() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.notify("First notice");
+    harness.app.notify("Second notice");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 800.0));
+    let input = || egui::RawInput {
+        screen_rect: Some(screen),
+        ..Default::default()
+    };
+    let _ = run_full_update_with_input(&mut harness.app, &ctx, input());
+    let output = run_full_update_with_input(&mut harness.app, &ctx, input());
+    // Search back to front: the status bar also shows the latest notice, and
+    // toasts paint after it.
+    let rect_of = |label: &str| {
+        output
+            .shapes
+            .iter()
+            .rev()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.job.text == label => {
+                    Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing {label}"))
+    };
+    let first = rect_of("First notice");
+    let second = rect_of("Second notice");
+    let status_bar_top = rect_of("DB:").top();
+    let toolbar_bottom = rect_of("Copy").bottom();
+    for toast in [first, second] {
+        assert!(toast.top() > toolbar_bottom, "{toast:?} covers the toolbar");
+        assert!(
+            toast.bottom() < status_bar_top,
+            "{toast:?} covers the status bar"
+        );
+        assert!(
+            toast.right() > screen.right() - 120.0,
+            "{toast:?} is not right-aligned"
+        );
+    }
+    assert!(
+        second.top() > first.top(),
+        "the newest toast sits nearest the status bar"
+    );
+}
+
+/// Renders `count` full frames in the toast test viewport, sending `events` with the first.
+fn toast_frames(
+    harness: &mut TestHarness,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    count: usize,
+) -> egui::FullOutput {
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 800.0));
+    let mut events = Some(events);
+    let mut output = None;
+    for _ in 0..count {
+        output = Some(run_full_update_with_input(
+            &mut harness.app,
+            ctx,
+            egui::RawInput {
+                screen_rect: Some(screen),
+                events: events.take().unwrap_or_default(),
+                ..Default::default()
+            },
+        ));
+    }
+    output.expect("at least one frame")
+}
+
+/// Paint-order positions and rects of every text shape reading `label`.
+fn text_indices(output: &egui::FullOutput, label: &str) -> Vec<(usize, egui::Rect)> {
+    output
+        .shapes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, clipped)| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.job.text == label => Some((
+                index,
+                egui::Rect::from_min_size(text.pos, text.galley.size()),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Presses and releases the primary button at `pos` over two frames.
+fn toast_click(harness: &mut TestHarness, ctx: &egui::Context, pos: egui::Pos2) {
+    for pressed in [true, false] {
+        toast_frames(harness, ctx, primary_pointer_events(pos, pressed), 1);
+    }
+}
+
+#[test]
+fn toasts_stay_above_diff_and_history_and_keep_undo_clickable() {
+    for title in ["Diff", "History"] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        if title == "Diff" {
+            harness.app.open_diff_modal();
+        } else {
+            harness.app.open_history_modal();
+        }
+        toast_frames(&mut harness, &ctx, vec![], 4);
+        harness.app.notify_with_action(
+            "Deleted paste.",
+            ToastAction::UndoDelete {
+                undo_token: "token".into(),
+            },
+        );
+        toast_frames(&mut harness, &ctx, vec![], 2);
+        let window_rect = || {
+            ctx.memory(|memory| memory.area_rect(egui::Id::new(title)))
+                .expect(title)
+        };
+
+        // Dragging the title bar raises the window and moves it over the toasts.
+        let grab = egui::pos2(window_rect().center().x, window_rect().top() + 12.0);
+        let drop = grab + egui::vec2(0.0, 500.0);
+        toast_frames(&mut harness, &ctx, primary_pointer_events(grab, true), 1);
+        for step in 1..=4 {
+            let pos = grab.lerp(drop, step as f32 / 4.0);
+            toast_frames(&mut harness, &ctx, vec![egui::Event::PointerMoved(pos)], 1);
+        }
+        toast_frames(&mut harness, &ctx, primary_pointer_events(drop, false), 1);
+        let output = toast_frames(&mut harness, &ctx, vec![], 2);
+
+        let (title_index, _) = *text_indices(&output, title).last().expect(title);
+        let (toast_index, _) = *text_indices(&output, "Deleted paste.")
+            .last()
+            .expect("toast");
+        let (_, undo) = *text_indices(&output, "Undo").last().expect("Undo");
+        assert!(
+            window_rect().contains(undo.center()),
+            "{title} lies under Undo"
+        );
+        assert!(toast_index > title_index, "{title} paints over the toast");
+        assert_eq!(
+            ctx.layer_id_at(undo.center()).map(|layer| layer.id),
+            Some(egui::Id::new("toast_area")),
+            "{title}"
+        );
+        let _ = harness.cmd_rx.try_iter().count();
+        toast_click(&mut harness, &ctx, undo.center());
+        assert!(
+            harness.cmd_rx.try_iter().any(|cmd| matches!(
+                cmd,
+                CoreCmd::RestoreDeletedPaste { undo_token } if undo_token == "token"
+            )),
+            "{title}"
+        );
+    }
+}
+
+#[test]
+fn open_popups_stay_above_a_toast_raised_after_them() {
+    let mut harness = make_app();
+    // A language gives the sidebar its language filter combo.
+    let rust = test_summary("alpha", "Alpha", Some("rust"), 7);
+    harness.app.all_pastes = vec![rust.clone()];
+    harness.app.pastes = vec![rust].into();
+    let ctx = egui::Context::default();
+    let output = toast_frames(&mut harness, &ctx, vec![], 2);
+    let (_, combo) = text_indices(&output, "All languages")[0];
+    toast_click(&mut harness, &ctx, combo.center());
+    let output = toast_frames(&mut harness, &ctx, vec![], 2);
+    assert_eq!(
+        text_indices(&output, "All languages").len(),
+        2,
+        "popup open"
+    );
+
+    harness.app.notify("Search failed.");
+    let output = toast_frames(&mut harness, &ctx, vec![], 2);
+
+    let options = text_indices(&output, "All languages");
+    assert_eq!(options.len(), 2, "popup still open");
+    let (toast_index, _) = *text_indices(&output, "Search failed.")
+        .last()
+        .expect("toast");
+    assert!(
+        options[1].0 > toast_index,
+        "the toast covers the open popup"
     );
 }

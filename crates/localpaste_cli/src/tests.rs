@@ -7,8 +7,8 @@ use super::discovery::test_exports::{
 use super::output::test_exports::error_message_for_response;
 use super::{
     format_delete_output, format_diff_output, format_equal_output, format_get_output,
-    format_summary_output, normalize_server, paste_id_and_name, resolve_server,
-    resolve_server_with_source, ServerResolutionSource,
+    format_summary_output, normalize_server, paste_id_and_name, quiet_on_closed_stdout,
+    resolve_server, resolve_server_with_source, ServerResolutionSource,
 };
 use super::{Cli, Commands};
 use clap::{CommandFactory, Parser};
@@ -344,6 +344,32 @@ fn cli_equal_output_formats_boolean_shape_for_text_and_json() {
         format_equal_output(&different, false).expect("text different output"),
         "different"
     );
+}
+
+/// Writer whose every write fails with the given error kind.
+struct FailingWriter(std::io::ErrorKind);
+
+impl Write for FailingWriter {
+    fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+        Err(self.0.into())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Err(self.0.into())
+    }
+}
+
+#[test]
+fn closed_stdout_ends_output_quietly_while_other_write_errors_still_fail() {
+    let write_result = |kind| -> Result<(), Box<dyn std::error::Error>> {
+        writeln!(FailingWriter(kind), "output")?;
+        Ok(())
+    };
+
+    assert!(quiet_on_closed_stdout(write_result(std::io::ErrorKind::BrokenPipe)).is_ok());
+    assert!(quiet_on_closed_stdout(write_result(std::io::ErrorKind::PermissionDenied)).is_err());
+    assert!(quiet_on_closed_stdout(Err("server unreachable".into())).is_err());
+    assert!(quiet_on_closed_stdout(Ok(())).is_ok());
 }
 
 #[test]

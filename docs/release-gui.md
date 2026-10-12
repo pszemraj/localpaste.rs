@@ -1,91 +1,49 @@
-# GUI Release Pipeline
+# GUI Releases
 
-Workflow and helper-script entrypoints:
+[GitHub Releases](https://github.com/pszemraj/localpaste.rs/releases) publishes the desktop GUI for Windows x86_64, Linux x86_64, and macOS on Apple Silicon (macOS 11 or later). Each platform comes as a package and as a plain archive, named `localpaste-<tag>-<platform>.<extension>`, where `<tag>` is the release version such as `vX.Y.Z`.
 
-- [`.github/workflows/release-gui.yml`](../.github/workflows/release-gui.yml)
-- [`.github/workflows/verify-gui-packaging.yml`](../.github/workflows/verify-gui-packaging.yml)
-- [`.github/scripts/release_gui_prepare.py`](../.github/scripts/release_gui_prepare.py)
-- [`.github/scripts/release_gui_collect.py`](../.github/scripts/release_gui_collect.py)
+| Platform | Package | Archive |
+| --- | --- | --- |
+| Windows x86_64 | `localpaste-<tag>-windows-x86_64.msi` | `localpaste-<tag>-windows-x86_64.zip` |
+| Linux x86_64 | `localpaste-<tag>-linux-x86_64.AppImage` | `localpaste-<tag>-linux-x86_64.tar.gz` |
+| macOS Apple Silicon | `localpaste-<tag>-macos-aarch64.dmg` | `localpaste-<tag>-macos-aarch64.app.tar.gz` |
 
-## Modes
+Every release also includes `checksums.sha256`, which lists a SHA-256 sum for each file above.
 
-`release-gui.yml` supports two source modes:
+## Install A Release
 
-- `release_tag`: package from an existing stable tag/version.
-- `current_ref`: package from the current commit for verification; publish job is skipped and packaging metadata is derived from the workspace semver (stable or prerelease).
+**Windows.** Run the MSI installer. Alternatively, extract the ZIP and run `localpaste.exe`.
 
-Manual `workflow_dispatch` defaults to the safe verification path:
+**Linux.** Make the AppImage executable and run it:
 
-- `source_mode: current_ref`
-- `dry_run: true`
+```bash
+chmod +x localpaste-*.AppImage
+./localpaste-*.AppImage
+```
 
-To publish from a manual run, the operator must explicitly choose `release_tag`,
-provide a stable release tag/version (`vX.Y.Z` or `X.Y.Z`), and set `dry_run`
-to `false`.
+Alternatively, extract the `.tar.gz` and run `./localpaste`.
 
-`verify-gui-packaging.yml` follows the same tag/version split for its macOS-only packaging smoke:
+**macOS.** Open the DMG and drag `LocalPaste.app` to Applications. Alternatively, extract the `.app.tar.gz` and move the app bundle to Applications. If macOS refuses to open the app, see [macOS Gatekeeper](#macos-gatekeeper).
 
-- explicit `tag` input remains stable-only,
-- empty `tag` derives packaging metadata from `[workspace.package].version`, including prerelease workspace versions used for smoke/verification branches.
+The `localpaste` executable inside the archives is the GUI under a shorter name. Releases do not include the standalone server (also called `localpaste` when built from source) or the `lpaste` CLI; build those from source.
 
-When packaging metadata comes from a prerelease workspace version, artifact names and manifests keep the full prerelease tag. Windows packager config uses the numeric `major.minor.patch` core only, because WiX/MSI product versions do not accept prerelease/build metadata.
+## macOS Gatekeeper
 
-`release_tag` publishes on tag-triggered runs and on manual runs where
-`dry_run` is `false`.
+macOS builds are signed and notarized only when the release was built with the maintainer's Apple signing credentials. Otherwise Gatekeeper blocks the first launch with a message that LocalPaste cannot be verified. To open it anyway, use either of these:
 
-`release_tag` gates:
+1. Try to open `LocalPaste.app` once, then open System Settings > Privacy & Security, find the message about LocalPaste, and choose Open Anyway.
+2. Remove the quarantine flag from the installed app in a terminal, then open it normally: `xattr -cr /Applications/LocalPaste.app`
 
-- tag format/existence validation,
-- workspace version == tag version,
-- server+CLI smoke test including restart persistence
-  ([devlog smoke runbook](dev/devlog.md#runtime-smoke-test-server-cli)),
-- packaging/build jobs check out the resolved source ref directly (full-tree tag fidelity in `release_tag` mode).
+## Verify A Download
 
-## Artifact Contract
+Download `checksums.sha256` next to the files and check them. On Linux, in the download directory:
 
-Published release assets (when produced) follow:
+```bash
+sha256sum --check --ignore-missing checksums.sha256
+```
 
-- `localpaste-<tag>-windows-x86_64.msi`
-- `localpaste-<tag>-windows-x86_64.zip`
-- `localpaste-<tag>-linux-x86_64.AppImage`
-- `localpaste-<tag>-linux-x86_64.tar.gz`
-- `localpaste-<tag>-macos-aarch64.dmg`
-- `localpaste-<tag>-macos-aarch64.app.tar.gz`
-- `checksums.sha256`
+On macOS, `shasum -a 256 <file>` prints the sum to compare against the matching line; on Windows, use `Get-FileHash <file> -Algorithm SHA256`.
 
-Windows and Linux artifacts are always expected for successful release runs.
+## For Maintainers
 
-`release-gui.yml` packaging jobs verify produced assets before upload:
-
-- Windows: MSI presence + non-empty payload + administrative extraction contains `localpaste.exe`.
-- Linux: AppImage presence + non-empty payload + runtime metadata check via `--appimage-version`.
-- macOS: DMG integrity/format validation, plus signed-bundle verification inside mounted DMG when notarization secrets are present.
-
-## CI Integrity Controls
-
-Release/packaging workflows enforce these baseline controls:
-
-- Least privilege by default: workflow-level `permissions: contents: read`, with publish-only elevation to `contents: write`.
-- Immutable action pinning (`uses:` entries pinned to commit SHAs) for release-critical jobs.
-- Deterministic source checkout for packaging jobs via resolved `SOURCE_REF` (no selective tree overlay from a different ref).
-- Windows WiX toolchain pinning (`3.14.1`) plus major-version assertion in `release_gui_prepare.py`.
-
-## macOS Signing And Notarization
-
-Signing/notarization runs only when Apple secrets are present
-(`APPLE_SIGNING_*`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`).
-
-Behavior when secrets are missing:
-
-- `release_tag`: macOS artifacts are still built/published in permissive mode as unsigned/unnotarized.
-- `current_ref`: unsigned macOS packaging build is allowed for verification runs.
-
-Behavior when secrets are present:
-
-- `release_tag` and `current_ref`: workflow signs, notarizes, and staples macOS artifacts.
-
-## Release Notes Gatekeeper Note
-
-When a `.dmg` is present in published assets, the workflow appends this one-line macOS note to the release body (idempotent):
-
-`macOS note: this release may include unsigned/unnotarized LocalPaste macOS artifacts. If Gatekeeper blocks LocalPaste, use Open Anyway in System Settings > Privacy & Security or run \`xattr -cr /Applications/LocalPaste.app\`.`
+How the artifacts are built, verified, and published is described in [dev/release-pipeline.md](dev/release-pipeline.md).

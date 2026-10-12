@@ -3,7 +3,7 @@
 use super::LocalPasteApp;
 use eframe::egui::{
     self, style::WidgetVisuals, Color32, CornerRadius, FontData, FontDefinitions, FontFamily,
-    FontId, Margin, Stroke, TextStyle, Visuals,
+    FontId, Margin, RichText, Stroke, TextStyle, Visuals,
 };
 use tracing::warn;
 
@@ -33,6 +33,10 @@ pub(super) const COLOR_SELECTION_STROKE: Color32 = Color32::from_rgb(0x3B, 0x82,
 pub(super) const COLOR_SELECTION_FILL_RGBA: [u8; 4] = [0x3B, 0x82, 0xF6, 0x55];
 /// Border/stroke color for panels and widgets.
 pub(super) const COLOR_BORDER: Color32 = Color32::from_rgb(0x30, 0x36, 0x3d);
+/// Diff row tint for removed lines: red `#F85149` at 15% over `COLOR_BG_PRIMARY`.
+pub(super) const COLOR_DIFF_REMOVED_BG: Color32 = Color32::from_rgb(0x30, 0x1b, 0x1e);
+/// Diff row tint for added lines: green `#2EA043` at 15% over `COLOR_BG_PRIMARY`.
+pub(super) const COLOR_DIFF_ADDED_BG: Color32 = Color32::from_rgb(0x12, 0x26, 0x1e);
 /// Font family key for bundled 0xProto typeface.
 pub(super) const FONT_0XPROTO: &str = "0xProto";
 /// Custom font family key used by the editor text style.
@@ -53,7 +57,15 @@ fn selection_fill_color() -> Color32 {
     )
 }
 
-fn modal_chrome_style(base_style: &egui::Style) -> egui::Style {
+/// Copies `base_style` with the muted burnt-orange modal chrome in the `active` and
+/// `open` widget visuals, which egui uses for a floating window's title bar.
+///
+/// # Arguments
+/// - `base_style`: The app style to derive the chrome from.
+///
+/// # Returns
+/// The style that floating windows are shown with.
+pub(super) fn modal_chrome_style(base_style: &egui::Style) -> egui::Style {
     let mut style = base_style.clone();
     style.visuals.widgets.active = WidgetVisuals {
         bg_fill: COLOR_MODAL_CHROME,
@@ -70,21 +82,26 @@ fn modal_chrome_style(base_style: &egui::Style) -> egui::Style {
     style
 }
 
-/// Temporarily applies muted modal chrome so large window title bars do not
-/// overpower the rest of the dark palette.
-///
-/// # Arguments
-/// - `ctx`: Egui context whose style should be overridden for the duration of `render`.
-/// - `render`: Closure that renders a modal using the muted chrome style.
-///
-/// # Returns
-/// Returns whatever value `render` produces after restoring the original style.
-pub(super) fn with_muted_modal_chrome<R>(ctx: &egui::Context, render: impl FnOnce() -> R) -> R {
-    let original_style = (*ctx.style()).clone();
-    ctx.set_style(modal_chrome_style(&original_style));
-    let result = render();
-    ctx.set_style(original_style);
-    result
+/// Placeholder text for text inputs, rendered in the muted text token.
+pub(super) trait MutedHintExt {
+    /// Sets placeholder text that renders in [`COLOR_TEXT_MUTED`] rather than body text.
+    ///
+    /// # Arguments
+    /// - `text`: Placeholder shown while the input is empty.
+    ///
+    /// # Returns
+    /// The input with its placeholder configured.
+    fn muted_hint(self, text: impl Into<String>) -> Self;
+}
+
+impl MutedHintExt for egui::TextEdit<'_> {
+    // The theme's `override_text_color` is baked into plain-string hints, so a
+    // raw `hint_text` renders at body brightness. Weak rich text resolves to the
+    // theme's `weak_text_color` instead; this is the one sanctioned call site.
+    #[allow(clippy::disallowed_methods)]
+    fn muted_hint(self, text: impl Into<String>) -> Self {
+        self.hint_text(RichText::new(text).weak())
+    }
 }
 
 impl LocalPasteApp {
@@ -94,6 +111,9 @@ impl LocalPasteApp {
             return;
         }
 
+        // LocalPaste has one dark palette. Select its slot before installing the
+        // style so the first native system-theme update cannot replace it.
+        ctx.set_theme(egui::ThemePreference::Dark);
         let mut fonts = FontDefinitions::default();
         fonts.font_data.insert(
             FONT_0XPROTO.to_string(),
@@ -125,6 +145,8 @@ impl LocalPasteApp {
         let mut style = (*ctx.style()).clone();
         style.visuals = Visuals::dark();
         style.visuals.override_text_color = Some(COLOR_TEXT_PRIMARY);
+        // Placeholders and other weak text use the muted token; see `MutedHintExt`.
+        style.visuals.weak_text_color = Some(COLOR_TEXT_MUTED);
         style.visuals.window_fill = COLOR_BG_PRIMARY;
         style.visuals.panel_fill = COLOR_BG_SECONDARY;
         style.visuals.extreme_bg_color = COLOR_BG_PRIMARY;

@@ -33,6 +33,7 @@ pub(crate) enum VirtualInputCommand {
     InsertText(String),
     InsertNewline,
     InsertTab,
+    Unindent,
 
     // Clipboard + history
     SelectAll,
@@ -87,6 +88,14 @@ fn active_platform() -> PlatformFlavor {
     }
 
     PlatformFlavor::current()
+}
+
+/// Whether keyboard chords follow macOS conventions, honoring the test platform override.
+///
+/// # Returns
+/// `true` on macOS builds, or when a test forces the Mac flavor.
+pub(crate) fn uses_mac_shortcuts() -> bool {
+    active_platform() == PlatformFlavor::Mac
 }
 
 fn is_word_modifier(platform: PlatformFlavor, modifiers: egui::Modifiers) -> bool {
@@ -293,7 +302,11 @@ fn map_navigation_key(
 
         // --- Insertion ---
         egui::Key::Enter => Some(VirtualInputCommand::InsertNewline),
-        egui::Key::Tab => Some(VirtualInputCommand::InsertTab),
+        egui::Key::Tab => Some(if modifiers.shift {
+            VirtualInputCommand::Unindent
+        } else {
+            VirtualInputCommand::InsertTab
+        }),
 
         _ => None,
     }

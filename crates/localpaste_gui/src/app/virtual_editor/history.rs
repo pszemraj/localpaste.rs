@@ -29,6 +29,8 @@ struct EditRecord {
     intent: EditIntent,
     before_cursor: usize,
     after_cursor: usize,
+    before_anchor: Option<usize>,
+    after_anchor: Option<usize>,
     at: Instant,
 }
 
@@ -40,6 +42,8 @@ pub(crate) struct RecordedEdit {
     pub(crate) inserted: String,
     pub(crate) intent: EditIntent,
     pub(crate) before_cursor: usize,
+    /// Selection anchor before the edit, so undo reselects replaced text.
+    pub(crate) before_anchor: Option<usize>,
     pub(crate) after_cursor: usize,
     pub(crate) at: Instant,
 }
@@ -114,6 +118,8 @@ impl VirtualEditorHistory {
             intent: edit.intent,
             before_cursor: edit.before_cursor,
             after_cursor: edit.after_cursor,
+            before_anchor: edit.before_anchor,
+            after_anchor: None,
             at: edit.at,
         };
         if let Some(last) = self.undo.back_mut() {
@@ -131,6 +137,25 @@ impl VirtualEditorHistory {
         self.trim_undo();
     }
 
+    /// Attach directional selection endpoints to the last indivisible block edit.
+    ///
+    /// # Arguments
+    /// - `before`: Selection anchor before the edit.
+    /// - `after`: Selection anchor after the edit.
+    /// - `cursor`: Caret after the edit.
+    pub(crate) fn finish_selection_edit(
+        &mut self,
+        before: Option<usize>,
+        after: Option<usize>,
+        cursor: usize,
+    ) {
+        if let Some(edit) = self.undo.back_mut() {
+            edit.before_anchor = before;
+            edit.after_anchor = after;
+            edit.after_cursor = cursor;
+        }
+    }
+
     fn can_coalesce(previous: &EditRecord, next: &EditRecord, window: Duration) -> bool {
         if previous.intent != next.intent || next.at.saturating_duration_since(previous.at) > window
         {
@@ -138,7 +163,9 @@ impl VirtualEditorHistory {
         }
         match previous.intent {
             EditIntent::Insert => {
-                if !previous.deleted.is_empty() || !next.deleted.is_empty() {
+                // Typing extends text typed over a selection, so one undo
+                // restores that selection; a new replacement starts a step.
+                if !next.deleted.is_empty() {
                     return false;
                 }
                 next.start == previous.after_cursor
@@ -184,8 +211,15 @@ impl VirtualEditorHistory {
         }
     }
 
+    /// Evict the oldest undo records until history fits its bounds.
+    ///
+    /// The newest record is never evicted, so one edit larger than `max_bytes`,
+    /// such as indenting a whole multi-megabyte paste, stays undoable and the
+    /// byte bound becomes that single edit.
     fn trim_undo(&mut self) {
-        while self.undo.len() > self.max_ops || self.undo_bytes > self.max_bytes {
+        while self.undo.len() > 1
+            && (self.undo.len() > self.max_ops || self.undo_bytes > self.max_bytes)
+        {
             let Some(removed) = self.undo.pop_front() else {
                 break;
             };
@@ -212,7 +246,7 @@ impl VirtualEditorHistory {
         let inserted_chars = op.inserted.chars().count();
         let end = op.start.saturating_add(inserted_chars);
         let delta = buffer.replace_char_range(op.start..end, op.deleted.as_str());
-        state.set_cursor(op.before_cursor, buffer.len_chars());
+        state.restore_selection(op.before_cursor, op.before_anchor, buffer.len_chars());
         self.redo.push(op);
         delta
     }
@@ -238,7 +272,7 @@ impl VirtualEditorHistory {
         let deleted_chars = op.deleted.chars().count();
         let end = op.start.saturating_add(deleted_chars);
         let delta = buffer.replace_char_range(op.start..end, op.inserted.as_str());
-        state.set_cursor(op.after_cursor, buffer.len_chars());
+        state.restore_selection(op.after_cursor, op.after_anchor, buffer.len_chars());
         self.undo_bytes = self.undo_bytes.saturating_add(op_bytes(&op));
         self.undo.push_back(op);
         self.trim_undo();
@@ -296,6 +330,7 @@ mod tests {
                 inserted: String::new(),
                 intent,
                 before_cursor,
+                before_anchor: None,
                 after_cursor,
                 at: now + Duration::from_millis((index as u64) * 10),
             });
@@ -316,6 +351,7 @@ mod tests {
             inserted: "h".to_string(),
             intent: EditIntent::Insert,
             before_cursor: 0,
+            before_anchor: None,
             after_cursor: 1,
             at: now,
         });
@@ -325,6 +361,7 @@ mod tests {
             inserted: "i".to_string(),
             intent: EditIntent::Insert,
             before_cursor: 1,
+            before_anchor: None,
             after_cursor: 2,
             at: now + Duration::from_millis(10),
         });
@@ -344,6 +381,7 @@ mod tests {
             inserted: "XYZ".to_string(),
             intent: EditIntent::Other,
             before_cursor: 1,
+            before_anchor: None,
             after_cursor: 4,
             at: now,
         });
@@ -372,6 +410,7 @@ mod tests {
             inserted: "X".to_string(),
             intent: EditIntent::Other,
             before_cursor: 1,
+            before_anchor: None,
             after_cursor: 2,
             at: now,
         });
@@ -383,6 +422,7 @@ mod tests {
             inserted: "y".to_string(),
             intent: EditIntent::Insert,
             before_cursor: 1,
+            before_anchor: None,
             after_cursor: 2,
             at: now + Duration::from_millis(5),
         });
@@ -415,6 +455,7 @@ mod tests {
             inserted: String::new(),
             intent: EditIntent::DeleteBackward,
             before_cursor: 5,
+            before_anchor: None,
             after_cursor: 4,
             at: now,
         });
@@ -424,6 +465,7 @@ mod tests {
             inserted: String::new(),
             intent: EditIntent::DeleteBackward,
             before_cursor: 2,
+            before_anchor: None,
             after_cursor: 1,
             at: now + Duration::from_millis(10),
         });
@@ -448,6 +490,7 @@ mod tests {
                 inserted: inserted.to_string(),
                 intent: EditIntent::Other,
                 before_cursor: start,
+                before_anchor: None,
                 after_cursor: start + 1,
                 at: now + Duration::from_millis(index as u64),
             });
@@ -461,5 +504,46 @@ mod tests {
         }
         assert_eq!(buffer.to_string(), "A");
         assert!(history.undo(&mut buffer, &mut state).is_none());
+    }
+
+    #[test]
+    fn edit_larger_than_byte_cap_stays_undoable() {
+        // Indenting or replacing a whole multi-megabyte paste records one edit
+        // above the byte cap. It evicts older steps, but never itself.
+        let mut buffer = RopeBuffer::new("abc");
+        let mut state = VirtualEditorState::default();
+        let mut history = VirtualEditorHistory {
+            max_bytes: 8,
+            ..VirtualEditorHistory::default()
+        };
+        let now = Instant::now();
+        for (index, (range, inserted)) in [(3..3, "E"), (0..4, "    abcE")].into_iter().enumerate()
+        {
+            let deleted = buffer.slice_chars(range.clone());
+            let _ = buffer.replace_char_range(range.clone(), inserted);
+            history.record_edit(RecordedEdit {
+                start: range.start,
+                deleted,
+                inserted: inserted.to_string(),
+                intent: EditIntent::Other,
+                before_cursor: range.end,
+                before_anchor: (!range.is_empty()).then_some(range.start),
+                after_cursor: range.start + inserted.chars().count(),
+                at: now + Duration::from_millis(index as u64),
+            });
+        }
+        assert_eq!(history.undo_len(), 1);
+        assert_eq!(history.perf_stats().trim_evictions, 1);
+
+        // Redo pushes the oversized edit back through the same bound.
+        for _ in 0..2 {
+            assert!(history.undo(&mut buffer, &mut state).is_some());
+            assert_eq!(buffer.to_string(), "abcE");
+            assert_eq!((state.cursor(), state.anchor()), (4, Some(0)));
+            assert!(history.undo(&mut buffer, &mut state).is_none());
+            assert!(history.redo(&mut buffer, &mut state).is_some());
+            assert_eq!(buffer.to_string(), "    abcE");
+            assert_eq!(history.undo_len(), 1);
+        }
     }
 }

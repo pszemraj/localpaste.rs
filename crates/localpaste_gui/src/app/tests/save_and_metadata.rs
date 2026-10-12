@@ -131,7 +131,12 @@ fn save_events_during_active_search_force_fresh_backend_search() {
 
         harness.app.maybe_dispatch_search();
         match recv_cmd(&harness.cmd_rx) {
-            CoreCmd::SearchPastes { query, .. } => assert_eq!(query, "alpha"),
+            CoreCmd::SearchPastes {
+                collection: crate::backend::SidebarCollection::All,
+                scope: localpaste_core::models::paste::SearchScope::All,
+                query,
+                ..
+            } => assert_eq!(query, "alpha"),
             other => panic!("unexpected command: {:?}", other),
         }
     }
@@ -161,7 +166,7 @@ fn authoritative_paste_events_resort_sidebar_by_updated_at_matrix() {
         let mut beta = test_summary("beta", "Beta", None, 7);
         beta.updated_at = newer;
         harness.app.all_pastes = vec![beta.clone(), alpha.clone()];
-        harness.app.pastes = harness.app.all_pastes.clone();
+        harness.app.pastes = harness.app.all_pastes.clone().into();
         harness.app.selected_id = Some("alpha".to_string());
 
         let mut updated = Paste::new("updated body".to_string(), "Alpha".to_string());
@@ -214,7 +219,7 @@ fn metadata_save_ack_updates_visible_search_row_before_backend_redispatch() {
     let mut harness = make_app();
     harness.app.search_query = "alpha".to_string();
     harness.app.search_last_sent = "alpha".to_string();
-    harness.app.pastes = vec![test_summary("alpha", "Alpha", Some("rust"), 7)];
+    harness.app.pastes = vec![test_summary("alpha", "Alpha", Some("rust"), 7)].into();
     harness.app.all_pastes = harness.app.pastes.clone();
 
     let mut saved = Paste::new("updated body".to_string(), "Alpha-renamed".to_string());
@@ -489,7 +494,7 @@ fn select_paste_dirty_or_metadata_dirty_defers_switch_until_save_ack() {
             .app
             .all_pastes
             .push(test_summary("beta", "Beta", None, 4));
-        harness.app.pastes = harness.app.all_pastes.clone();
+        harness.app.pastes = harness.app.all_pastes.clone().into();
 
         match kind {
             DeferredKind::Content => {
@@ -541,7 +546,7 @@ fn select_paste_dirty_or_metadata_dirty_defers_switch_until_save_ack() {
         assert!(harness.app.pending_selection_id.is_none());
         assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
         match recv_cmd(&harness.cmd_rx) {
-            CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+            CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
             other => panic!("unexpected command: {:?}", other),
         }
     }
@@ -554,7 +559,7 @@ fn select_paste_while_content_save_in_flight_queues_pending_without_switching() 
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", None, 4));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness.app.save_status = SaveStatus::Saving;
     harness.app.save_in_flight = true;
 
@@ -568,7 +573,7 @@ fn select_paste_while_content_save_in_flight_queues_pending_without_switching() 
 }
 
 #[test]
-fn in_flight_selection_uses_latest_pending_target_and_clears_replaced_copy_intent() {
+fn in_flight_selection_uses_latest_pending_target() {
     let mut harness = make_app();
     harness
         .app
@@ -578,20 +583,13 @@ fn in_flight_selection_uses_latest_pending_target_and_clears_replaced_copy_inten
         .app
         .all_pastes
         .push(test_summary("gamma", "Gamma", None, 4));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness.app.save_status = SaveStatus::Saving;
     harness.app.save_in_flight = true;
-    harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("beta".to_string()));
-
     assert!(harness.app.select_paste("beta".to_string()));
     assert_eq!(harness.app.pending_selection_id.as_deref(), Some("beta"));
-    assert!(harness.app.pending_copy_action.is_some());
     assert!(harness.app.select_paste("gamma".to_string()));
     assert_eq!(harness.app.pending_selection_id.as_deref(), Some("gamma"));
-    assert!(
-        harness.app.pending_copy_action.is_none(),
-        "replacing pending target should clear copy intent bound to replaced id"
-    );
     assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
 
     let mut saved = Paste::new("content".to_string(), "Alpha".to_string());
@@ -603,7 +601,7 @@ fn in_flight_selection_uses_latest_pending_target_and_clears_replaced_copy_inten
     assert!(harness.app.pending_selection_id.is_none());
     assert_eq!(harness.app.selected_id.as_deref(), Some("gamma"));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "gamma"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "gamma"),
         other => panic!("unexpected command: {:?}", other),
     }
 }
@@ -670,7 +668,7 @@ fn paste_created_while_dirty_preserves_current_buffers_until_switch_completes() 
     assert!(harness.app.pending_selection_id.is_none());
     assert_eq!(harness.app.selected_id.as_deref(), Some("new-id"));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "new-id"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "new-id"),
         other => panic!("unexpected command: {:?}", other),
     }
 }
@@ -792,7 +790,7 @@ fn selection_switch_paths_keep_current_selection_when_new_lock_acquire_fails() {
             .app
             .all_pastes
             .push(test_summary("beta", "Beta", None, 12));
-        harness.app.pastes = harness.app.all_pastes.clone();
+        harness.app.pastes = harness.app.all_pastes.clone().into();
 
         if matches!(path, SwitchPath::SelectPaste) {
             harness
@@ -860,13 +858,14 @@ fn selection_switch_paths_keep_current_selection_when_new_lock_acquire_fails() {
 fn select_paste_rolls_back_pending_when_metadata_dispatch_fails_with_content_in_flight() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
     drop(cmd_rx);
 
     app.all_pastes.push(test_summary("beta", "Beta", None, 4));
-    app.pastes = app.all_pastes.clone();
+    app.pastes = app.all_pastes.clone().into();
     app.metadata_dirty = true;
     app.edit_name = "Alpha renamed".to_string();
     app.save_status = SaveStatus::Dirty;
@@ -893,7 +892,7 @@ fn save_error_clears_pending_selection_and_keeps_current_selection() {
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", None, 4));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     set_active_content(&mut harness.app, "edited");
     harness.app.save_status = SaveStatus::Dirty;
     harness.app.last_edit_at = Some(Instant::now());
@@ -939,6 +938,7 @@ fn save_dispatch_send_failure_restores_dirty_state_for_manual_and_autosave_paths
     for case in cases {
         let TestHarness {
             _dir: _guard,
+            _highlight_requests,
             mut app,
             cmd_rx,
         } = make_app();

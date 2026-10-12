@@ -1,12 +1,60 @@
 //! State/event flow tests for basic app selection, status, and toast behavior.
 
 use super::*;
+use localpaste_core::env::{env_lock, EnvGuard};
+
+#[test]
+fn nav_probe_clear_selection_waits_for_loaded_rows_and_runs_once() {
+    let _lock = env_lock().lock().expect("env lock");
+    let _setup = EnvGuard::set("LOCALPASTE_NAV_PROBE_CLEAR_SELECTION", "1");
+    let _disabled = EnvGuard::set("LOCALPASTE_NAV_PROBE_LOG", "");
+    assert!(nav_probe::NavProbe::from_env().is_none());
+
+    let log_dir = TempDir::new().expect("probe temp dir");
+    let log_path = log_dir.path().join("probe.ndjson");
+    let _enabled = EnvGuard::set("LOCALPASTE_NAV_PROBE_LOG", log_path.to_str().unwrap());
+    let mut harness = make_app();
+    harness.app.nav_probe = nav_probe::NavProbe::from_env();
+    assert!(harness.app.nav_probe.is_some());
+    let ctx = egui::Context::default();
+    let rows = std::mem::take(&mut harness.app.pastes);
+    harness.app.nav_probe_begin_frame(&ctx);
+    assert!(harness.app.selected_paste.is_some());
+    harness.app.pastes = rows;
+    let loaded = harness.app.selected_paste.take();
+    harness.app.nav_probe_begin_frame(&ctx);
+    assert!(harness.app.selected_id.is_some());
+    harness.app.selected_paste = loaded.clone();
+    harness.app.save_status = SaveStatus::Dirty;
+    harness.app.nav_probe_begin_frame(&ctx);
+    assert!(harness.app.selected_paste.is_some());
+    harness.app.save_status = SaveStatus::Saved;
+    harness
+        .app
+        .locks
+        .acquire("alpha", &harness.app.lock_owner_id)
+        .unwrap();
+
+    harness.app.nav_probe_begin_frame(&ctx);
+
+    assert!(harness.app.selected_id.is_none());
+    assert!(harness.app.selected_paste.is_none());
+    assert_eq!(harness.app.active_snapshot(), "");
+    assert_eq!(harness.app.pastes[0].id, "alpha");
+    assert!(!harness.app.locks.is_locked("alpha").unwrap());
+    harness.app.selected_id = Some("alpha".into());
+    harness.app.selected_paste = loaded;
+    harness.app.nav_probe_begin_frame(&ctx);
+    assert_eq!(harness.app.selected_id.as_deref(), Some("alpha"));
+    assert!(harness.app.selected_paste.is_some());
+}
 
 fn assert_delete_send_failure_keeps_lock_and_status(
     delete_action: impl FnOnce(&mut crate::app::LocalPasteApp),
 ) {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
@@ -33,6 +81,7 @@ fn paste_missing_updates_selection_and_list_matrix() {
 
     for case in [MissingCase::Selected, MissingCase::NonSelected] {
         let mut harness = make_app();
+        harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("copy-target".into()));
         match case {
             MissingCase::Selected => {
                 harness.app.apply_event(CoreEvent::PasteMissing {
@@ -61,6 +110,10 @@ fn paste_missing_updates_selection_and_list_matrix() {
                 assert!(harness.app.selected_paste.is_some());
             }
         }
+        assert!(matches!(
+            harness.app.pending_copy_action,
+            Some(PaletteCopyAction::Raw(ref id)) if id == "copy-target"
+        ));
     }
 }
 
@@ -73,6 +126,7 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
 
     for case in [LoadFailedCase::Selected, LoadFailedCase::Stale] {
         let mut harness = make_app();
+        harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("copy-target".into()));
         match case {
             LoadFailedCase::Selected => {
                 harness
@@ -80,9 +134,8 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                     .locks
                     .acquire("alpha", &harness.app.lock_owner_id)
                     .expect("acquire alpha lock");
-                harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
-
                 harness.app.apply_event(CoreEvent::PasteLoadFailed {
+                    selection_epoch: harness.app.active_buffer_epoch,
                     id: "alpha".to_string(),
                     message: "Get failed: injected".to_string(),
                 });
@@ -93,7 +146,6 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                 );
                 assert!(harness.app.selected_id.is_none());
                 assert!(harness.app.selected_paste.is_none());
-                assert!(harness.app.pending_copy_action.is_none());
                 assert_eq!(
                     harness
                         .app
@@ -112,9 +164,8 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                     .locks
                     .acquire("beta", &harness.app.lock_owner_id)
                     .expect("acquire beta lock");
-                harness.app.pending_copy_action = Some(PaletteCopyAction::Raw("alpha".to_string()));
-
                 harness.app.apply_event(CoreEvent::PasteLoadFailed {
+                    selection_epoch: harness.app.active_buffer_epoch,
                     id: "alpha".to_string(),
                     message: "Get failed: stale".to_string(),
                 });
@@ -124,17 +175,20 @@ fn paste_load_failed_updates_lock_and_selection_matrix() {
                     "stale load failure should not unlock current selection"
                 );
                 assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
-                assert!(harness.app.pending_copy_action.is_none());
                 assert_eq!(
                     harness
                         .app
                         .status
                         .as_ref()
                         .map(|status| status.text.as_str()),
-                    Some("Get failed: stale")
+                    None
                 );
             }
         }
+        assert!(matches!(
+            harness.app.pending_copy_action,
+            Some(PaletteCopyAction::Raw(ref id)) if id == "copy-target"
+        ));
     }
 }
 
@@ -195,6 +249,8 @@ fn runtime_shortcuts_drive_full_update_state_and_commands() {
     let mut palette = make_app();
     palette.app.command_palette_query = "stale".to_string();
     palette.app.command_palette_selected = 4;
+    palette.app.paste_picker_query = "needle".to_string();
+    palette.app.paste_picker_scope = SearchScope::Body;
     palette
         .app
         .palette_search_results
@@ -208,6 +264,8 @@ fn runtime_shortcuts_drive_full_update_state_and_commands() {
     assert!(palette.app.command_palette_query.is_empty());
     assert_eq!(palette.app.command_palette_selected, 0);
     assert!(palette.app.palette_search_results.is_empty());
+    assert_eq!(palette.app.paste_picker_query, "needle");
+    assert_eq!(palette.app.paste_picker_scope, SearchScope::Body);
 
     let mut legacy_palette = make_app();
     run_full_update_with_input(
@@ -362,6 +420,37 @@ fn history_modal_closes_on_escape() {
 }
 
 #[test]
+fn history_working_copy_caption_is_accurate_for_saved_and_dirty_pastes() {
+    for status in [SaveStatus::Saved, SaveStatus::Dirty] {
+        let mut harness = make_app();
+        harness.app.open_history_modal();
+        assert!(harness.app.version_ui.history_modal_open);
+        harness.app.save_status = status;
+        assert_eq!(harness.app.version_ui.history_selected_index, 0);
+
+        let ctx = eframe::egui::Context::default();
+        let _ = run_full_update_with_input(&mut harness.app, &ctx, Default::default());
+        let output = run_full_update_with_input(&mut harness.app, &ctx, Default::default());
+        let texts = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                eframe::egui::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            texts.contains(&"Current editor contents"),
+            "{status:?}: caption missing from {texts:?}"
+        );
+        assert!(
+            !texts.contains(&"Current unsaved editor view"),
+            "{status:?}: the working copy is not necessarily unsaved"
+        );
+    }
+}
+
+#[test]
 fn history_modal_headless_render_handles_long_inline_snapshot_band() {
     let mut harness = make_app();
     let long_snapshot = (0..180)
@@ -431,7 +520,9 @@ fn delete_actions_keep_lock_until_delete_event_matrix() {
 
         match action {
             DeleteAction::Selected => harness.app.delete_selected(),
-            DeleteAction::Palette => harness.app.send_palette_delete("alpha".to_string()),
+            DeleteAction::Palette => harness
+                .app
+                .send_palette_delete(&egui::Context::default(), "alpha".to_string()),
         }
         assert!(harness.app.locks.is_locked("alpha").expect("is_locked"));
 
@@ -529,7 +620,7 @@ fn paste_deleted_selects_visible_neighbor_matrix() {
             .iter()
             .map(|id| test_summary(id, &id.to_ascii_uppercase(), None, 1))
             .collect();
-        harness.app.pastes = harness.app.all_pastes.clone();
+        harness.app.pastes = harness.app.all_pastes.clone().into();
         harness.app.selected_id = Some("b".to_string());
 
         harness.app.apply_event(CoreEvent::PasteDeleted {
@@ -549,6 +640,7 @@ fn paste_deleted_selects_visible_neighbor_matrix() {
 fn create_new_paste_send_failure_shows_error_status() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
@@ -567,7 +659,7 @@ fn create_new_paste_send_failure_shows_error_status() {
 fn delete_send_failure_keeps_lock_and_shows_error_status_matrix() {
     assert_delete_send_failure_keeps_lock_and_status(|app| app.delete_selected());
     assert_delete_send_failure_keeps_lock_and_status(|app| {
-        app.send_palette_delete("alpha".to_string())
+        app.send_palette_delete(&egui::Context::default(), "alpha".to_string())
     });
 }
 
@@ -575,6 +667,7 @@ fn delete_send_failure_keeps_lock_and_shows_error_status_matrix() {
 fn palette_open_failure_keeps_palette_open() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
@@ -597,6 +690,7 @@ fn palette_open_failure_keeps_palette_open() {
 fn palette_copy_send_failure_when_selected_paste_missing_is_cleared() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
@@ -683,30 +777,83 @@ fn palette_copy_success_matrix_uses_expected_content_and_language() {
 }
 
 #[test]
-fn palette_copy_send_failure_after_reselect_clears_copy_pending_action() {
+fn palette_copy_send_failure_keeps_active_selection_and_lock() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
-    app.selected_id = None;
-    app.selected_paste = None;
-    app.pending_copy_action = None;
+    app.locks
+        .acquire("alpha", &app.lock_owner_id)
+        .expect("acquire active lock");
     drop(cmd_rx);
 
-    app.queue_palette_copy("alpha".to_string(), true);
+    app.queue_palette_copy("beta".to_string(), true);
 
     assert_eq!(
         app.status.as_ref().map(|status| status.text.as_str()),
-        Some("Get paste failed: backend unavailable.")
+        Some("Load paste for copy failed: backend unavailable.")
     );
     assert!(app.pending_copy_action.is_none());
     assert!(
-        !app.locks.is_locked("alpha").expect("is_locked"),
-        "failed reselect should not leak a stale lock"
+        app.locks.is_locked("alpha").expect("is_locked"),
+        "copy dispatch failure must not release the active lock"
     );
+    assert!(!app.locks.is_locked("beta").expect("is_locked"));
+    assert_eq!(app.selected_id.as_deref(), Some("alpha"));
+    assert_eq!(app.active_snapshot(), "content");
+    assert!(app.pending_selection_id.is_none());
+    assert!(app.picker_selection_pin.is_none());
+}
+
+#[test]
+fn regaining_window_focus_refreshes_the_list_after_a_debounce() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    let list_refreshes = |harness: &TestHarness| {
+        harness
+            .cmd_rx
+            .try_iter()
+            .filter(|cmd| matches!(cmd, CoreCmd::ListPastes { .. }))
+            .count()
+    };
+    // A refresh stamped ahead of the clock counts as just now for every frame
+    // below, however long building the harness or rendering a frame takes.
+    let just_refreshed = || Instant::now() + Duration::from_secs(3600);
+    harness.app.last_refresh_at = just_refreshed();
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    let _ = list_refreshes(&harness);
+
+    // A focus return right after a refresh is absorbed by the debounce.
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::WindowFocused(true)],
+    );
+    assert_eq!(list_refreshes(&harness), 0);
+
+    harness.app.last_refresh_at = Instant::now() - FOCUS_REFRESH_DEBOUNCE;
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::WindowFocused(false)],
+    );
+    assert_eq!(list_refreshes(&harness), 0, "losing focus does not refresh");
+
+    // The last focus event of a frame decides, so a flap that ends focused refreshes.
+    let flap = vec![
+        egui::Event::WindowFocused(false),
+        egui::Event::WindowFocused(true),
+    ];
+    let before_refresh = Instant::now();
+    run_full_update(&mut harness.app, &ctx, flap.clone());
+    assert_eq!(list_refreshes(&harness), 1);
     assert!(
-        app.selected_id.is_none(),
-        "failed reselect should clear stale selection state"
+        harness.app.last_refresh_at >= before_refresh,
+        "the refresh restarts the debounce"
     );
+    harness.app.last_refresh_at = just_refreshed();
+    run_full_update(&mut harness.app, &ctx, flap);
+    assert_eq!(list_refreshes(&harness), 0, "debounced");
 }

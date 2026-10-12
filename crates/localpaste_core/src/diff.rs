@@ -3,6 +3,7 @@
 use crate::{constants::MAX_DIFF_INPUT_BYTES, AppError};
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
+use std::time::Duration;
 
 /// Reference to a concrete paste snapshot (head or historical version).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -33,6 +34,19 @@ pub struct EqualResponse {
 
 const DIFF_CONTEXT_LINES: usize = 3;
 
+/// Wall-clock budget for computing one line diff.
+///
+/// Myers' algorithm costs `O((N + M) * D)`, so two large inputs with almost no
+/// lines in common (`D` close to `N + M`) can take minutes even under the
+/// input byte cap. The diff runs on the GUI backend worker thread, which also
+/// handles saves, and inside an API request that CLI clients abandon after 30
+/// seconds, so it must finish quickly. Ordinary edits (small `D`) diff in
+/// milliseconds and never approach this budget; one second leaves wide margin
+/// for them while keeping both callers responsive. When the budget runs out the
+/// remaining unmatched region is emitted as a plain delete plus insert, which is
+/// a correct but possibly non-minimal diff.
+const DIFF_TIME_BUDGET: Duration = Duration::from_secs(1);
+
 /// Reject oversized diff requests before diff generation work begins.
 ///
 /// # Arguments
@@ -61,6 +75,10 @@ pub fn ensure_diff_input_within_limit(
 
 /// Build a compact unified line diff.
 ///
+/// Computing the diff is bounded by a wall-clock budget of about one second.
+/// Inputs that are very large and very different may get a correct but
+/// non-minimal diff.
+///
 /// # Arguments
 /// - `left`: Left-hand content.
 /// - `right`: Right-hand content.
@@ -68,7 +86,9 @@ pub fn ensure_diff_input_within_limit(
 /// # Returns
 /// A vector of rendered diff lines prefixed with `+`, `-`, ` `, or `@@`.
 pub fn unified_diff_lines(left: &str, right: &str) -> Vec<String> {
-    let diff = TextDiff::from_lines(left, right);
+    let diff = TextDiff::configure()
+        .timeout(DIFF_TIME_BUDGET)
+        .diff_lines(left, right);
     let mut lines = Vec::new();
 
     for (group_index, group) in diff.grouped_ops(DIFF_CONTEXT_LINES).iter().enumerate() {
@@ -141,6 +161,32 @@ mod tests {
         assert!(
             lines.iter().any(|line| line == "@@"),
             "distant edits should be separated by a hunk marker"
+        );
+    }
+
+    #[test]
+    fn unified_diff_lines_stays_correct_for_large_fully_dissimilar_inputs() {
+        // An unbounded Myers diff of these inputs takes minutes in a debug build; the
+        // time budget makes it return a non-minimal-but-correct diff instead.
+        let left: Vec<String> = (1..=30_000).map(|n| format!("alpha line {n}\n")).collect();
+        let right: Vec<String> = (1..=30_000).map(|n| format!("beta row {n}\n")).collect();
+
+        let lines = unified_diff_lines(left.concat().as_str(), right.concat().as_str());
+
+        let removed: Vec<&str> = lines
+            .iter()
+            .filter_map(|line| line.strip_prefix('-'))
+            .collect();
+        let added: Vec<&str> = lines
+            .iter()
+            .filter_map(|line| line.strip_prefix('+'))
+            .collect();
+        assert_eq!(removed, left.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_eq!(added, right.iter().map(String::as_str).collect::<Vec<_>>());
+        assert_eq!(
+            lines.len(),
+            left.len() + right.len(),
+            "fully dissimilar inputs have no context or hunk-marker lines"
         );
     }
 

@@ -163,7 +163,7 @@ fn reset_to_version_reprojects_sidebar_filters_without_search_query() {
         test_summary("alpha", "Alpha", Some("rust"), 7),
         test_summary("beta", "Beta", Some("rust"), 5),
     ];
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness
         .app
         .set_active_language_filter(Some("rust".to_string()));
@@ -190,7 +190,7 @@ fn reset_to_version_reprojects_sidebar_filters_without_search_query() {
     );
     assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
         other => panic!("expected GetPaste command, got {:?}", other),
     }
 }
@@ -398,6 +398,7 @@ fn history_reset_rejects_preexisting_content_save_without_queue() {
 fn history_reset_flush_dispatch_failure_cancels_queue_with_status() {
     let TestHarness {
         _dir: _guard,
+        _highlight_requests,
         mut app,
         cmd_rx,
     } = make_app();
@@ -412,7 +413,7 @@ fn history_reset_flush_dispatch_failure_cancels_queue_with_status() {
     assert!(!app.history_reset_flush_active());
     assert_eq!(
         app.status.as_ref().map(|status| status.text.as_str()),
-        Some("Reset cancelled because current paste could not be saved.")
+        Some("Reset canceled because current paste could not be saved.")
     );
 }
 
@@ -444,7 +445,7 @@ fn queued_history_reset_cancels_when_selection_changes_before_flush_finishes() {
             .status
             .as_ref()
             .map(|status| status.text.as_str()),
-        Some("Reset cancelled because the selected paste changed.")
+        Some("Reset canceled because the selected paste changed.")
     );
     assert!(matches!(
         harness.cmd_rx.try_recv(),
@@ -486,7 +487,7 @@ fn history_reset_in_flight_blocks_selection_switches_until_matching_ack() {
         test_summary("alpha", "Alpha", None, 7),
         test_summary("beta", "Beta", None, 5),
     ];
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
     harness
         .app
         .locks
@@ -532,7 +533,7 @@ fn history_reset_in_flight_blocks_selection_switches_until_matching_ack() {
 
     assert!(harness.app.select_paste("beta".to_string()));
     match recv_cmd(&harness.cmd_rx) {
-        CoreCmd::GetPaste { id } => assert_eq!(id, "beta"),
+        CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
         other => panic!("expected GetPaste command, got {:?}", other),
     }
 }
@@ -544,7 +545,7 @@ fn history_reset_in_flight_preserves_selection_across_list_reprojection() {
         test_summary("alpha", "Alpha", None, 7),
         test_summary("beta", "Beta", None, 5),
     ];
-    harness.app.pastes = vec![test_summary("beta", "Beta", None, 5)];
+    harness.app.pastes = vec![test_summary("beta", "Beta", None, 5)].into();
     harness
         .app
         .locks
@@ -615,7 +616,9 @@ fn history_reset_in_flight_blocks_create_delete_and_paste_as_new_requests() {
         .app
         .create_new_paste_with_content("hello".to_string());
     harness.app.delete_selected();
-    harness.app.send_palette_delete("alpha".to_string());
+    harness
+        .app
+        .send_palette_delete(&egui::Context::default(), "alpha".to_string());
     harness.app.request_paste_as_new(&ctx);
 
     assert_eq!(harness.app.paste_as_new_pending_frames, 0);

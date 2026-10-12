@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::detection::detect_language;
+use crate::detection::auto_detect_language;
 use crate::semantic::DerivedMeta;
 
 /// Paste metadata stored in the database and returned by the API.
@@ -75,10 +75,35 @@ pub struct SearchQuery {
     pub case_sensitive: Option<bool>,
 }
 
+/// Fields inspected by an in-process search. HTTP and CLI searches keep their existing contract.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum SearchScope {
+    /// Match titles, metadata, and raw body content using the existing ranking.
+    #[default]
+    All,
+    /// Match only the user-visible title without loading bodies.
+    Title,
+    /// Match the stored metadata projection, including derived search terms.
+    Metadata,
+    /// Match only raw body content.
+    Body,
+}
+
 /// Search behavior flags shared by full-content and metadata-only search.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SearchOptions {
     pub case_sensitive: bool,
+}
+
+/// Field scope and caller-defined metadata filter for a scoped search.
+///
+/// The predicate runs before canonical bodies are loaded, scored, or included
+/// in the result limit.
+pub struct ScopedSearchFilter<'a> {
+    /// Fields eligible to match the query.
+    pub scope: SearchScope,
+    /// Additional metadata constraint applied before body reads and ranking.
+    pub predicate: &'a dyn Fn(&PasteMeta) -> bool,
 }
 
 /// Query parameters for listing pastes.
@@ -185,6 +210,9 @@ impl Paste {
 
     /// Create a new paste with inferred language and defaults.
     ///
+    /// Content too short for [`auto_detect_language`] starts unresolved in auto
+    /// mode, so a later content edit detects it.
+    ///
     /// # Arguments
     /// - `content`: Paste content.
     /// - `name`: Paste display name.
@@ -192,7 +220,7 @@ impl Paste {
     /// # Returns
     /// A new [`Paste`] instance.
     pub fn new(content: String, name: String) -> Self {
-        let language = detect_language(&content);
+        let language = auto_detect_language(&content);
         // When creation-time detection resolves a concrete language, persist it
         // as a locked choice to avoid repeated re-detect churn on subsequent edits.
         let language_is_manual = language.is_some();
@@ -226,28 +254,33 @@ pub fn normalize_language_filter(language: Option<&str>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn is_markdown_heading_line(line: &str) -> bool {
+/// Recognize an ATX Markdown heading with one to six leading hash marks.
+///
+/// # Returns
+/// Whether `line` begins with a valid ATX heading marker followed by a space.
+pub(crate) fn is_markdown_heading_line(line: &str) -> bool {
     let bytes = line.as_bytes();
-    let mut hash_count = 0usize;
-    while hash_count < bytes.len() && bytes[hash_count] == b'#' {
-        hash_count += 1;
-    }
+    let hash_count = bytes.iter().take_while(|byte| **byte == b'#').count();
     if hash_count == 0 || hash_count > 6 {
         return false;
     }
     bytes.get(hash_count) == Some(&b' ')
 }
 
-fn is_markdown_ordered_list_line(line: &str) -> bool {
+/// Recognize a decimal Markdown list marker followed by a space.
+///
+/// # Returns
+/// Whether a line begins with an ordered list item using `.` or `)`.
+pub(crate) fn is_markdown_ordered_list_line(line: &str) -> bool {
     let bytes = line.as_bytes();
-    let mut digits = 0usize;
-    while digits < bytes.len() && bytes[digits].is_ascii_digit() {
-        digits += 1;
-    }
+    let digits = bytes
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
     if digits == 0 {
         return false;
     }
-    bytes.get(digits) == Some(&b'.') && bytes.get(digits + 1) == Some(&b' ')
+    matches!(bytes.get(digits), Some(b'.' | b')')) && bytes.get(digits + 1) == Some(&b' ')
 }
 
 fn is_markdown_list_line(line: &str) -> bool {

@@ -765,6 +765,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use localpaste_core::env::{env_lock, EnvGuard};
     use tempfile::TempDir;
 
     #[test]
@@ -797,6 +798,8 @@ mod tests {
 
     #[test]
     fn validate_args_requires_explicit_database_intent() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _db_path = EnvGuard::remove("DB_PATH");
         let args = Args::try_parse_from(["generate-test-data", "--count", "1"])
             .expect("arg parse should succeed");
         let err = resolve_db_path_with_explicit_or_env(args.db_path.clone(), args.allow_default_db)
@@ -807,6 +810,8 @@ mod tests {
 
     #[test]
     fn validate_args_accepts_explicit_db_path_and_default_opt_in() {
+        let _lock = env_lock().lock().expect("env lock");
+        let _db_path = EnvGuard::remove("DB_PATH");
         let explicit = Args::try_parse_from([
             "generate-test-data",
             "--db-path",

@@ -371,7 +371,6 @@ activate_window() {
     local window_id="$1"
     xdotool windowraise "$window_id" >/dev/null 2>&1 || true
     xdotool windowactivate --sync "$window_id" >/dev/null 2>&1 || true
-    xdotool windowfocus --sync "$window_id" >/dev/null 2>&1 || true
 }
 
 wait_active_window() {

@@ -1,6 +1,7 @@
 //! Detached diff modal rendering.
 
 use super::super::*;
+use super::{ModalWindowExt as _, ViewportFitExt as _};
 use crate::app::text_coords::prefix_by_chars;
 use eframe::egui::{self, RichText};
 use localpaste_core::diff::DiffResponse;
@@ -11,7 +12,6 @@ use std::sync::Arc;
 pub(crate) const MAX_INLINE_DIFF_BYTES: usize = MAX_DIFF_INPUT_BYTES;
 /// Maximum diff row count cached/rendered inline before preview is summarized.
 pub(crate) const MAX_INLINE_DIFF_LINES: usize = 20_000;
-const DIFF_MODAL_HEIGHT: f32 = 360.0;
 
 /// Cached inline diff preview state for the detached diff modal.
 ///
@@ -72,22 +72,31 @@ impl LocalPasteApp {
         };
 
         let mut keep_open = true;
+        let close_on_escape =
+            ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let mut pending_target: Option<String> = None;
         let _recomputed_diff_preview = self.sync_diff_preview_cache();
 
         egui::Window::new("Diff")
             .open(&mut keep_open)
-            .default_width(1180.0)
-            .default_height(760.0)
-            .show(ctx, |ui| {
+            .fit_to_viewport(ctx, egui::vec2(1180.0, 760.0))
+            .show_modal(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Compare current paste against:");
-                    ui.add(
+                    let focus_requested = self.version_ui.diff_query_focus_requested
+                        && super::focus_visible_query(ui, egui::Id::new(DIFF_QUERY_INPUT_ID));
+                    let response = ui.add(
                         egui::TextEdit::singleline(&mut self.version_ui.diff_query)
                             .id(egui::Id::new(DIFF_QUERY_INPUT_ID))
-                            .desired_width(280.0)
-                            .hint_text("name, id, tag, language"),
+                            .desired_width(f32::INFINITY)
+                            .muted_hint("name, id, tag, language"),
                     );
+                    if focus_requested {
+                        // A reopened window is visible on the toolbar click's release,
+                        // and egui surrenders the pre-requested focus to that click.
+                        response.request_focus();
+                        self.version_ui.diff_query_focus_requested = false;
+                    }
                 });
                 ui.add_space(8.0);
 
@@ -99,18 +108,19 @@ impl LocalPasteApp {
                     left.label(RichText::new("Candidates").small().color(COLOR_TEXT_MUTED));
                     left.add_space(4.0);
 
+                    // The candidate list fills the window's remaining height, so the
+                    // window keeps its given size whether or not a comparison is shown.
                     egui::ScrollArea::vertical()
-                        .max_height(640.0)
+                        .id_salt("diff_candidates")
+                        .auto_shrink([false, false])
                         .show(left, |ui| {
                             for item in self.diff_candidates() {
                                 let selected_row = self.version_ui.diff_target_id.as_deref()
                                     == Some(item.id.as_str());
-                                let label = format!(
-                                    "{}  [{}]",
-                                    item.name,
-                                    item.language.as_deref().unwrap_or("text")
-                                );
-                                if ui.selectable_label(selected_row, label).clicked() {
+                                let language = paste_list_language_label(&item);
+                                if super::list_row(ui, selected_row, &item.name, &language)
+                                    .clicked()
+                                {
                                     pending_target = Some(item.id.clone());
                                 }
                             }
@@ -167,8 +177,9 @@ impl LocalPasteApp {
                                         .color(egui::Color32::YELLOW),
                                     );
                                     right.label(format!(
-                                        "left={} bytes, right={} bytes",
-                                        lhs_bytes, rhs_bytes
+                                        "left={}, right={}",
+                                        count_label(*lhs_bytes, "byte", "bytes"),
+                                        count_label(*rhs_bytes, "byte", "bytes")
                                     ));
                                 }
                                 Some(InlineDiffPreview::NoChanges) => {
@@ -193,21 +204,48 @@ impl LocalPasteApp {
                                     let row_height =
                                         right.text_style_height(&egui::TextStyle::Monospace).max(1.0);
                                     egui::ScrollArea::vertical()
-                                        .max_height(DIFF_MODAL_HEIGHT)
+                                        .id_salt("diff_preview")
                                         .auto_shrink([false, false])
                                         .show_rows(right, row_height, diff_lines.len(), |ui, range| {
                                             ui.set_min_width(ui.available_width());
+                                            let gap = ui.spacing().item_spacing.y;
                                             for idx in range {
                                                 let line = &diff_lines[idx];
-                                                let color = match line.as_bytes().first().copied() {
-                                                    Some(b'-') => egui::Color32::LIGHT_RED,
-                                                    Some(b'+') => egui::Color32::LIGHT_GREEN,
-                                                    _ => COLOR_TEXT_SECONDARY,
-                                                };
+                                                let (color, tint) =
+                                                    match line.as_bytes().first().copied() {
+                                                        Some(b'-') => (
+                                                            egui::Color32::LIGHT_RED,
+                                                            Some(COLOR_DIFF_REMOVED_BG),
+                                                        ),
+                                                        Some(b'+') => (
+                                                            egui::Color32::LIGHT_GREEN,
+                                                            Some(COLOR_DIFF_ADDED_BG),
+                                                        ),
+                                                        _ => (COLOR_TEXT_SECONDARY, None),
+                                                    };
+                                                let (row, _) = ui.allocate_exact_size(
+                                                    egui::vec2(ui.available_width(), row_height),
+                                                    egui::Sense::hover(),
+                                                );
+                                                if let Some(tint) = tint {
+                                                    // Cover the row gap too, so adjacent changes form one band.
+                                                    ui.painter().rect_filled(
+                                                        row.expand2(egui::vec2(0.0, gap / 2.0)),
+                                                        0.0,
+                                                        tint,
+                                                    );
+                                                }
                                                 let render_line =
                                                     prefix_by_chars(line, MAX_RENDER_CHARS_PER_LINE);
-                                                ui.add_sized(
-                                                    [ui.available_width(), row_height],
+                                                // A left-to-right child keeps indentation; `put` would center.
+                                                ui.new_child(
+                                                    egui::UiBuilder::new().max_rect(row).layout(
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
+                                                    ),
+                                                )
+                                                .add(
                                                     egui::Label::new(
                                                         RichText::new(render_line)
                                                             .monospace()
@@ -227,7 +265,7 @@ impl LocalPasteApp {
         if let Some(target_id) = pending_target {
             self.request_diff_target(target_id);
         }
-        if !keep_open {
+        if close_on_escape || !keep_open {
             self.close_diff_modal();
         }
     }

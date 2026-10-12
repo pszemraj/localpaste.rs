@@ -59,6 +59,12 @@ pub(crate) fn prewarm() {
 /// Detected non-generic text label when inference succeeds, otherwise `None`.
 pub(crate) fn detect(content: &str) -> Option<String> {
     let session = session()?;
+    // Normalize inference input before locking; copying a large CRLF paste must
+    // not hold the shared session. Canonical content keeps its original bytes.
+    let normalized = content
+        .contains("\r\n")
+        .then(|| content.replace("\r\n", "\n"));
+    let content = normalized.as_deref().unwrap_or(content);
     let mut guard = match session.lock() {
         Ok(guard) => guard,
         Err(poisoned) => {
@@ -101,7 +107,7 @@ pub(crate) fn detect(content: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::magika_force_cpu;
+    use super::{detect, magika_force_cpu};
     use crate::env::{env_lock, EnvGuard};
 
     #[test]
@@ -117,6 +123,18 @@ mod tests {
         for value in ["0", "false", "no", "off"] {
             let _set = EnvGuard::set("MAGIKA_FORCE_CPU", value);
             assert!(!magika_force_cpu(), "value: {value}");
+        }
+    }
+
+    #[test]
+    fn raw_inference_matches_for_lf_and_crlf() {
+        let makefile = "# Build the project\nSRCS = a.c \\\n       b.c\nall: $(SRCS)\n\t$(CC) $(SRCS) -o app\n";
+        assert_eq!(detect(makefile).as_deref(), Some("makefile"));
+        for content in [
+            "# Meeting agenda\nTopics:\n\tReview project status\n",
+            makefile,
+        ] {
+            assert_eq!(detect(&content.replace('\n', "\r\n")), detect(content));
         }
     }
 }

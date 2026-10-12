@@ -9,7 +9,7 @@ use axum::{
     response::Response,
     Json,
 };
-use localpaste_core::detection::detect_language;
+use localpaste_core::detection::auto_detect_language;
 use localpaste_core::diff::{DiffRequest, DiffResponse, EqualResponse};
 use localpaste_core::folder_ops::map_missing_folder_for_optional_request;
 use localpaste_core::text::normalize_optional_nonempty;
@@ -67,7 +67,8 @@ fn with_folder_metadata_response(response: Response, include_meta_shape_header: 
 ///   start unresolved auto mode (`language = None`), deferring detection until a
 ///   later content edit.
 /// - omitted `language_is_manual` follows default create behavior: detect now
-///   and lock when detection resolves a concrete language.
+///   and lock when detection resolves a concrete language. Content below the
+///   auto-detection minimum stays unresolved until a later content edit.
 fn build_paste_for_create(
     content: String,
     name: String,
@@ -79,7 +80,7 @@ fn build_paste_for_create(
         name,
         language,
         language_is_manual,
-        detect_language,
+        auto_detect_language,
     )
 }
 

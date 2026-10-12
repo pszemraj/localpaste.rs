@@ -133,6 +133,9 @@ pub const MANUAL_LANGUAGE_OPTIONS: &[ManualLanguageOption] = &[
 
 /// Convert aliases/legacy names to canonical labels.
 ///
+/// JSONL deliberately stays distinct from JSON for export and language filters.
+/// Sharing a highlighter does not make their stored formats interchangeable.
+///
 /// # Returns
 /// Canonical, lowercase label (or empty string for empty/whitespace input).
 pub fn canonicalize(language: &str) -> String {
@@ -143,10 +146,11 @@ pub fn canonicalize(language: &str) -> String {
         "bash" | "sh" | "zsh" => "shell".to_string(),
         "pwsh" | "ps1" => "powershell".to_string(),
         "yml" => "yaml".to_string(),
-        "jsonl" => "json".to_string(),
         "js" => "javascript".to_string(),
         "ts" => "typescript".to_string(),
         "md" => "markdown".to_string(),
+        "tex" => "latex".to_string(),
+        "restructuredtext" | "restructured text" => "rst".to_string(),
         "plaintext" | "plain text" | "plain" | "txt" => "text".to_string(),
         "py" => "python".to_string(),
         "rs" => "rust".to_string(),

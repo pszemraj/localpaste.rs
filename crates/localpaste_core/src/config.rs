@@ -12,6 +12,9 @@ use crate::constants::{
     MAX_PASTE_VERSION_RETENTION_LIMIT,
 };
 
+mod default_store;
+pub use default_store::is_default_db_path;
+
 /// Runtime configuration for LocalPaste.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {

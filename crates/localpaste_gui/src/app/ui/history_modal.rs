@@ -1,14 +1,14 @@
 //! Detached version-history modal rendering.
 
 use super::super::*;
+use super::{ModalWindowExt as _, ViewportFitExt as _};
 use crate::app::editor::EditorLineIndex;
 use crate::app::text_coords::prefix_by_chars;
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Local, TimeZone, Utc};
 use eframe::egui::{self, RichText};
 use localpaste_core::models::paste::VersionMeta;
 
 const MAX_INLINE_HISTORY_TEXTEDIT_BYTES: usize = 256 * 1024;
-const HISTORY_PREVIEW_MAX_HEIGHT: f32 = 560.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HistoryPreviewRenderMode {
@@ -36,9 +36,10 @@ fn format_history_size(len: usize) -> String {
     }
 }
 
-fn format_history_relative_time(now: DateTime<Utc>, created_at: DateTime<Utc>) -> String {
+/// Relative age such as `3 min ago`, or `None` once a version is a week old.
+fn history_relative_age(now: DateTime<Utc>, created_at: DateTime<Utc>) -> Option<String> {
     let elapsed_secs = now.signed_duration_since(created_at).num_seconds().max(0);
-    if elapsed_secs < 60 {
+    Some(if elapsed_secs < 60 {
         "just now".to_string()
     } else if elapsed_secs < 60 * 60 {
         format!("{} min ago", elapsed_secs / 60)
@@ -47,10 +48,48 @@ fn format_history_relative_time(now: DateTime<Utc>, created_at: DateTime<Utc>) -
     } else if elapsed_secs < 7 * 24 * 60 * 60 {
         format!("{} d ago", elapsed_secs / (24 * 60 * 60))
     } else {
+        return None;
+    })
+}
+
+fn format_history_relative_time(now: DateTime<Utc>, created_at: DateTime<Utc>) -> String {
+    history_relative_age(now, created_at).unwrap_or_else(|| {
         created_at
             .with_timezone(&Local)
             .format("%Y-%m-%d")
             .to_string()
+    })
+}
+
+/// Formats a save time in `timezone` for reading, such as `Oct 10, 2026, 6:12 PM`.
+fn format_history_timestamp<Tz>(created_at: DateTime<Utc>, timezone: &Tz) -> String
+where
+    Tz: TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
+    created_at
+        .with_timezone(timezone)
+        .format("%b %-d, %Y, %-I:%M %p")
+        .to_string()
+}
+
+/// Captions a stored snapshot with its age, matching its version row, its save time, and its size.
+///
+/// The age is left out once the version is a week old, where its row shows a date instead.
+fn format_history_snapshot_caption<Tz>(
+    now: DateTime<Utc>,
+    meta: &VersionMeta,
+    timezone: &Tz,
+) -> String
+where
+    Tz: TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
+    let saved_at = format_history_timestamp(meta.created_at, timezone);
+    let size = format_history_size(meta.len);
+    match history_relative_age(now, meta.created_at) {
+        Some(age) => format!("Saved {age} · {saved_at} · {size}"),
+        None => format!("Saved {saved_at} · {size}"),
     }
 }
 
@@ -60,7 +99,7 @@ fn format_history_row_label(now: DateTime<Utc>, meta: &VersionMeta) -> String {
     let language = display_language_label(
         meta.language.as_deref(),
         meta.language_is_manual,
-        meta.len > HIGHLIGHT_PLAIN_THRESHOLD,
+        meta.len >= HIGHLIGHT_PLAIN_THRESHOLD,
     );
     format!("{relative} | {size} | {language}")
 }
@@ -139,39 +178,46 @@ fn render_large_history_preview(ui: &mut egui::Ui, text: &str, lines: &EditorLin
     ui.add_space(6.0);
 
     egui::ScrollArea::vertical()
-        .max_height(HISTORY_PREVIEW_MAX_HEIGHT)
+        .id_salt("history_snapshot_preview")
         .auto_shrink([false, false])
         .show_rows(ui, row_height, line_count, |ui, range| {
             ui.set_min_width(ui.available_width());
             for line_idx in range {
                 let line = lines.line_without_newline(text, line_idx);
                 let render_line = prefix_by_chars(line, MAX_RENDER_CHARS_PER_LINE);
-                ui.horizontal(|ui| {
-                    ui.add_sized(
-                        [((line_digits + 2) as f32) * row_height * 0.7, row_height],
-                        egui::Label::new(
-                            RichText::new(format!(
-                                "{:>width$}",
-                                line_idx.saturating_add(1),
-                                width = line_digits
-                            ))
-                            .monospace()
-                            .color(COLOR_TEXT_MUTED),
-                        )
-                        .truncate(),
-                    );
-                    ui.add_sized(
-                        [ui.available_width(), row_height],
-                        egui::Label::new(RichText::new(render_line).monospace()).truncate(),
-                    );
-                });
+                // Each row takes exactly `row_height`, the pitch `show_rows` scrolls by,
+                // so the last lines stay reachable.
+                let (row_rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), row_height),
+                    egui::Sense::hover(),
+                );
+                let mut row = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(row_rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                row.add_sized(
+                    [((line_digits + 2) as f32) * row_height * 0.7, row_height],
+                    egui::Label::new(
+                        RichText::new(format!(
+                            "{:>width$}",
+                            line_idx.saturating_add(1),
+                            width = line_digits
+                        ))
+                        .monospace()
+                        .color(COLOR_TEXT_MUTED),
+                    )
+                    .truncate(),
+                );
+                // `add_sized` would center each line and lose its indentation.
+                row.add(egui::Label::new(RichText::new(render_line).monospace()).truncate());
             }
         });
 }
 
 fn render_inline_history_preview(ui: &mut egui::Ui, text: &mut String) {
     egui::ScrollArea::vertical()
-        .max_height(HISTORY_PREVIEW_MAX_HEIGHT)
+        .id_salt("history_snapshot_preview")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.add(
@@ -242,182 +288,178 @@ impl LocalPasteApp {
             let _recomputed_history_preview = self.sync_history_preview_cache();
         }
 
-        with_muted_modal_chrome(ctx, || {
-            egui::Window::new("History")
-                .open(&mut keep_open)
-                .default_width(1080.0)
-                .default_height(760.0)
-                .show(ctx, |ui| {
-                    let reset_transition_active = self.reset_transition_active();
-                    let can_go_newer = self.version_ui.history_selected_index > 0;
-                    let can_go_older = self.version_ui.history_selected_index
-                        < self.version_ui.history_versions.len();
+        egui::Window::new("History")
+            .open(&mut keep_open)
+            .fit_to_viewport(ctx, egui::vec2(1080.0, 760.0))
+            .show_modal(ctx, |ui| {
+                let reset_transition_active = self.reset_transition_active();
+                let can_go_newer = self.version_ui.history_selected_index > 0;
+                let can_go_older =
+                    self.version_ui.history_selected_index < self.version_ui.history_versions.len();
 
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add_enabled(can_go_newer, egui::Button::new("← Newer"))
-                            .clicked()
-                        {
-                            pending_selected_index =
-                                Some(self.version_ui.history_selected_index.saturating_sub(1));
-                        }
-                        if ui
-                            .add_enabled(can_go_older, egui::Button::new("Older →"))
-                            .clicked()
-                        {
-                            pending_selected_index =
-                                Some(self.version_ui.history_selected_index.saturating_add(1));
-                        }
-                        ui.separator();
-                        if ui.small_button("Refresh").clicked() {
-                            pending_refresh = true;
-                        }
-                        let total = self.version_ui.history_versions.len();
-                        ui.label(
-                            RichText::new(format!("{total} stored snapshots"))
-                                .small()
-                                .color(COLOR_TEXT_MUTED),
-                        );
-                    });
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(can_go_newer, egui::Button::new("⏴ Newer"))
+                        .clicked()
+                    {
+                        pending_selected_index =
+                            Some(self.version_ui.history_selected_index.saturating_sub(1));
+                    }
+                    if ui
+                        .add_enabled(can_go_older, egui::Button::new("Older ⏵"))
+                        .clicked()
+                    {
+                        pending_selected_index =
+                            Some(self.version_ui.history_selected_index.saturating_add(1));
+                    }
+                    ui.separator();
+                    if ui.small_button("Refresh").clicked() {
+                        pending_refresh = true;
+                    }
+                    let total = self.version_ui.history_versions.len();
+                    ui.label(
+                        RichText::new(count_label(total, "stored snapshot", "stored snapshots"))
+                            .small()
+                            .color(COLOR_TEXT_MUTED),
+                    );
+                });
 
-                    ui.add_space(8.0);
-                    ui.columns(2, |columns| {
-                        let (left_columns, right_columns) = columns.split_at_mut(1);
-                        let left = &mut left_columns[0];
-                        let right = &mut right_columns[0];
+                ui.add_space(8.0);
+                ui.columns(2, |columns| {
+                    let (left_columns, right_columns) = columns.split_at_mut(1);
+                    let left = &mut left_columns[0];
+                    let right = &mut right_columns[0];
 
-                        left.label(RichText::new("Versions").small().color(COLOR_TEXT_MUTED));
-                        left.add_space(4.0);
-                        egui::ScrollArea::vertical()
-                            .max_height(620.0)
-                            .show(left, |ui| {
-                                let current_selected = self.version_ui.history_selected_index == 0;
-                                if ui
-                                    .selectable_label(current_selected, "Current working copy")
-                                    .clicked()
-                                {
-                                    pending_selected_index = Some(0);
-                                }
-                                ui.separator();
-                                for (idx, meta) in
-                                    self.version_ui.history_versions.iter().enumerate()
-                                {
-                                    let row_index = idx.saturating_add(1);
-                                    let selected_row =
-                                        self.version_ui.history_selected_index == row_index;
-                                    let label = format_history_row_label(history_label_now, meta);
-                                    let response = ui
-                                        .selectable_label(selected_row, label)
-                                        .on_hover_text(meta.created_at.to_rfc3339());
-                                    if response.clicked() {
-                                        pending_selected_index = Some(row_index);
-                                    }
-                                }
-                            });
-
-                        right.label(RichText::new("Snapshot").small().color(COLOR_TEXT_MUTED));
-                        right.add_space(4.0);
-                        let viewing_historical = self.version_ui.history_selected_index > 0;
-                        if viewing_historical {
-                            if let Some(meta) = self.selected_history_meta() {
-                                right.label(
-                                    RichText::new(format!(
-                                        "Version {} at {}",
-                                        meta.version_id_ms,
-                                        meta.created_at.to_rfc3339()
-                                    ))
-                                    .small()
-                                    .color(COLOR_TEXT_SECONDARY),
-                                );
-                            }
-                        } else {
-                            right.label(
-                                RichText::new("Current unsaved editor view")
-                                    .small()
-                                    .color(COLOR_TEXT_SECONDARY),
-                            );
-                        }
-                        right.add_space(6.0);
-
-                        right.horizontal_wrapped(|ui| {
-                            let can_act_on_snapshot = self.version_ui.history_selected_index > 0
-                                && self.version_ui.history_snapshot.is_some();
-                            let action_state = history_snapshot_action_state(
-                                can_act_on_snapshot,
-                                reset_transition_active,
-                                self.can_queue_history_reset(),
-                                self.history_reset_flush_needed(),
-                                self.history_reset_queue_block_reason(),
-                            );
-                            if ui
-                                .add_enabled(
-                                    action_state.can_duplicate,
-                                    egui::Button::new("Duplicate as New Paste"),
-                                )
+                    left.label(RichText::new("Versions").small().color(COLOR_TEXT_MUTED));
+                    left.add_space(4.0);
+                    // The version list fills the window's remaining height, so the window
+                    // keeps its given size while versions and snapshots load.
+                    egui::ScrollArea::vertical()
+                        .id_salt("history_versions_list")
+                        .auto_shrink([false, false])
+                        .show(left, |ui| {
+                            let current_selected = self.version_ui.history_selected_index == 0;
+                            if super::list_row(ui, current_selected, "Current working copy", "")
                                 .clicked()
                             {
-                                pending_duplicate = true;
+                                pending_selected_index = Some(0);
                             }
-                            if ui
-                                .add_enabled(
-                                    action_state.can_open_reset_confirm,
-                                    egui::Button::new(action_state.reset_label),
-                                )
-                                .clicked()
-                            {
-                                pending_open_reset_confirm = true;
-                            }
-                            if let Some(helper) = action_state.helper {
-                                let helper_text = match helper {
-                                    HistoryActionHelper::ResetInProgress => {
-                                        "Reset in progress; current paste is temporarily read-only."
-                                    }
-                                    HistoryActionHelper::SaveBeforeReset => {
-                                        "Local changes will be saved before reset."
-                                    }
-                                    HistoryActionHelper::Blocked(reason) => reason,
-                                };
-                                ui.label(
-                                    RichText::new(helper_text).small().color(COLOR_TEXT_MUTED),
-                                );
+                            ui.separator();
+                            for (idx, meta) in self.version_ui.history_versions.iter().enumerate() {
+                                let row_index = idx.saturating_add(1);
+                                let selected_row =
+                                    self.version_ui.history_selected_index == row_index;
+                                let label = format_history_row_label(history_label_now, meta);
+                                let response =
+                                    super::list_row(ui, selected_row, &label, "").on_hover_text(
+                                        format_history_timestamp(meta.created_at, &Local),
+                                    );
+                                if response.clicked() {
+                                    pending_selected_index = Some(row_index);
+                                }
                             }
                         });
-                        right.add_space(8.0);
 
-                        if self.version_ui.history_selected_index > 0
-                            && self.version_ui.history_snapshot.is_none()
-                        {
-                            if self.version_ui.history_loading_snapshot_id.is_some() {
-                                right.label(
-                                    RichText::new("Loading snapshot...")
-                                        .small()
-                                        .color(COLOR_TEXT_MUTED),
-                                );
-                            } else {
-                                right.label(
-                                    RichText::new("Select a stored snapshot.")
-                                        .small()
-                                        .color(COLOR_TEXT_MUTED),
-                                );
-                            }
+                    right.label(RichText::new("Snapshot").small().color(COLOR_TEXT_MUTED));
+                    right.add_space(4.0);
+                    let viewing_historical = self.version_ui.history_selected_index > 0;
+                    if viewing_historical {
+                        if let Some(meta) = self.selected_history_meta() {
+                            right.label(
+                                RichText::new(format_history_snapshot_caption(
+                                    history_label_now,
+                                    meta,
+                                    &Local,
+                                ))
+                                .small()
+                                .color(COLOR_TEXT_SECONDARY),
+                            );
                         }
+                    } else {
+                        right.label(
+                            RichText::new("Current editor contents")
+                                .small()
+                                .color(COLOR_TEXT_SECONDARY),
+                        );
+                    }
+                    right.add_space(6.0);
 
-                        if self.version_ui.history_selected_index == 0 {
-                            render_history_preview(
-                                right,
-                                &mut self.version_ui.active_snapshot_cache_text,
-                                &self.version_ui.active_snapshot_preview_lines,
-                            );
-                        } else {
-                            render_history_preview(
-                                right,
-                                &mut self.version_ui.history_preview_text,
-                                &self.version_ui.history_preview_lines,
-                            );
+                    right.horizontal_wrapped(|ui| {
+                        let can_act_on_snapshot = self.version_ui.history_selected_index > 0
+                            && self.version_ui.history_snapshot.is_some();
+                        let action_state = history_snapshot_action_state(
+                            can_act_on_snapshot,
+                            reset_transition_active,
+                            self.can_queue_history_reset(),
+                            self.history_reset_flush_needed(),
+                            self.history_reset_queue_block_reason(),
+                        );
+                        if ui
+                            .add_enabled(
+                                action_state.can_duplicate,
+                                egui::Button::new("Duplicate as New Paste"),
+                            )
+                            .clicked()
+                        {
+                            pending_duplicate = true;
+                        }
+                        if ui
+                            .add_enabled(
+                                action_state.can_open_reset_confirm,
+                                egui::Button::new(action_state.reset_label),
+                            )
+                            .clicked()
+                        {
+                            pending_open_reset_confirm = true;
+                        }
+                        if let Some(helper) = action_state.helper {
+                            let helper_text = match helper {
+                                HistoryActionHelper::ResetInProgress => {
+                                    "Reset in progress; current paste is temporarily read-only."
+                                }
+                                HistoryActionHelper::SaveBeforeReset => {
+                                    "Local changes will be saved before reset."
+                                }
+                                HistoryActionHelper::Blocked(reason) => reason,
+                            };
+                            ui.label(RichText::new(helper_text).small().color(COLOR_TEXT_MUTED));
                         }
                     });
+                    right.add_space(8.0);
+
+                    if self.version_ui.history_selected_index > 0
+                        && self.version_ui.history_snapshot.is_none()
+                    {
+                        if self.version_ui.history_loading_snapshot_id.is_some() {
+                            right.label(
+                                RichText::new("Loading snapshot...")
+                                    .small()
+                                    .color(COLOR_TEXT_MUTED),
+                            );
+                        } else {
+                            right.label(
+                                RichText::new("Select a stored snapshot.")
+                                    .small()
+                                    .color(COLOR_TEXT_MUTED),
+                            );
+                        }
+                    }
+
+                    if self.version_ui.history_selected_index == 0 {
+                        render_history_preview(
+                            right,
+                            &mut self.version_ui.active_snapshot_cache_text,
+                            &self.version_ui.active_snapshot_preview_lines,
+                        );
+                    } else {
+                        render_history_preview(
+                            right,
+                            &mut self.version_ui.history_preview_text,
+                            &self.version_ui.history_preview_lines,
+                        );
+                    }
                 });
-        });
+            });
 
         if let Some(index) = pending_selected_index {
             self.set_history_selected_index(index);
@@ -443,12 +485,10 @@ impl LocalPasteApp {
                 self.version_ui.clear_history_reset_confirm();
             }
             let mut confirm_open = self.version_ui.history_reset_confirm_open;
-            with_muted_modal_chrome(ctx, || {
-                egui::Window::new("Confirm reset")
-                    .collapsible(false)
+            egui::Window::new("Confirm reset")
                     .resizable(false)
                     .open(&mut confirm_open)
-                    .show(ctx, |ui| {
+                    .show_modal(ctx, |ui| {
                         ui.label(
                             "Reset current paste to this snapshot? The outgoing head stays in history as a recovery snapshot.",
                         );
@@ -486,7 +526,6 @@ impl LocalPasteApp {
                             }
                         });
                     });
-            });
             if !(confirm_open && self.version_ui.history_reset_confirm_open) {
                 self.version_ui.clear_history_reset_confirm();
             }
@@ -505,11 +544,11 @@ impl LocalPasteApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_history_relative_time, format_history_row_label, history_index_after_arrow_key,
-        history_preview_render_mode, history_snapshot_action_state, HistoryActionHelper,
-        HistoryPreviewRenderMode, MAX_INLINE_HISTORY_TEXTEDIT_BYTES,
+        format_history_relative_time, format_history_row_label, format_history_snapshot_caption,
+        history_index_after_arrow_key, history_preview_render_mode, history_snapshot_action_state,
+        HistoryActionHelper, HistoryPreviewRenderMode, MAX_INLINE_HISTORY_TEXTEDIT_BYTES,
     };
-    use chrono::{Duration, TimeZone, Utc};
+    use chrono::{Duration, FixedOffset, TimeZone, Utc};
     use eframe::egui;
     use localpaste_core::models::paste::VersionMeta;
 
@@ -578,6 +617,31 @@ mod tests {
         assert_eq!(
             format_history_row_label(now, &meta),
             "14 min ago | 1.2 KB | rust"
+        );
+    }
+
+    #[test]
+    fn history_snapshot_caption_reads_like_its_row_in_local_time() {
+        let eastern = FixedOffset::west_opt(4 * 60 * 60).unwrap();
+        let saved = Utc.with_ymd_and_hms(2026, 10, 10, 22, 12, 11).unwrap();
+        let meta = |created_at| VersionMeta {
+            version_id_ms: 1_791_670_331_998,
+            created_at,
+            content_hash: "hash".to_string(),
+            len: 705,
+            language: Some("rust".to_string()),
+            language_is_manual: false,
+        };
+
+        assert_eq!(
+            format_history_snapshot_caption(saved + Duration::minutes(3), &meta(saved), &eastern),
+            "Saved 3 min ago · Oct 10, 2026, 6:12 PM · 705 B"
+        );
+        let midnight = Utc.with_ymd_and_hms(2026, 10, 1, 4, 5, 0).unwrap();
+        assert_eq!(
+            format_history_snapshot_caption(saved, &meta(midnight), &eastern),
+            "Saved Oct 1, 2026, 12:05 AM · 705 B",
+            "week-old versions drop the age, as their rows show a date"
         );
     }
 

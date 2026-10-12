@@ -150,7 +150,7 @@ fn stale_diff_target_missing_refreshes_lists_without_overwriting_status() {
         .app
         .all_pastes
         .push(test_summary("beta", "Beta", None, 4));
-    harness.app.pastes = harness.app.all_pastes.clone();
+    harness.app.pastes = harness.app.all_pastes.clone().into();
 
     harness.app.apply_event(CoreEvent::DiffTargetMissing {
         id: "beta".to_string(),

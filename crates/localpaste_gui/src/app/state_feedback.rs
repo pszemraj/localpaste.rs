@@ -1,4 +1,9 @@
 //! UI-facing feedback helpers for status, toasts, and export completion.
+//!
+//! Feedback has two levels. Routine confirmations and progress messages
+//! (`set_status`) appear only in the status bar. Failures, warnings, and
+//! refused actions (`notify`), and messages carrying an action such as the
+//! delete Undo (`notify_with_action`), also raise a toast.
 
 use super::{
     LocalPasteApp, StatusMessage, ToastAction, ToastMessage, DELETE_UNDO_LIMIT, STATUS_TTL,
@@ -8,26 +13,35 @@ use crate::backend::CoreCmd;
 use std::time::Instant;
 
 impl LocalPasteApp {
-    /// Sets the status banner message and mirrors it into the toast queue.
+    /// Shows a routine confirmation or progress message in the status bar only.
     pub(super) fn set_status(&mut self, text: impl Into<String>) {
-        self.set_status_inner(text.into(), None);
+        self.show_status(text.into(), false);
     }
 
-    /// Sets status text and mirrors it into a toast with an attached action.
+    /// Reports a failure, warning, or refused action in the status bar and a toast.
+    pub(super) fn notify(&mut self, text: impl Into<String>) {
+        let text = text.into();
+        self.show_status(text.clone(), true);
+        self.push_toast(text, None);
+    }
+
+    /// Reports a message in the status bar and a toast that offers `action`.
     ///
     /// # Arguments
     /// - `text`: User-facing status/toast message.
     /// - `action`: Toast action rendered alongside the message.
-    pub(super) fn set_status_with_action(&mut self, text: impl Into<String>, action: ToastAction) {
-        self.set_status_inner(text.into(), Some(action));
+    pub(super) fn notify_with_action(&mut self, text: impl Into<String>, action: ToastAction) {
+        let text = text.into();
+        self.show_status(text.clone(), true);
+        self.push_toast(text, Some(action));
     }
 
-    fn set_status_inner(&mut self, text: String, action: Option<ToastAction>) {
+    fn show_status(&mut self, text: String, alert: bool) {
         self.status = Some(StatusMessage {
-            text: text.clone(),
+            text,
+            alert,
             expires_at: Instant::now() + STATUS_TTL,
         });
-        self.push_toast(text, action);
     }
 
     fn push_toast(&mut self, text: String, action: Option<ToastAction>) {
@@ -142,7 +156,7 @@ impl LocalPasteApp {
                 Err(std::sync::mpsc::TryRecvError::Empty) => None,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     self.export_result_rx = None;
-                    self.set_status("Export failed: worker disconnected.");
+                    self.notify("Export failed: worker disconnected.");
                     return;
                 }
             }
@@ -159,7 +173,7 @@ impl LocalPasteApp {
                 ));
             }
             Err(err) => {
-                self.set_status(format!("Export failed: {}", err));
+                self.notify(format!("Export failed: {}", err));
             }
         }
     }

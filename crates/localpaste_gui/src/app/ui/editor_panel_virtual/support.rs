@@ -100,6 +100,39 @@ pub(super) fn request_virtual_editor_focus(
     });
 }
 
+/// Returns whether a drag autoscroll delta can still move the viewport.
+///
+/// # Arguments
+/// - `delta`: Autoscroll delta; positive scrolls toward the start, negative toward the end.
+/// - `offset_y`: Current vertical scroll offset.
+/// - `max_offset_y`: Largest offset that still shows content at the viewport bottom.
+///
+/// # Returns
+/// `true` while the offset has room to move in the delta's direction.
+pub(super) fn drag_autoscroll_can_move(delta: f32, offset_y: f32, max_offset_y: f32) -> bool {
+    // Sub-pixel slack absorbs egui's rounding of the clamped content rect.
+    const EDGE_SLACK: f32 = 0.5;
+    (delta > 0.0 && offset_y > EDGE_SLACK) || (delta < 0.0 && offset_y < max_offset_y - EDGE_SLACK)
+}
+
+/// Returns the width at the viewport's right edge owned by a floating vertical scrollbar.
+///
+/// # Arguments
+/// - `style`: Scroll style the editor's scroll area renders with.
+///
+/// # Returns
+/// Width of the strip, measured from the content's right edge, that row hit-testing must
+/// leave to the scrollbar: its hover-expanded bar plus outer margin, less any width the
+/// style already allocates outside the content.
+pub(super) fn floating_scrollbar_hit_width(style: &egui::style::ScrollStyle) -> f32 {
+    if !style.floating {
+        return 0.0;
+    }
+    (style.bar_width.max(style.floating_width) + style.bar_outer_margin
+        - style.floating_allocated_width)
+        .max(0.0)
+}
+
 /// Returns whether a pointer/window event should explicitly blur the editor.
 ///
 /// # Arguments
@@ -188,53 +221,6 @@ where
     ))
 }
 
-/// Returns the vertical scroll offset needed to keep the cursor in view.
-///
-/// # Arguments
-/// - `follow_requested`: Whether this frame requested cursor-follow scrolling.
-/// - `cursor_row`: Visual row index containing the cursor.
-/// - `scroll_offset_y`: Current vertical scroll offset in points.
-/// - `viewport_rows`: Number of rows that fit in the viewport.
-/// - `line_height`: Height of a virtual editor row.
-///
-/// # Returns
-/// New vertical scroll offset when the cursor needs to be revealed.
-///
-/// # Panics
-/// This helper does not intentionally panic.
-pub(super) fn follow_cursor_scroll_offset_y(
-    follow_requested: bool,
-    cursor_row: usize,
-    scroll_offset_y: f32,
-    viewport_rows: usize,
-    line_height: f32,
-) -> Option<f32> {
-    if !follow_requested || viewport_rows == 0 {
-        return None;
-    }
-    let line_height = line_height.max(1.0);
-    let scroll_offset_y = if scroll_offset_y.is_finite() {
-        scroll_offset_y.max(0.0)
-    } else {
-        0.0
-    };
-    let viewport_start = (scroll_offset_y / line_height).floor() as usize;
-    let visible_row_range = viewport_start..viewport_start.saturating_add(viewport_rows);
-    let scrolloff_rows = 2usize.min(viewport_rows.saturating_sub(1));
-    if cursor_row.saturating_add(scrolloff_rows) >= visible_row_range.end {
-        let desired_top = cursor_row
-            .saturating_add(1)
-            .saturating_add(scrolloff_rows)
-            .saturating_sub(viewport_rows);
-        return Some(desired_top as f32 * line_height);
-    }
-    if cursor_row < visible_row_range.start.saturating_add(scrolloff_rows) {
-        let desired_top = cursor_row.saturating_sub(scrolloff_rows);
-        return Some(desired_top as f32 * line_height);
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,28 +250,6 @@ mod tests {
             assert_eq!(rect.max.y, inner.max.y);
             assert_eq!(rect.max.x, inner.max.x + case.expected_extra_right);
         }
-    }
-
-    #[test]
-    fn follow_cursor_scroll_offset_only_applies_when_requested() {
-        let hidden_cursor_offset = follow_cursor_scroll_offset_y(false, 100, 0.0, 20, 12.0);
-        assert_eq!(hidden_cursor_offset, None);
-
-        let requested_offset = follow_cursor_scroll_offset_y(true, 100, 0.0, 20, 12.0);
-        assert!(
-            requested_offset.is_some(),
-            "requested follow should produce a scroll offset when caret is out of view"
-        );
-    }
-
-    #[test]
-    fn follow_cursor_scroll_offset_uses_viewport_offset_not_rendered_tail() {
-        let offset = follow_cursor_scroll_offset_y(true, 25, 0.0, 20, 12.0);
-        assert_eq!(
-            offset,
-            Some(96.0),
-            "cursor below the viewport must scroll even if a renderer also draws lower rows"
-        );
     }
 
     #[test]
@@ -322,6 +286,37 @@ mod tests {
         let clamped = line_number_gutter_width(999, 0.0);
         let expected = (3.0 * 1.0) + VIRTUAL_EDITOR_LINE_NUMBER_PADDING * 2.0;
         assert!((clamped - expected).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn drag_autoscroll_moves_only_while_the_offset_has_room() {
+        assert!(drag_autoscroll_can_move(12.0, 40.0, 400.0));
+        assert!(!drag_autoscroll_can_move(12.0, 0.0, 400.0));
+        assert!(drag_autoscroll_can_move(-12.0, 40.0, 400.0));
+        assert!(!drag_autoscroll_can_move(-12.0, 400.0, 400.0));
+        assert!(!drag_autoscroll_can_move(-12.0, 0.0, 0.0));
+        assert!(!drag_autoscroll_can_move(0.0, 40.0, 400.0));
+    }
+
+    #[test]
+    fn floating_scrollbar_hit_width_covers_the_expanded_bar_and_outer_margin() {
+        let solid = egui::style::ScrollStyle::solid();
+        assert_eq!(floating_scrollbar_hit_width(&solid), 0.0);
+        let floating = egui::style::ScrollStyle::floating();
+        assert_eq!(floating_scrollbar_hit_width(&floating), floating.bar_width);
+        let inset = egui::style::ScrollStyle {
+            bar_outer_margin: 8.0,
+            ..floating
+        };
+        assert_eq!(
+            floating_scrollbar_hit_width(&inset),
+            floating.bar_width + 8.0
+        );
+        let thin = egui::style::ScrollStyle::thin();
+        assert_eq!(
+            floating_scrollbar_hit_width(&thin),
+            thin.bar_width - thin.floating_allocated_width
+        );
     }
 
     #[test]

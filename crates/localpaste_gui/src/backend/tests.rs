@@ -46,6 +46,7 @@ fn expect_error_contains(rx: &crossbeam_channel::Receiver<CoreEvent>, expected_f
 #[derive(Debug, Clone, Copy)]
 enum GetPasteRouteCase {
     Selection,
+    Copy,
     DiffTarget,
 }
 
@@ -61,8 +62,16 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
             .cmd_tx
             .send(CoreCmd::GetPaste {
                 id: paste_id.clone(),
+                selection_epoch: 42,
             })
             .expect("send get"),
+        GetPasteRouteCase::Copy => backend
+            .cmd_tx
+            .send(CoreCmd::GetPasteForCopy {
+                request_id: 42,
+                id: paste_id.clone(),
+            })
+            .expect("send copy get"),
         GetPasteRouteCase::DiffTarget => backend
             .cmd_tx
             .send(CoreCmd::GetDiffTargetPaste {
@@ -72,13 +81,29 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
     }
 
     match (case, recv_event(&backend.evt_rx)) {
-        (GetPasteRouteCase::Selection, CoreEvent::PasteLoaded { paste })
+        (
+            GetPasteRouteCase::Selection,
+            CoreEvent::PasteLoaded {
+                paste,
+                selection_epoch: 42,
+            },
+        )
+        | (
+            GetPasteRouteCase::Copy,
+            CoreEvent::PasteCopyLoaded {
+                paste,
+                request_id: 42,
+            },
+        )
         | (GetPasteRouteCase::DiffTarget, CoreEvent::DiffTargetLoaded { paste }) => {
             assert_eq!(paste.id, paste_id);
             assert_eq!(paste.content, "gamma");
         }
         (GetPasteRouteCase::Selection, other) => {
             panic!("unexpected selection event: {:?}", other)
+        }
+        (GetPasteRouteCase::Copy, other) => {
+            panic!("unexpected copy event: {:?}", other)
         }
         (GetPasteRouteCase::DiffTarget, other) => {
             panic!("unexpected diff-target event: {:?}", other)
@@ -91,8 +116,16 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
             .cmd_tx
             .send(CoreCmd::GetPaste {
                 id: missing_id.clone(),
+                selection_epoch: 42,
             })
             .expect("send missing"),
+        GetPasteRouteCase::Copy => backend
+            .cmd_tx
+            .send(CoreCmd::GetPasteForCopy {
+                request_id: 42,
+                id: missing_id.clone(),
+            })
+            .expect("send missing copy"),
         GetPasteRouteCase::DiffTarget => backend
             .cmd_tx
             .send(CoreCmd::GetDiffTargetPaste {
@@ -102,12 +135,22 @@ fn assert_get_paste_route(case: GetPasteRouteCase) {
     }
 
     match (case, recv_event(&backend.evt_rx)) {
-        (GetPasteRouteCase::Selection, CoreEvent::PasteMissing { id })
+        (
+            GetPasteRouteCase::Selection,
+            CoreEvent::PasteSelectionMissing {
+                id,
+                selection_epoch: 42,
+            },
+        )
+        | (GetPasteRouteCase::Copy, CoreEvent::PasteCopyMissing { id, request_id: 42 })
         | (GetPasteRouteCase::DiffTarget, CoreEvent::DiffTargetMissing { id }) => {
             assert_eq!(id, missing_id);
         }
         (GetPasteRouteCase::Selection, other) => {
             panic!("unexpected missing-selection event: {:?}", other)
+        }
+        (GetPasteRouteCase::Copy, other) => {
+            panic!("unexpected missing-copy event: {:?}", other)
         }
         (GetPasteRouteCase::DiffTarget, other) => {
             panic!("unexpected missing-diff-target event: {:?}", other)
@@ -128,10 +171,7 @@ fn backend_lists_pastes() {
     let backend = spawn_backend(db, 10 * 1024 * 1024);
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 10,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("send list");
 
     match recv_event(&backend.evt_rx) {
@@ -156,10 +196,7 @@ fn backend_list_cache_refreshes_after_external_update() {
     let backend = spawn_backend(db, 10 * 1024 * 1024);
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 10,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("send initial list");
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteList { items } => assert_eq!(items.len(), 1),
@@ -179,10 +216,7 @@ fn backend_list_cache_refreshes_after_external_update() {
 
     backend
         .cmd_tx
-        .send(CoreCmd::ListPastes {
-            limit: 10,
-            folder_id: None,
-        })
+        .send(CoreCmd::ListPastes { folder_id: None })
         .expect("send refreshed list");
     match recv_event(&backend.evt_rx) {
         CoreEvent::PasteList { items } => {
@@ -196,6 +230,11 @@ fn backend_list_cache_refreshes_after_external_update() {
 #[test]
 fn backend_gets_paste_and_reports_missing() {
     assert_get_paste_route(GetPasteRouteCase::Selection);
+}
+
+#[test]
+fn backend_gets_picker_copy_target_without_selection_events() {
+    assert_get_paste_route(GetPasteRouteCase::Copy);
 }
 
 #[test]
@@ -310,34 +349,48 @@ fn backend_reset_refreshes_versions_with_full_history_window_limit() {
 fn backend_creates_updates_and_deletes_paste() {
     let TestDb { _dir: _guard, db } = setup_db();
     let backend = spawn_backend(db, 10 * 1024 * 1024);
-
     backend
         .cmd_tx
         .send(CoreCmd::CreatePaste {
-            content: "hello".to_string(),
+            content: "fn main() {\n    println!(\"hi\");\n}".to_string(),
         })
         .expect("send create");
     let created_id = match recv_event(&backend.evt_rx) {
         CoreEvent::PasteCreated { paste } => {
-            assert_eq!(paste.content, "hello");
+            assert_eq!(paste.content, "fn main() {\n    println!(\"hi\");\n}");
+            assert!(paste.language.is_none() && !paste.language_is_manual);
             paste.id
         }
         other => panic!("unexpected event: {:?}", other),
     };
-    backend
-        .cmd_tx
-        .send(CoreCmd::UpdatePasteVirtual {
-            id: created_id.clone(),
-            content: Rope::from_str("updated"),
-            protected_version_id_ms: None,
-        })
-        .expect("send update");
-    match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteSaved { paste } => {
-            assert_eq!(paste.id, created_id);
-            assert_eq!(paste.content, "updated");
+    for (content, language) in [
+        (
+            "fn main() { println!(\"this one-line source has more than sixty-four characters\"); }",
+            None,
+        ),
+        (
+            "def main():\n    import sys\n    print('hello from LocalPaste', sys.version)",
+            Some("python"),
+        ),
+        ("updated", Some("python")),
+    ] {
+        backend
+            .cmd_tx
+            .send(CoreCmd::UpdatePasteVirtual {
+                id: created_id.clone(),
+                content: Rope::from_str(content),
+                protected_version_id_ms: None,
+            })
+            .expect("send update");
+        match recv_event(&backend.evt_rx) {
+            CoreEvent::PasteSaved { paste } => {
+                assert_eq!(paste.id, created_id);
+                assert_eq!(paste.content, content);
+                assert_eq!(paste.language.as_deref(), language);
+                assert_eq!(paste.language_is_manual, language.is_some());
+            }
+            other => panic!("unexpected event: {:?}", other),
         }
-        other => panic!("unexpected event: {:?}", other),
     }
     backend
         .cmd_tx
@@ -345,7 +398,6 @@ fn backend_creates_updates_and_deletes_paste() {
             id: created_id.clone(),
         })
         .expect("send delete");
-
     let undo_token = match recv_event(&backend.evt_rx) {
         CoreEvent::PasteDeleted { id, undo_token } => {
             assert_eq!(id, created_id);
@@ -502,10 +554,11 @@ fn backend_rejects_oversize_create_and_update() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: created_id.clone(),
+            selection_epoch: 42,
         })
         .expect("send get");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => {
+        CoreEvent::PasteLoaded { paste, .. } => {
             assert_eq!(paste.id, created_id);
             assert_eq!(paste.content, "ok");
         }
@@ -619,6 +672,8 @@ fn backend_searches_full_content_and_lists_folders() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPastes {
+            collection: crate::backend::SidebarCollection::All,
+            scope: localpaste_core::models::paste::SearchScope::All,
             query: "SEARCHABLE BODY".to_string(),
             limit: 10,
             folder_id: None,
@@ -627,7 +682,13 @@ fn backend_searches_full_content_and_lists_folders() {
         .expect("send search");
 
     match recv_event(&backend.evt_rx) {
-        CoreEvent::SearchResults { query, items, .. } => {
+        CoreEvent::SearchResults {
+            collection: crate::backend::SidebarCollection::All,
+            scope: localpaste_core::models::paste::SearchScope::All,
+            query,
+            items,
+            ..
+        } => {
             assert_eq!(query, "SEARCHABLE BODY");
             assert_eq!(items.len(), 1);
             assert_eq!(items[0].name, "plain-title");
@@ -669,16 +730,25 @@ fn backend_palette_search_returns_content_matches() {
     backend
         .cmd_tx
         .send(CoreCmd::SearchPalette {
+            scope: localpaste_core::models::paste::SearchScope::All,
             query: "println!".to_string(),
             limit: 10,
         })
         .expect("send palette search");
 
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PaletteSearchResults { query, items } => {
+        CoreEvent::PaletteSearchResults {
+            scope: localpaste_core::models::paste::SearchScope::All,
+            query,
+            items,
+        } => {
             assert_eq!(query, "println!");
             assert_eq!(items.len(), 1);
             assert_eq!(items[0].name, "beta-entry");
+            assert!(items[0]
+                .match_excerpt
+                .as_deref()
+                .is_some_and(|excerpt| excerpt.contains("println!")));
         }
         other => panic!("unexpected event: {:?}", other),
     }
@@ -760,10 +830,11 @@ fn backend_updates_paste_metadata() {
         .cmd_tx
         .send(CoreCmd::GetPaste {
             id: paste_id.clone(),
+            selection_epoch: 42,
         })
         .expect("send get paste");
     match recv_event(&backend.evt_rx) {
-        CoreEvent::PasteLoaded { paste } => {
+        CoreEvent::PasteLoaded { paste, .. } => {
             assert_eq!(paste.id, paste_id);
             assert_eq!(paste.language.as_deref(), Some("python"));
             assert!(paste.language_is_manual);
@@ -824,3 +895,5 @@ fn backend_updates_paste_metadata() {
 }
 
 mod folder;
+
+mod search_scopes;
