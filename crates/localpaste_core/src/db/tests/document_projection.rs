@@ -29,10 +29,36 @@ fn documents_rebuild_from_version_two_without_changing_canonical_content() {
         reopened.pastes.get(&paste.id).unwrap().unwrap().content,
         paste.content
     );
-    assert!(
-        !startup_backup_files(&path).is_empty(),
+    let backups = startup_backup_files(&path);
+    assert_eq!(
+        backups.len(),
+        1,
         "upgrade must preserve a schema-repair backup"
     );
+    {
+        // Paste rows survive repair unchanged; only the stale marker and
+        // projection row show that the backup predates the rebuild.
+        let backup = redb::Database::create(&backups[0]).expect("open backup");
+        let read_txn = backup.begin_read().expect("begin backup read");
+        let marker = read_txn
+            .open_table(PASTES_META_STATE)
+            .expect("open backup meta state")
+            .get(META_SCHEMA_VERSION_KEY)
+            .expect("read backup marker")
+            .map(|value| bincode::deserialize::<u64>(value.value()).expect("decode marker"));
+        assert_eq!(
+            marker,
+            Some(2),
+            "startup backup must predate projection repair"
+        );
+        let meta = read_txn
+            .open_table(PASTES_META)
+            .expect("open backup metas")
+            .get(paste.id.as_str())
+            .expect("read backup meta")
+            .map(|value| bincode::deserialize::<PasteMeta>(value.value()).expect("decode meta"));
+        assert_eq!(meta.map(|meta| meta.derived.kind), Some(PasteKind::Code));
+    }
     drop(reopened);
     let again = open_test_database(path.to_str().unwrap());
     assert_eq!(
