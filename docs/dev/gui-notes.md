@@ -141,6 +141,8 @@ Growing the query refines the current match from its start. Clicking Prev, Next,
 
 ### Discovery overlays and help
 
+The palette offers Duplicate once the selected paste body has loaded; it copies the current editor draft, including unsaved edits.
+
 ![The command palette and the F1 shortcut help, shown side by side](../../assets/screenshots/command-palette-and-help.png)
 
 The command palette, paste picker, and shortcut help are mutually exclusive: opening one closes the other two so its query owns keyboard input. `Escape` or the toggle shortcut returns focus to the input that opened discovery, including across switches between surfaces. Focus returns only to a text input or the editor that still renders, so an input removed while discovery was open, such as a Properties field whose drawer closed behind Help, is skipped rather than published as an accessibility focus without a node, and the skipped return never takes focus later. Input batched around a transition stays in order, with earlier text belonging to the previous input and later text to the new destination, and `Enter` on a palette command or picker result processes the preceding query before routing later text. Commands that open another workflow keep their intended focus destination.

@@ -161,6 +161,12 @@ impl LocalPasteApp {
                 self.command_palette_open = false;
             }
             CommandPaletteAction::Duplicate => {
+                // Selection changes clear the buffer before its body arrives.
+                // A command chosen during that gap must not duplicate the placeholder.
+                if !self.can_duplicate_selected() {
+                    self.set_status("Load a paste before duplicating it.");
+                    return;
+                }
                 self.create_new_paste_with_content(self.active_snapshot());
                 self.command_palette_open = false;
             }
@@ -272,7 +278,6 @@ impl LocalPasteApp {
         if self.selected_id.is_some() {
             for (label, action) in [
                 ("Export paste", CommandPaletteAction::Export),
-                ("Duplicate paste", CommandPaletteAction::Duplicate),
                 ("Copy paste", CommandPaletteAction::Copy),
                 ("Copy link", CommandPaletteAction::CopyLink),
                 ("Find in paste", CommandPaletteAction::Find),
@@ -281,6 +286,13 @@ impl LocalPasteApp {
                     label: label.into(),
                     hint: String::new(),
                     action,
+                });
+            }
+            if self.can_duplicate_selected() {
+                items.push(CommandPaletteItem {
+                    label: "Duplicate paste".into(),
+                    hint: String::new(),
+                    action: CommandPaletteAction::Duplicate,
                 });
             }
             items.push(CommandPaletteItem {
@@ -339,6 +351,13 @@ impl LocalPasteApp {
                 haystack.contains(query.as_str())
             })
             .collect()
+    }
+
+    /// Whether the selected body has arrived and its editor draft can be duplicated.
+    fn can_duplicate_selected(&self) -> bool {
+        self.selected_paste
+            .as_ref()
+            .is_some_and(|paste| self.selected_id.as_deref() == Some(paste.id.as_str()))
     }
 
     /// Copies a picker result without changing the editor selection.
