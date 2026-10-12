@@ -131,8 +131,8 @@ pub(crate) struct LocalPasteApp {
     /// Queued selection target that takes over `picker_selection_pin` when its switch applies.
     pending_picker_selection_pin: Option<String>,
     /// Selection kept through list refreshes and search replies that leave it out, such as a
-    /// picker result, the paste open across a scope change, or a created paste; cleared when
-    /// the sidebar selection, search query, or filters change.
+    /// picker result, the paste open across a scope change, a created paste, or one restored at
+    /// startup; cleared when the sidebar selection, search query, or filters change.
     picker_selection_pin: Option<String>,
     pending_delete_id: Option<String>,
     picker_delete_transition: Option<PickerDeleteTransition>,

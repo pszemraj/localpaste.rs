@@ -86,6 +86,28 @@ fn pending_restored_selection_loads_even_when_current_filters_hide_it() {
         CoreCmd::GetPaste { id, .. } => assert_eq!(id, "beta"),
         other => panic!("expected GetPaste command, got {other:?}"),
     }
+
+    let mut beta = Paste::new("beta".to_string(), "Beta".to_string());
+    beta.id = "beta".to_string();
+    harness.app.apply_event(CoreEvent::PasteLoaded {
+        paste: beta,
+        selection_epoch: harness.app.active_buffer_epoch,
+    });
+    assert_eq!(harness.app.active_snapshot(), "beta");
+
+    // Background refreshes under the restored filters keep the restored paste open.
+    for _ in 0..2 {
+        let items = harness.app.all_pastes.clone();
+        harness.app.apply_event(CoreEvent::PasteList { items });
+        assert_eq!(harness.app.selected_id.as_deref(), Some("beta"));
+        assert_eq!(harness.app.active_snapshot(), "beta");
+    }
+    let visible: Vec<_> = harness.app.pastes.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(visible, ["alpha"], "the filters still apply to the sidebar");
+    assert!(matches!(
+        harness.cmd_rx.try_recv(),
+        Err(TryRecvError::Empty)
+    ));
 }
 
 #[test]

@@ -116,8 +116,12 @@ impl LocalPasteApp {
                     return;
                 }
             } else if self.selected_id.is_none() {
+                // With nothing open, such as at startup, a queued paste the rows leave out
+                // still loads, pinned so the next refresh does not replace it.
                 self.pending_selection_id = None;
-                let _ = self.apply_selection_now(pending);
+                if self.apply_selection_now(pending.clone()) {
+                    self.picker_selection_pin = Some(pending);
+                }
                 return;
             }
         }
