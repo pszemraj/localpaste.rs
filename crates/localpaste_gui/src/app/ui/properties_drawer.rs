@@ -357,7 +357,7 @@ struct FieldDraft {
 
 impl LocalPasteApp {
     /// Recomputes `metadata_dirty` from whether the metadata draft differs from the loaded paste.
-    pub(super) fn refresh_metadata_dirty(&mut self) {
+    pub(in crate::app) fn refresh_metadata_dirty(&mut self) {
         if let Some(paste) = self.selected_paste.as_ref() {
             self.metadata_dirty = self.edit_name != paste.name
                 || self.edit_language != paste.language

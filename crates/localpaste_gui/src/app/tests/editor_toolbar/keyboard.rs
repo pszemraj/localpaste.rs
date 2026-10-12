@@ -179,6 +179,34 @@ fn escape_in_title_name_and_tags_restores_them() {
     }
 }
 
+#[test]
+fn escape_in_the_title_after_a_content_ack_leaves_nothing_to_save() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    load_language(&mut harness.app, None, false);
+    click_field(&mut harness.app, &ctx, TITLE_INPUT_ID);
+    let _ = type_keys(&mut harness.app, &ctx, "Z", KEYSTROKE_GAP);
+    let _ = saved_names(&harness.cmd_rx);
+
+    // A content save resolves the language while the title is being edited.
+    let mut saved = harness.app.selected_paste.clone().expect("selected paste");
+    saved.language = Some("python".to_string());
+    saved.language_is_manual = true;
+    harness
+        .app
+        .apply_event(CoreEvent::PasteSaved { paste: saved });
+    assert_eq!(harness.app.edit_name, "AlphaZ", "the typed title stays");
+
+    let output = press_key(&mut harness.app, &ctx, egui::Key::Escape);
+    assert_eq!(harness.app.edit_name, "Alpha");
+    assert!(!harness.app.metadata_dirty, "nothing is left to save");
+    assert!(editor_text_rect(&output, "Python").is_some());
+    assert!(
+        saved_names(&harness.cmd_rx).is_empty(),
+        "Escape saves nothing"
+    );
+}
+
 /// The popups the arrow and delete routing tests open over the editor.
 #[derive(Clone, Copy, Debug)]
 enum OpenPopup {

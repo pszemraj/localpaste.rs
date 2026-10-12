@@ -309,8 +309,10 @@ impl LocalPasteApp {
                         .unwrap_or_else(|| self.active_snapshot() != paste.content);
                     if !self.metadata_dirty && !self.metadata_save_in_flight {
                         self.sync_editor_metadata(&paste);
+                        self.selected_paste = Some(paste);
+                    } else {
+                        self.adopt_saved_language(paste);
                     }
-                    self.selected_paste = Some(paste);
                     self.save_in_flight = false;
                     if has_newer_local_edits {
                         // Keep autosave armed when this ack corresponds to an older snapshot.
@@ -338,12 +340,15 @@ impl LocalPasteApp {
                 self.metadata_save_in_flight = false;
                 self.upsert_cached_paste_summary(&paste);
                 if self.selected_id.as_deref() == Some(paste.id.as_str()) {
-                    if self.metadata_matches_request(requested_metadata.as_ref()) {
+                    let draft_saved = self.metadata_matches_request(requested_metadata.as_ref());
+                    self.selected_paste = Some(paste.clone());
+                    if draft_saved {
                         self.sync_editor_metadata(&paste);
                     } else {
-                        self.metadata_dirty = true;
+                        // Edits made after dispatch, or a language adopted from a content
+                        // ack, stay dirty only where the draft differs from the saved row.
+                        self.refresh_metadata_dirty();
                     }
-                    self.selected_paste = Some(paste.clone());
                 }
                 if self.search_query.trim().is_empty() {
                     self.recompute_visible_pastes();
@@ -671,10 +676,21 @@ impl LocalPasteApp {
             return;
         };
         let request = self.metadata_draft_snapshot();
-        let language = if self.edit_language_is_manual {
-            self.edit_language.clone()
+        // Only a staged language change is sent. The backend reads
+        // `language_is_manual: false` on a locked row as a switch back to auto and
+        // clears the language, which would discard one detected since this paste loaded.
+        let language_changed = self
+            .selected_paste
+            .as_ref()
+            .is_none_or(|loaded| !self.draft_language_matches(loaded));
+        let (language, language_is_manual) = if language_changed {
+            let language = self
+                .edit_language
+                .clone()
+                .filter(|_| self.edit_language_is_manual);
+            (language, Some(self.edit_language_is_manual))
         } else {
-            None
+            (None, None)
         };
         let tags = Some(parse_tags_csv(self.edit_tags.as_str()));
         self.metadata_save_request = None;
@@ -682,7 +698,7 @@ impl LocalPasteApp {
             id,
             name: Some(self.edit_name.clone()),
             language,
-            language_is_manual: Some(self.edit_language_is_manual),
+            language_is_manual,
             folder_id: None,
             tags,
         }) {
@@ -752,5 +768,29 @@ impl LocalPasteApp {
         self.edit_language_is_manual = paste.language_is_manual;
         self.edit_tags = paste.tags.join(", ");
         self.metadata_dirty = false;
+    }
+
+    /// Whether the draft's language fields equal `paste`'s, so the draft stages no language change.
+    fn draft_language_matches(&self, paste: &Paste) -> bool {
+        self.edit_language == paste.language
+            && self.edit_language_is_manual == paste.language_is_manual
+    }
+
+    /// Takes a content-save ack as the loaded paste while metadata edits are pending.
+    ///
+    /// The ack can carry a language the backend resolved from the saved content.
+    /// The draft adopts it unless the draft stages a language change of its own;
+    /// name and tag drafts stay as typed, and `metadata_dirty` is recomputed.
+    fn adopt_saved_language(&mut self, paste: Paste) {
+        let language_staged = self
+            .selected_paste
+            .as_ref()
+            .is_some_and(|loaded| !self.draft_language_matches(loaded));
+        if !language_staged {
+            self.edit_language = paste.language.clone();
+            self.edit_language_is_manual = paste.language_is_manual;
+        }
+        self.selected_paste = Some(paste);
+        self.refresh_metadata_dirty();
     }
 }

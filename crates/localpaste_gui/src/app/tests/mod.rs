@@ -520,6 +520,7 @@ mod highlight_behaviors;
 mod highlight_repaint;
 mod history_reset;
 mod keyboard_navigation_audit;
+mod metadata_language_sync;
 mod modal_chrome;
 mod modal_viewport_fit;
 mod paste_into_editor;
