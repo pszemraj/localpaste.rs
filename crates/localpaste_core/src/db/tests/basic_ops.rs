@@ -849,6 +849,10 @@ fn language_mode_transitions_cover_auto_and_manual_lock_behaviors() {
         "language should be pending auto-detect after switch"
     );
 
+    let short_edit = update_request(Some("fn main() { println!(\"hi\"); }"), None, None, None);
+    let pending = update_existing_paste(&db, &paste_id, short_edit, "short content update");
+    assert!(pending.language.is_none() && !pending.language_is_manual);
+
     let auto_detect_and_lock = update_request(
         Some("def main():\n    import sys\n    print('hello')"),
         None,

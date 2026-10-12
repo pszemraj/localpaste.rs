@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::detection::detect_language;
+use crate::detection::auto_detect_language;
 use crate::semantic::DerivedMeta;
 
 /// Paste metadata stored in the database and returned by the API.
@@ -210,6 +210,9 @@ impl Paste {
 
     /// Create a new paste with inferred language and defaults.
     ///
+    /// Content too short for [`auto_detect_language`] starts unresolved in auto
+    /// mode, so a later content edit detects it.
+    ///
     /// # Arguments
     /// - `content`: Paste content.
     /// - `name`: Paste display name.
@@ -217,7 +220,7 @@ impl Paste {
     /// # Returns
     /// A new [`Paste`] instance.
     pub fn new(content: String, name: String) -> Self {
-        let language = detect_language(&content);
+        let language = auto_detect_language(&content);
         // When creation-time detection resolves a concrete language, persist it
         // as a locked choice to avoid repeated re-detect churn on subsequent edits.
         let language_is_manual = language.is_some();

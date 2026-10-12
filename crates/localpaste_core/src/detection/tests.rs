@@ -12,7 +12,7 @@ use crate::semantic::logs::looks_like_runtime_log;
 #[test]
 fn review_regression_commented_python_and_unlabeled_fences() {
     use crate::models::paste::{Paste, PasteMeta};
-    use crate::semantic::PasteKind;
+    use crate::semantic::{derive, PasteKind};
 
     for source in [
         "from flask import Flask\napp = Flask(__name__)\n# routes\n@app.route('/')\ndef index():\n    return 'hello'",
@@ -42,11 +42,8 @@ fn review_regression_commented_python_and_unlabeled_fences() {
         for source in [source.to_owned(), source.replace('\n', "\r\n")] {
             assert_eq!(heuristic::detect(&source).as_deref(), Some("python"), "{source}");
             assert_eq!(refine_magika_label("markdown", &source).as_deref(), Some("python"));
-            let paste = Paste::new(source.clone(), "Python source".into());
-            assert_eq!(paste.language.as_deref(), Some("python"), "{source}");
-            assert!(paste.language_is_manual);
-            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Code);
-            assert_eq!(super::preferred_extension(paste.language.as_deref()), "py");
+            assert_eq!(detect_language(&source).as_deref(), Some("python"), "{source}");
+            assert_eq!(derive(&source, Some("python")).kind, PasteKind::Code);
             let fence = Paste::new(format!("```\n{source}\n```"), "Python fence".into());
             assert_eq!(fence.language.as_deref(), Some("markdown"));
             assert_eq!(PasteMeta::from(&fence).derived.kind, PasteKind::Code, "{source}");
@@ -71,7 +68,7 @@ fn review_regression_commented_python_and_unlabeled_fences() {
 #[test]
 fn review_regression_shell_control_flow_and_python_tracebacks() {
     use crate::models::paste::{Paste, PasteMeta};
-    use crate::semantic::PasteKind;
+    use crate::semantic::{derive, PasteKind};
 
     for (content, language, kind) in [
         ("# build all\nfor f in *.c; do cc \"$f\"; done", "shell", PasteKind::Code),
@@ -103,9 +100,8 @@ fn review_regression_shell_control_flow_and_python_tracebacks() {
         for content in [content.to_owned(), content.replace('\n', "\r\n")] {
             assert_eq!(heuristic::detect(&content).as_deref(), Some(language), "{content}");
             assert_eq!(refine_magika_label("markdown", &content).as_deref(), Some(language));
-            let paste = Paste::new(content.clone(), "runtime fixture".into());
-            assert_eq!(paste.language.as_deref(), Some(language), "{content}");
-            assert_eq!(PasteMeta::from(&paste).derived.kind, kind);
+            assert_eq!(detect_language(&content).as_deref(), Some(language), "{content}");
+            assert_eq!(derive(&content, Some(language)).kind, kind);
             let fence = Paste::new(format!("```\n{content}\n```"), "runtime fence".into());
             assert_eq!(PasteMeta::from(&fence).derived.kind, kind, "{content}");
         }
@@ -114,8 +110,9 @@ fn review_regression_shell_control_flow_and_python_tracebacks() {
 
 #[test]
 fn review_regression_prose_imports_and_command_wrappers_stay_documents() {
+    #[cfg(feature = "magika")]
     use crate::models::paste::{Paste, PasteMeta};
-    use crate::semantic::PasteKind;
+    use crate::semantic::{derive, PasteKind};
 
     for content in [
         "> python rocks",
@@ -147,9 +144,8 @@ fn review_regression_prose_imports_and_command_wrappers_stay_documents() {
     ].into_iter().flat_map(|content| [content.to_owned(), content.replace('\n', "\r\n")]) {
         assert!(!looks_like_shell_command_sequence(&content), "{content}");
         assert!(!matches!(heuristic::detect(&content).as_deref(), Some("shell" | "python")), "{content}");
-        let paste = Paste::new(content.clone(), "ordinary note".into());
-        assert_eq!(paste.content, content);
-        assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document, "{content}: {:?}", paste.language);
+        let language = detect_language(&content);
+        assert_eq!(derive(&content, language.as_deref()).kind, PasteKind::Document, "{content}: {language:?}");
     }
     for content in [
         "# Tasks\nMeeting notes:\n\tDiscuss timeline tomorrow",
@@ -225,9 +221,6 @@ fn comment_prefixed_commands_and_log_wrappers_avoid_markdown_locks() {
                 refine_magika_label("markdown", &content).as_deref(),
                 Some(language)
             );
-            let paste = crate::models::paste::Paste::new(content, "review technical body".into());
-            assert_eq!(paste.language.as_deref(), Some(language));
-            assert!(paste.language_is_manual);
         }
     }
     for content in [
@@ -322,20 +315,19 @@ fn automatic_cmd_variable_assignments_keep_code_kind() {
     for content in cases {
         for ending in ["\n", "\r\n"] {
             let content = format!("{content}{ending}");
-            let paste = crate::models::paste::Paste::new(content.clone(), "CMD assignment".into());
+            let language = detect_language(&content);
             assert_eq!(
                 refine_magika_label("batch", &content).as_deref(),
                 Some("batch"),
                 "{content}"
             );
             assert_eq!(
-                crate::models::paste::PasteMeta::from(&paste).derived.kind,
+                crate::semantic::derive(&content, language.as_deref()).kind,
                 crate::semantic::PasteKind::Code,
                 "{content}"
             );
             if content.starts_with("set my variable=hello world") {
-                assert_eq!(paste.language.as_deref(), Some("batch"));
-                assert!(paste.language_is_manual);
+                assert_eq!(language.as_deref(), Some("batch"));
             }
         }
     }

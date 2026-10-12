@@ -3,7 +3,7 @@
 use crate::db::versioning::{
     decode_version_meta_list, encode_version_meta_list, prune_version_meta_to_limit_preserving,
 };
-use crate::detection::detect_language;
+use crate::detection::auto_detect_language;
 use crate::error::AppError;
 use crate::models::paste::*;
 use crate::semantic::{DerivedMeta, PasteKind};
@@ -203,7 +203,7 @@ pub(crate) fn apply_update_request(paste: &mut Paste, update: &UpdatePasteReques
     let should_auto_detect =
         update.language.is_none() && !paste.language_is_manual && content_changed;
     if should_auto_detect {
-        let detected = detect_language(&paste.content);
+        let detected = auto_detect_language(&paste.content);
         paste.language = detected;
         if paste.language.is_some() {
             // Auto mode is one-shot: once we classify a concrete language, lock

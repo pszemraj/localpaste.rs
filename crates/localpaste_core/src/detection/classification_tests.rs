@@ -135,9 +135,12 @@ fn tabbed_notes_without_markdown_and_two_word_items_get_document_labels() {
                 Some("markdown"),
                 "{body}"
             );
-            let paste = Paste::new(body.clone(), "note".into());
-            assert_eq!(paste.language.as_deref(), Some("markdown"), "{body}");
-            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document);
+            assert_eq!(
+                detect_language(&body).as_deref(),
+                Some("markdown"),
+                "{body}"
+            );
+            assert_eq!(derive(&body, Some("markdown")).kind, PasteKind::Document);
         }
     }
 }
@@ -155,9 +158,12 @@ fn sentence_case_labels_over_plain_word_items_are_lists() {
                 refine_magika_label("makefile", &body).as_deref(),
                 Some("markdown")
             );
-            let paste = Paste::new(body.clone(), "note".into());
-            assert_eq!(paste.language.as_deref(), Some("markdown"), "{body}");
-            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document);
+            assert_eq!(
+                detect_language(&body).as_deref(),
+                Some("markdown"),
+                "{body}"
+            );
+            assert_eq!(derive(&body, Some("markdown")).kind, PasteKind::Document);
             assert_eq!(derive(&body, Some("makefile")).kind, PasteKind::Document);
         }
     }
@@ -270,11 +276,7 @@ fn tabbed_python_source_is_not_a_makefile_target() {
                 Some("python"),
                 "{body}"
             );
-            let paste = Paste::new(body.clone(), "Python source".into());
-            assert!(paste.language_is_manual);
-            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Code);
-            assert_eq!(preferred_extension(paste.language.as_deref()), "py");
-            assert_eq!(paste.content, body);
+            assert_eq!(derive(&body, Some("python")).kind, PasteKind::Code);
         }
     }
     for source in [
@@ -295,10 +297,7 @@ fn tabbed_python_source_is_not_a_makefile_target() {
             Some("makefile"),
             "{source}"
         );
-        let paste = Paste::new(source.into(), "Makefile".into());
-        assert!(paste.language_is_manual);
-        assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Config);
-        assert_eq!(preferred_extension(paste.language.as_deref()), "makefile");
+        assert_eq!(derive(source, Some("makefile")).kind, PasteKind::Config);
     }
 }
 
@@ -376,10 +375,9 @@ fn makefile_constructs_and_lowercase_notes_keep_their_meaning() {
         "make sure --release",
     ] {
         assert_eq!(
-            PasteMeta::from(&Paste::new(body.into(), "source".into()))
-                .derived
-                .kind,
-            PasteKind::Code
+            derive(body, detect_language(body).as_deref()).kind,
+            PasteKind::Code,
+            "{body}"
         );
     }
     for (body, language) in [

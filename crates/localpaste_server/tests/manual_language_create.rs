@@ -55,6 +55,14 @@ async fn test_create_paste_manual_language_mode_matrix() {
             expected_language: None,
             expected_manual: false,
         },
+        Case {
+            request: json!({
+                "content": "fn main() { println!(\"hello\"); }",
+                "name": "short-default-create"
+            }),
+            expected_language: None,
+            expected_manual: false,
+        },
     ];
 
     for case in cases {
@@ -73,7 +81,7 @@ async fn test_auto_language_update_transitions_cover_redetect_and_legacy_preserv
         let created_json = create_paste(
             &server,
             json!({
-                "content": "fn main() { println!(\"hello\"); }",
+                "content": "fn main() {\n    println!(\"hello\");\n}",
                 "name": "default-create"
             }),
         )

@@ -121,7 +121,6 @@ fn prose_about_failures_is_not_a_log() {
     let flags = "debug: True\ntrace: False";
     assert_eq!(detect_language(flags).as_deref(), Some("yaml"));
     assert_eq!(derive(flags, Some("yaml")).kind, PasteKind::Config);
-    assert_eq!(stored_kind(flags), PasteKind::Config);
     assert_eq!(
         derive(
             "info: Service metadata\ndebug: False\nport: 8080",
@@ -231,9 +230,12 @@ fn crash_output_is_a_log_wherever_the_traceback_starts() {
         PasteKind::Log,
     );
     for content in crashes.iter().flat_map(|content| with_crlf(content)) {
-        let paste = Paste::new(content.clone(), "crash".into());
-        assert_eq!(paste.language.as_deref(), Some("log"), "{content}");
-        assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Log);
+        assert_eq!(
+            detect_language(&content).as_deref(),
+            Some("log"),
+            "{content}"
+        );
+        assert_eq!(derive(&content, Some("log")).kind, PasteKind::Log);
     }
 }
 

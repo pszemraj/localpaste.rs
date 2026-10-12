@@ -160,7 +160,7 @@ mod tests {
     use super::leading_item;
     use crate::detection::detect_language;
     use crate::models::paste::{Paste, PasteMeta};
-    use crate::semantic::PasteKind;
+    use crate::semantic::{derive, PasteKind};
 
     const FUNCTION: &str = "fn handle_request(input: &str) -> usize {\n    input.len()\n}";
 
@@ -187,8 +187,7 @@ mod tests {
             for body in [source.to_owned(), source.replace('\n', "\r\n")] {
                 assert!(leading_item(&body), "{body}");
                 assert_eq!(detect_language(&body).as_deref(), Some("rust"), "{body}");
-                let paste = Paste::new(body.clone(), "snippet".into());
-                assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Code, "{body}");
+                assert_eq!(derive(&body, Some("rust")).kind, PasteKind::Code, "{body}");
             }
         }
         let meta = PasteMeta::from(&Paste::new(FUNCTION.into(), "handler".into()));

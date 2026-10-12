@@ -71,6 +71,52 @@ mod model_tests {
     }
 
     #[test]
+    fn test_paste_new_leaves_short_content_unresolved() {
+        let content = "fn main() { println!(\"hi\"); }";
+        assert_eq!(
+            crate::detection::detect_language(content).as_deref(),
+            Some("rust")
+        );
+        let paste = paste::Paste::new(content.to_string(), "short".to_string());
+        assert_eq!(paste.language, None);
+        assert!(!paste.language_is_manual);
+    }
+
+    #[test]
+    fn test_auto_detect_language_waits_for_64_chars_or_3_non_blank_lines() {
+        use crate::detection::{auto_detect_language, detect_language};
+        // A one-line Rust item whose string literal pads it to `len` characters.
+        let rust_line = |len: usize, pad: char| {
+            let base = "fn f() -> &'static str { \"\" }";
+            let padding = pad.to_string().repeat(len - base.chars().count());
+            format!("fn f() -> &'static str {{ \"{padding}\" }}")
+        };
+        for unresolved in [
+            rust_line(63, 'x'),
+            format!("\n  {}\t\n", rust_line(63, 'x')),
+            rust_line(63, 'é'),
+            "fn main() {\n\n  \n    println!(\"hi\"); }".to_string(),
+        ] {
+            assert_eq!(
+                detect_language(&unresolved).as_deref(),
+                Some("rust"),
+                "{unresolved:?}"
+            );
+            assert_eq!(auto_detect_language(&unresolved), None, "{unresolved:?}");
+        }
+        for detected in [
+            rust_line(64, 'x'),
+            "fn main() {\n    println!(\"hi\");\n}".to_string(),
+        ] {
+            assert_eq!(
+                auto_detect_language(&detected).as_deref(),
+                Some("rust"),
+                "{detected:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_detect_language_handles_large_payload_without_losing_prefix_signal() {
         let mut content = String::from("pub fn main() {\n    let value = 42;\n}\n");
         content.push_str(&"x".repeat(256 * 1024));

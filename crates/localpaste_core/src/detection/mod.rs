@@ -15,6 +15,38 @@ mod magika;
 #[cfg(test)]
 mod tests;
 
+/// Trimmed length, in Unicode characters, at which auto mode classifies a paste.
+const AUTO_DETECT_MIN_CHARS: usize = 64;
+/// Non-blank line count at which auto mode classifies a paste shorter than
+/// [`AUTO_DETECT_MIN_CHARS`].
+const AUTO_DETECT_MIN_LINES: usize = 3;
+
+/// Detect the language that auto mode locks onto a paste.
+///
+/// Auto mode locks whatever it resolves, so content holding fewer than
+/// [`AUTO_DETECT_MIN_CHARS`] trimmed characters and fewer than
+/// [`AUTO_DETECT_MIN_LINES`] non-blank lines stays unresolved: a few words are
+/// too little evidence to tell code from prose. Larger content is classified by
+/// [`detect_language`].
+///
+/// # Returns
+/// Canonicalized language label when the content is large enough and detection
+/// succeeds, otherwise `None`.
+pub fn auto_detect_language(content: &str) -> Option<String> {
+    let trimmed = content.trim();
+    let too_few_chars = trimmed.chars().take(AUTO_DETECT_MIN_CHARS).count() < AUTO_DETECT_MIN_CHARS;
+    if too_few_chars
+        && trimmed
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count()
+            < AUTO_DETECT_MIN_LINES
+    {
+        return None;
+    }
+    detect_language(content)
+}
+
 /// Detect language/type of text content.
 ///
 /// # Returns

@@ -353,12 +353,14 @@ fn backend_creates_updates_and_deletes_paste() {
     backend
         .cmd_tx
         .send(CoreCmd::CreatePaste {
-            content: "hello".to_string(),
+            content: "fn main() { println!(\"hi\"); }".to_string(),
         })
         .expect("send create");
     let created_id = match recv_event(&backend.evt_rx) {
         CoreEvent::PasteCreated { paste } => {
-            assert_eq!(paste.content, "hello");
+            assert_eq!(paste.content, "fn main() { println!(\"hi\"); }");
+            // Too short to auto-detect, so the paste stays on unresolved Auto.
+            assert!(paste.language.is_none() && !paste.language_is_manual);
             paste.id
         }
         other => panic!("unexpected event: {:?}", other),

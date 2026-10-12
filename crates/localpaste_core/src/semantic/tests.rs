@@ -9,13 +9,12 @@ fn directive_only_makefiles_keep_their_language_without_a_local_recipe() {
         "# Build recipe\ndefine compile\n\t$(CC) main.c\nendef\n",
     ] {
         for content in [content.to_owned(), content.replace('\n', "\r\n")] {
-            let paste = crate::models::paste::Paste::new(content.clone(), "build rules".into());
-            assert_eq!(paste.language.as_deref(), Some("makefile"), "{content}");
-            assert_eq!(paste.content, content);
             assert_eq!(
-                crate::models::paste::PasteMeta::from(&paste).derived.kind,
-                PasteKind::Config
+                crate::detection::detect_language(&content).as_deref(),
+                Some("makefile"),
+                "{content}"
             );
+            assert_eq!(derive(&content, Some("makefile")).kind, PasteKind::Config);
             assert_eq!(derive(&content, Some("markdown")).kind, PasteKind::Code);
         }
     }
