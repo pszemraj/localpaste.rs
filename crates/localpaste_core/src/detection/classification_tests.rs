@@ -161,16 +161,6 @@ fn sentence_case_labels_over_plain_word_items_are_lists() {
             assert_eq!(derive(&body, Some("makefile")).kind, PasteKind::Document);
         }
     }
-    // A target named for the command it runs keeps the recipe reading.
-    for source in [
-        "Build:\n\tzig fetch\n\tzig build\n",
-        "Install:\n\tpoetry install\n\tpoetry run pytest\n",
-    ] {
-        for body in [source.to_owned(), source.replace('\n', "\r\n")] {
-            assert!(!crate::semantic::makefile_note_body(&body), "{body}");
-            assert_eq!(detect_language(&body).as_deref(), Some("makefile"));
-        }
-    }
 }
 
 #[test]
@@ -477,6 +467,9 @@ fn invocation_shaped_recipes_remain_makefiles_under_note_words() {
         "# TODO\nbuild:\n\tdune build\n",
         "# List of steps\ndeploy:\n\trun deploy\n",
         "# notes\nall: deps\n\tzig build\n",
+        // A sentence-case target named for the command it runs is a recipe, not a list.
+        "Build:\n\tzig fetch\n\tzig build\n",
+        "Install:\n\tpoetry install\n\tpoetry run pytest\n",
     ] {
         for body in [source.to_owned(), source.replace('\n', "\r\n")] {
             assert!(!crate::semantic::makefile_note_body(&body), "{body}");
