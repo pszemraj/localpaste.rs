@@ -671,6 +671,36 @@ fn escape_keeps_metadata_dirty_for_a_name_edited_before_the_popup() {
 }
 
 #[test]
+fn escape_keeps_a_language_detected_while_the_popup_was_open() {
+    let mut harness = make_app();
+    let app = &mut harness.app;
+    let ctx = egui::Context::default();
+    let _ = open_combo_showing(app, &ctx, LanguageCombo::Toolbar, "Auto");
+
+    // A content save detects and locks a language while the popup is open.
+    let mut saved = app.selected_paste.clone().expect("selected paste");
+    saved.language = Some("python".to_string());
+    saved.language_is_manual = true;
+    app.apply_event(CoreEvent::PasteSaved { paste: saved });
+
+    let output = press_key(app, &ctx, egui::Key::Escape);
+    assert!(!egui::Popup::is_any_open(&ctx), "Escape closes the popup");
+    assert_eq!(app.edit_language.as_deref(), Some("python"));
+    assert!(app.edit_language_is_manual);
+    assert!(
+        !app.metadata_dirty,
+        "nothing was staged, so nothing to save"
+    );
+    assert!(editor_text_rect(&output, "Python").is_some());
+    let _ = metadata_save_dispatched(&harness.cmd_rx);
+    harness.app.save_metadata_now();
+    assert!(
+        !metadata_save_dispatched(&harness.cmd_rx),
+        "the cancel sends no switch back to Auto"
+    );
+}
+
+#[test]
 fn escape_after_switching_pastes_leaves_the_new_paste_alone() {
     let mut harness = make_app();
     let app = &mut harness.app;

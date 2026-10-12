@@ -775,8 +775,11 @@ impl LocalPasteApp {
         self.metadata_dirty = false;
     }
 
-    /// Whether the draft's language fields equal `paste`'s, so the draft stages no language change.
-    fn draft_language_matches(&self, paste: &Paste) -> bool {
+    /// Compares the draft's language fields with `paste`'s.
+    ///
+    /// # Returns
+    /// `true` when they are equal, so the draft stages no language change.
+    pub(in crate::app) fn draft_language_matches(&self, paste: &Paste) -> bool {
         self.edit_language == paste.language
             && self.edit_language_is_manual == paste.language_is_manual
     }

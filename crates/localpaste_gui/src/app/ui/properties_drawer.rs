@@ -335,6 +335,8 @@ struct LanguageDraft {
     language: Option<String>,
     /// `edit_language_is_manual` when the popup opened.
     is_manual: bool,
+    /// Whether the draft differed from the loaded paste's language when the popup opened.
+    staged: bool,
 }
 
 /// A metadata draft string edited in a single-line text field.
@@ -448,7 +450,10 @@ impl LocalPasteApp {
     /// once. Escape restores the draft captured when the popup opened and
     /// recomputes `metadata_dirty` against the loaded paste, so a cancelled
     /// choice leaves nothing to save. The captured draft keeps the language
-    /// auto-detection resolved, which re-applying `Auto` would clear.
+    /// auto-detection resolved, which re-applying `Auto` would clear. A draft
+    /// that staged no language change returns to the loaded paste's language
+    /// instead, so one a content save detected while the popup was open is
+    /// not sent back as an explicit switch to `Auto`.
     ///
     /// # Arguments
     /// - `ui`: Parent UI receiving the combo box.
@@ -479,14 +484,21 @@ impl LocalPasteApp {
                     paste_id: self.selected_id.clone(),
                     language: self.edit_language.clone(),
                     is_manual: self.edit_language_is_manual,
+                    staged: self
+                        .selected_paste
+                        .as_ref()
+                        .is_some_and(|loaded| !self.draft_language_matches(loaded)),
                 };
                 ui.data_mut(|data| data.insert_temp(draft_id, draft));
             }
             Some(LanguagePopupEvent::Cancelled) => {
                 let draft = ui.data_mut(|data| data.remove_temp::<LanguageDraft>(draft_id));
                 if let Some(draft) = draft.filter(|draft| draft.paste_id == self.selected_id) {
-                    self.edit_language = draft.language;
-                    self.edit_language_is_manual = draft.is_manual;
+                    let loaded = self.selected_paste.as_ref().filter(|_| !draft.staged);
+                    (self.edit_language, self.edit_language_is_manual) = match loaded {
+                        Some(loaded) => (loaded.language.clone(), loaded.language_is_manual),
+                        None => (draft.language, draft.is_manual),
+                    };
                     self.refresh_metadata_dirty();
                 }
                 return;
