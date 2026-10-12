@@ -200,6 +200,8 @@ pub(crate) struct LocalPasteApp {
     discovery_focus_restore: Option<(egui::Id, u64)>,
     /// Native events waiting for the discovery focus boundary's next rendered frame.
     deferred_discovery_events: Vec<egui::Event>,
+    /// Start of a native close postponed while accepted input reaches its owner.
+    deferred_close_started_at: Option<Instant>,
     focus_editor_next: bool,
     style_applied: bool,
     window_shown_once: bool,
@@ -874,24 +876,12 @@ impl eframe::App for LocalPasteApp {
         if !self.deferred_discovery_events.is_empty() {
             ctx.request_repaint();
         }
+        self.finish_deferred_close(ctx);
         self.nav_probe_write_frame(ctx);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.flush_pending_saves_for_shutdown();
-    }
-}
-
-impl Drop for LocalPasteApp {
-    fn drop(&mut self) {
-        if let Some(id) = self.selected_id.take() {
-            if id == NAV_PROBE_PASTE_ID && self.nav_probe.is_some() {
-                return;
-            }
-            if let Err(err) = self.locks.release(&id, &self.lock_owner_id) {
-                warn!("failed to release paste lock '{}' on drop: {}", id, err);
-            }
-        }
     }
 }
 

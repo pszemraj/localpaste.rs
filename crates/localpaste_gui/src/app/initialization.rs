@@ -182,6 +182,7 @@ impl LocalPasteApp {
             discovery_return_focus: None,
             discovery_focus_restore: None,
             deferred_discovery_events: Vec::new(),
+            deferred_close_started_at: None,
             focus_editor_next: false,
             style_applied: false,
             window_shown_once: false,
