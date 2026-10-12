@@ -143,6 +143,37 @@ fn tabbed_notes_without_markdown_and_two_word_items_get_document_labels() {
 }
 
 #[test]
+fn sentence_case_labels_over_plain_word_items_are_lists() {
+    for source in [
+        "Groceries:\n\tflour sugar eggs",
+        "Weekend:\n\tvisit grandma\n\tclean garage\n",
+    ] {
+        for body in [source.to_owned(), source.replace('\n', "\r\n")] {
+            assert!(crate::semantic::makefile_note_body(&body), "{body}");
+            assert_eq!(crate::semantic::makefile_body_language(&body), None);
+            assert_eq!(
+                refine_magika_label("makefile", &body).as_deref(),
+                Some("markdown")
+            );
+            let paste = Paste::new(body.clone(), "note".into());
+            assert_eq!(paste.language.as_deref(), Some("markdown"), "{body}");
+            assert_eq!(PasteMeta::from(&paste).derived.kind, PasteKind::Document);
+            assert_eq!(derive(&body, Some("makefile")).kind, PasteKind::Document);
+        }
+    }
+    // A target named for the command it runs keeps the recipe reading.
+    for source in [
+        "Build:\n\tzig fetch\n\tzig build\n",
+        "Install:\n\tpoetry install\n\tpoetry run pytest\n",
+    ] {
+        for body in [source.to_owned(), source.replace('\n', "\r\n")] {
+            assert!(!crate::semantic::makefile_note_body(&body), "{body}");
+            assert_eq!(detect_language(&body).as_deref(), Some("makefile"));
+        }
+    }
+}
+
+#[test]
 fn deeply_nested_assignment_detection_has_a_bounded_scan() {
     for target in [
         format!("{}x{}", "(".repeat(30_000), ")".repeat(30_000)),

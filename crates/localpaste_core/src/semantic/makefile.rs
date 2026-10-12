@@ -137,6 +137,12 @@ pub(crate) fn makefile_rules_read_as_prose(content: &str) -> bool {
 /// agenda entry. A `#` comment with such a word only lets a sentence-shaped line
 /// read as prose; an invocation-shaped line stays a recipe.
 ///
+/// Plain words are the weakest recipe evidence ([`recipe_is_invocation`]), so a
+/// sentence-case label such as `Groceries:` over items like `flour sugar eggs`
+/// is a list. Make's own target names are lowercase or all capitals (`build`,
+/// `ALL`), and a target named for the command it runs repeats that command's
+/// word (`Build:` over `zig build`); either keeps the recipe reading.
+///
 /// # Arguments
 /// - `content`: Paste body to inspect for a complete indented note.
 ///
@@ -148,6 +154,9 @@ pub(crate) fn makefile_note_body(content: &str) -> bool {
     let mut word_items = 0;
     let mut note_label = false;
     let mut note_comment = false;
+    let mut label = "";
+    let mut invocation_items = false;
+    let mut label_repeated = false;
     let has_note_words = |heading: &str| {
         heading.split_whitespace().any(|word| {
             ["agenda", "notes", "list", "todo"]
@@ -180,6 +189,12 @@ pub(crate) fn makefile_note_body(content: &str) -> bool {
                 .all(|word| word.chars().all(char::is_alphabetic));
             word_items += usize::from(plain_words && words.len() == 1);
             saw_prose |= note_label && plain_words && words.len() <= 2;
+            invocation_items |= recipe_is_invocation(trimmed);
+            label_repeated |= words.iter().any(|word| {
+                label
+                    .split_whitespace()
+                    .any(|part| part.eq_ignore_ascii_case(word))
+            });
         } else if trimmed.strip_suffix(':').is_some_and(|heading| {
             !heading.is_empty() && heading.chars().all(|ch| ch.is_alphabetic() || ch == ' ')
         }) {
@@ -187,12 +202,15 @@ pub(crate) fn makefile_note_body(content: &str) -> bool {
                 return false;
             }
             saw_heading = true;
-            note_label |= has_note_words(trimmed.trim_end_matches(':'));
+            label = trimmed.trim_end_matches(':');
+            note_label |= has_note_words(label);
         } else {
             return false;
         }
     }
-    saw_heading && (saw_prose || word_items >= 2)
+    let sentence_case = label.starts_with(char::is_uppercase) && label.contains(char::is_lowercase);
+    saw_heading
+        && (saw_prose || word_items >= 2 || (sentence_case && invocation_items && !label_repeated))
 }
 
 /// Recognize a bare tool invocation such as `zig build` or `poetry run pytest`.

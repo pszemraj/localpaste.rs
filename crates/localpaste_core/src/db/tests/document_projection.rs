@@ -63,6 +63,8 @@ fn assert_semantic_kinds_rebuild_and_survive_restart(schema_version: u64) {
         ("# Shopping\nDairy:\n\tmilk\n\teggs\n", "shell", PasteKind::Code, PasteKind::Document),
         ("# Todo\nToday:\n\tcall the bank\n\treply to emails\n", "markdown", PasteKind::Code, PasteKind::Document),
         ("# Todo\nToday:\n\tcall the bank\n\treply to emails\n", "makefile", PasteKind::Config, PasteKind::Document),
+        ("Groceries:\n\tflour sugar eggs\n", "makefile", PasteKind::Config, PasteKind::Document),
+        ("Groceries:\n\tflour sugar eggs\n", "markdown", PasteKind::Code, PasteKind::Document),
         ("Let me know if the function works for you", "javascript", PasteKind::Code, PasteKind::Document),
         ("Let me know if the function works for you (please)", "javascript", PasteKind::Code, PasteKind::Document),
         ("Let me know if the function works for you; thanks", "javascript", PasteKind::Code, PasteKind::Document),
