@@ -102,16 +102,18 @@ pub(super) fn format_fenced_code_block(content: &str, language: Option<&str>) ->
 /// # Returns
 /// A link retaining the original URL spelling, or `None` for ordinary pasted text,
 /// for a whitespace-only selection, and for a selection that is itself a URL,
-/// which the paste replaces. Whitespace and line breaks at either end of the
-/// selection (a triple-clicked line ends with its newline) stay outside the link.
+/// which the paste replaces in full. When creating a link, whitespace and line
+/// breaks at either end of the selection (including a triple-clicked line's
+/// newline) stay outside the link.
 ///
 /// # Panics
 /// Code-span offsets come from ASCII backtick matches and the trimmed edges from
 /// `str::trim_*`, so slices are always on UTF-8 boundaries.
 pub(super) fn format_markdown_link(selection: &str, clipboard: &str) -> Option<String> {
     let destination = web_url(clipboard)?;
-    // Replacing a URL, including one inside an existing link or reference
-    // definition, must not nest a new link around it.
+    // Existing URLs use ordinary replacement, including any selected edge
+    // whitespace or newline. `web_url` trims for recognition only; returning
+    // None leaves the full selection to Paste, without nesting a new link.
     if web_url(selection).is_some() {
         return None;
     }
