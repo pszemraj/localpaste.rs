@@ -159,6 +159,7 @@ impl LocalPasteApp {
                 ui.add_space(8.0);
 
                 let mut search_buf = self.search_query.clone();
+                self.claim_discovery_focus(ui, egui::Id::new(SEARCH_INPUT_ID));
                 let search_resp = ui.add(
                     egui::TextEdit::singleline(&mut search_buf)
                         .id(egui::Id::new(SEARCH_INPUT_ID))

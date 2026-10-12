@@ -195,6 +195,9 @@ pub(crate) struct LocalPasteApp {
     /// Set when help opens so its first rendered frame shows the list from the top.
     shortcut_help_scroll_to_top: bool,
     discovery_return_focus: Option<egui::Id>,
+    /// Input a dismissed discovery surface returns focus to, with the pass that
+    /// recorded it; the input claims it while rendering (`claim_discovery_focus`).
+    discovery_focus_restore: Option<(egui::Id, u64)>,
     /// Native events waiting for the discovery focus boundary's next rendered frame.
     deferred_discovery_events: Vec<egui::Event>,
     focus_editor_next: bool,
@@ -752,6 +755,7 @@ impl eframe::App for LocalPasteApp {
         self.render_command_palette(ctx);
         self.render_paste_picker(ctx);
         self.render_shortcut_help(ctx);
+        self.expire_discovery_focus(ctx);
 
         let virtual_editor_focus_post =
             ctx.memory(|m| m.has_focus(focus_id)) || self.virtual_editor_state.has_focus;

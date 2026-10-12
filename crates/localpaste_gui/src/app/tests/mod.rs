@@ -547,3 +547,29 @@ mod virtual_editor_behaviors;
 mod virtual_editor_focus;
 mod virtual_editor_focus_shortcuts;
 mod virtual_editor_focus_support;
+
+/// Assert that each accessibility update's focus is reachable from its published root.
+///
+/// # Panics
+/// Panics if output omits the tree or points focus at a missing/hidden widget.
+fn assert_accessible_focus(output: &egui::FullOutput) {
+    let update = output.platform_output.accesskit_update.as_ref().unwrap();
+    let mut pending = vec![update.tree.as_ref().unwrap().root];
+    let mut visited = HashSet::new();
+    while let Some(id) = pending.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        let node = update
+            .nodes
+            .iter()
+            .find(|(node_id, _)| *node_id == id)
+            .unwrap_or_else(|| panic!("missing accessible node {id:?}"));
+        pending.extend(node.1.children());
+    }
+    assert!(
+        visited.contains(&update.focus),
+        "unpublished focus {:?}",
+        update.focus
+    );
+}

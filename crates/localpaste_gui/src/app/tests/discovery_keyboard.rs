@@ -121,29 +121,87 @@ fn canceling_discovery_returns_focus_and_following_paste_to_editor() {
 
 #[test]
 fn discovery_cancellation_returns_focus_to_metadata_input() {
-    for shift in [false, true] {
-        let (mut harness, _events) = make_app_with_event_tx();
-        let ctx = egui::Context::default();
-        frame(&mut harness.app, &ctx, vec![]);
-        let title_id = egui::Id::new(TITLE_INPUT_ID);
-        ctx.memory_mut(|memory| memory.request_focus(title_id));
-        frame(&mut harness.app, &ctx, vec![]);
-        frame(
-            &mut harness.app,
-            &ctx,
-            vec![key_event(egui::Key::K, linux_command(shift))],
-        );
-        frame(
-            &mut harness.app,
-            &ctx,
-            vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
-        );
-        assert!(ctx.memory(|memory| memory.has_focus(title_id)));
-        let before = harness.app.edit_name.clone();
-        frame(&mut harness.app, &ctx, vec![egui::Event::Text("x".into())]);
-        assert_ne!(harness.app.edit_name, before);
-        assert_eq!(harness.app.active_snapshot(), "content");
+    let openers = [
+        key_event(egui::Key::K, linux_command(false)),
+        key_event(egui::Key::K, linux_command(true)),
+        key_event(egui::Key::F1, egui::Modifiers::NONE),
+    ];
+    for opener in openers {
+        for input_id in [
+            TITLE_INPUT_ID,
+            PROPERTIES_NAME_INPUT_ID,
+            PROPERTIES_TAGS_INPUT_ID,
+        ] {
+            let (mut harness, _events) = make_app_with_event_tx();
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            harness.app.properties_drawer_open = true;
+            let frame = |app: &mut LocalPasteApp, events| {
+                assert_accessible_focus(&frame(app, &ctx, events));
+            };
+            frame(&mut harness.app, vec![]);
+            let input = egui::Id::new(input_id);
+            ctx.memory_mut(|memory| memory.request_focus(input));
+            frame(&mut harness.app, vec![]);
+            frame(&mut harness.app, vec![opener.clone()]);
+            assert!(harness.app.keyboard_overlay_open(), "{input_id}");
+            frame(
+                &mut harness.app,
+                vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+            );
+            assert!(!harness.app.keyboard_overlay_open(), "{input_id}");
+            assert!(ctx.memory(|memory| memory.has_focus(input)), "{input_id}");
+            let before = (harness.app.edit_name.clone(), harness.app.edit_tags.clone());
+            frame(&mut harness.app, vec![egui::Event::Text("x".into())]);
+            assert_ne!(
+                (harness.app.edit_name.clone(), harness.app.edit_tags.clone()),
+                before,
+                "{input_id}"
+            );
+            assert_eq!(harness.app.active_snapshot(), "content");
+        }
     }
+}
+
+#[test]
+fn help_dismissal_skips_a_properties_field_closed_behind_it() {
+    let (mut harness, _events) = make_app_with_event_tx();
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    harness.app.properties_drawer_open = true;
+    let frame = |app: &mut LocalPasteApp, events| {
+        let output = frame(app, &ctx, events);
+        assert_accessible_focus(&output);
+        output
+    };
+    frame(&mut harness.app, vec![]);
+    let name = egui::Id::new(PROPERTIES_NAME_INPUT_ID);
+    ctx.memory_mut(|memory| memory.request_focus(name));
+    frame(&mut harness.app, vec![]);
+    let output = frame(
+        &mut harness.app,
+        vec![key_event(egui::Key::F1, egui::Modifiers::NONE)],
+    );
+    assert!(harness.app.shortcut_help_open);
+    // Help leaves the drawer's Close button uncovered and clickable.
+    let close = label_rects(&output, "Close", |pos| pos.x > 600.0)[0].center();
+    for pressed in [true, false] {
+        frame(&mut harness.app, primary_pointer_events(close, pressed));
+    }
+    assert!(!harness.app.properties_drawer_open);
+    assert!(harness.app.shortcut_help_open);
+    frame(&mut harness.app, vec![]);
+    frame(
+        &mut harness.app,
+        vec![key_event(egui::Key::Escape, egui::Modifiers::NONE)],
+    );
+    assert!(!harness.app.keyboard_overlay_open());
+    frame(&mut harness.app, vec![]);
+    // The expired return must not steal focus once the field renders again.
+    harness.app.properties_drawer_open = true;
+    frame(&mut harness.app, vec![]);
+    frame(&mut harness.app, vec![]);
+    assert!(!ctx.memory(|memory| memory.has_focus(name)));
 }
 
 #[test]

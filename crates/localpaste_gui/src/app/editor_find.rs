@@ -165,6 +165,7 @@ impl LocalPasteApp {
             apply_editor_find_row_style(ui);
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("Find").small().color(COLOR_TEXT_MUTED));
+                self.claim_discovery_focus(ui, find_id);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut query)
                         .id(find_id)

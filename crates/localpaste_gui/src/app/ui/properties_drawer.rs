@@ -428,6 +428,7 @@ impl LocalPasteApp {
         // The field applies this frame's typing before it reports gaining focus,
         // so the value Escape returns to is read before the field runs.
         let before_input = (!had_focus).then(|| self.metadata_text_mut(field).clone());
+        self.claim_discovery_focus(ui, id);
         let response = ui.add(style(
             egui::TextEdit::singleline(self.metadata_text_mut(field)).id(id),
         ));

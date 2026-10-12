@@ -180,6 +180,7 @@ impl LocalPasteApp {
             shortcut_help_focus_requested: false,
             shortcut_help_scroll_to_top: false,
             discovery_return_focus: None,
+            discovery_focus_restore: None,
             deferred_discovery_events: Vec::new(),
             focus_editor_next: false,
             style_applied: false,

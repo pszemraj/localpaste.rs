@@ -283,12 +283,53 @@ impl LocalPasteApp {
     }
 
     /// Return keyboard ownership after dismissing a discovery surface.
+    ///
+    /// The input that opened the surface may be gone by now, such as a
+    /// Properties field whose drawer closed behind Help. egui keeps a newly
+    /// requested focus for a pass even when no widget renders it, which
+    /// publishes an accessibility focus without a node and crashes native
+    /// AccessKit. The input therefore claims the return while it renders
+    /// ([`Self::claim_discovery_focus`]), and an unclaimed return expires after
+    /// the following pass; an opener that never claims one, such as a button,
+    /// is left unfocused.
     pub(in crate::app) fn restore_discovery_focus(&mut self, ctx: &egui::Context) {
-        if let Some(id) = self.discovery_return_focus.take() {
-            if id == egui::Id::new(VIRTUAL_EDITOR_ID) {
-                self.focus_editor_next = true;
-            }
-            ctx.memory_mut(|memory| memory.request_focus(id));
+        let Some(id) = self.discovery_return_focus.take() else {
+            return;
+        };
+        if id == egui::Id::new(VIRTUAL_EDITOR_ID) {
+            // The editor takes focus from this flag while it renders.
+            self.focus_editor_next = true;
+        } else {
+            self.discovery_focus_restore = Some((id, ctx.cumulative_pass_nr()));
+            ctx.request_repaint();
+        }
+    }
+
+    /// Focuses input `id` if a dismissed discovery surface is returning focus to it.
+    ///
+    /// Call before adding the input, so the rest of this pass's events reach it.
+    ///
+    /// # Arguments
+    /// - `ui`: UI pass that will create the input.
+    /// - `id`: Stable id of that input.
+    pub(in crate::app) fn claim_discovery_focus(&mut self, ui: &egui::Ui, id: egui::Id) {
+        if self
+            .discovery_focus_restore
+            .is_some_and(|(pending, _)| pending == id)
+            && super::focus_visible_query(ui, id)
+        {
+            self.discovery_focus_restore = None;
+        }
+    }
+
+    /// Drops a discovery focus return that no input claimed by the end of the
+    /// pass after it was recorded, so it cannot take focus from later input.
+    pub(in crate::app) fn expire_discovery_focus(&mut self, ctx: &egui::Context) {
+        if self
+            .discovery_focus_restore
+            .is_some_and(|(_, pass)| ctx.cumulative_pass_nr() > pass)
+        {
+            self.discovery_focus_restore = None;
         }
     }
 
