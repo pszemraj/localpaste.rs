@@ -310,6 +310,10 @@ const HIGHLIGHT_DEBOUNCE_TINY: Duration = Duration::from_millis(15);
 const HIGHLIGHT_DEBOUNCE_LARGE_BYTES: usize = 64 * 1024;
 const HIGHLIGHT_TINY_EDIT_MAX_CHARS: usize = 4;
 const HIGHLIGHT_APPLY_IDLE: Duration = Duration::from_millis(200);
+/// Parser-state bytes the highlight worker may retain per text byte, and at least the
+/// floor; a pass that would retain more is returned uncached (`highlight/worker.rs`).
+const HIGHLIGHT_STATE_BYTES_PER_TEXT_BYTE: usize = 128;
+const HIGHLIGHT_STATE_BUDGET_FLOOR: usize = 2 * 1024 * 1024;
 const EDITOR_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(300);
 const EDITOR_DOUBLE_CLICK_DISTANCE: f32 = 8.0;
 const DRAG_AUTOSCROLL_EDGE_DISTANCE: f32 = 24.0;

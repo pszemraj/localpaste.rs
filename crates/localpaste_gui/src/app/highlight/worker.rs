@@ -9,7 +9,9 @@ use super::{
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use localpaste_core::config::env_flag_enabled;
+use std::fmt::Write as _;
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Instant;
@@ -73,7 +75,149 @@ struct HighlightWorkerLine {
     hash: u64,
     len: usize,
     spans: Vec<HighlightSpan>,
-    end_state: HighlightStateSnapshot,
+    /// State after this line, shared with the previous line when unchanged.
+    end_state: Rc<HighlightStateSnapshot>,
+    /// Bound on the parser-state bytes `end_state` owns, from [`parse_state_bytes`].
+    state_bytes: usize,
+}
+
+/// Returns a bound on the bytes `state` owns, or `None` once it exceeds `limit`.
+///
+/// syntect gives a context that uses external backreferences a copy of the
+/// whole line that pushed it, so a parse state can own any number of source
+/// lines: one for each open Markdown list item or fence, heredoc, and so on.
+/// syntect exposes no size for a state, but its derived `Debug` writes every
+/// stack frame and the full text of each captured line, so the length of that
+/// output bounds what the state owns. Counting stops at `limit`, which keeps
+/// the cost of measuring within the budget being enforced.
+fn parse_state_bytes(state: &ParseState, limit: usize) -> Option<usize> {
+    struct Counter {
+        bytes: usize,
+        limit: usize,
+    }
+    impl std::fmt::Write for Counter {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            self.bytes += text.len();
+            if self.bytes > self.limit {
+                Err(std::fmt::Error)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let mut counter = Counter { bytes: 0, limit };
+    write!(counter, "{state:?}").ok().map(|()| counter.bytes)
+}
+
+/// Parser-state bytes a pass over `text_len` bytes may retain in the cache.
+///
+/// Ordinary text stays far below this: deeply nested JSON, the heaviest case
+/// measured, retains about 80 bytes of state per byte of text. A long opening
+/// line copied into the state of every line after it can reach thousands.
+fn retained_state_budget(text_len: usize) -> usize {
+    text_len
+        .saturating_mul(super::super::HIGHLIGHT_STATE_BYTES_PER_TEXT_BYTE)
+        .max(super::super::HIGHLIGHT_STATE_BUDGET_FLOOR)
+}
+
+/// Lines produced by one worker pass, cached only while their states fit the budget.
+///
+/// Every cached line keeps the parser state it ended in, and that state can
+/// own copies of earlier source lines (see [`parse_state_bytes`]), so a long
+/// opening line can be retained once per following line. Consecutive lines
+/// with equal end states share one, though a state holding a captured line
+/// never equals its own copy, because onig compares regions by address, so
+/// those states rely on the budget alone. Distinct states are counted against
+/// `budget` before they are cloned; once a pass would exceed it, the pass
+/// keeps only its render lines and the caller returns them uncached.
+/// Highlighter states own no source text, so only parser states are measured.
+struct PassLines {
+    budget: usize,
+    state_bytes: usize,
+    cached: Vec<HighlightWorkerLine>,
+    /// Every line so far, once the budget has been exceeded.
+    uncached: Option<Vec<HighlightRenderLine>>,
+}
+
+impl PassLines {
+    /// Starts a pass that may retain `budget` bytes of parser state across `capacity` lines.
+    fn new(budget: usize, capacity: usize) -> Self {
+        Self {
+            budget,
+            state_bytes: 0,
+            cached: Vec::with_capacity(capacity),
+            uncached: None,
+        }
+    }
+
+    /// Appends a line reused from the previous pass.
+    fn push_cached(&mut self, line: HighlightWorkerLine) {
+        if let Some(lines) = self.uncached.as_mut() {
+            lines.push(worker_line_to_render_line(&line));
+            return;
+        }
+        let shared = self
+            .cached
+            .last()
+            .is_some_and(|prev| Rc::ptr_eq(&prev.end_state, &line.end_state));
+        if !shared {
+            self.state_bytes = self.state_bytes.saturating_add(line.state_bytes);
+        }
+        self.cached.push(line);
+        if self.state_bytes > self.budget {
+            self.stop_caching();
+        }
+    }
+
+    /// Appends a freshly highlighted line that ended in the given states.
+    fn push_parsed(
+        &mut self,
+        hash: u64,
+        len: usize,
+        spans: Vec<HighlightSpan>,
+        parse: &ParseState,
+        highlight: &HighlightState,
+    ) {
+        if let Some(lines) = self.uncached.as_mut() {
+            lines.push(HighlightRenderLine { len, spans });
+            return;
+        }
+        let (end_state, state_bytes) = match self.cached.last() {
+            Some(prev)
+                if prev.end_state.parse == *parse && prev.end_state.highlight == *highlight =>
+            {
+                (Rc::clone(&prev.end_state), prev.state_bytes)
+            }
+            _ => {
+                let remaining = self.budget.saturating_sub(self.state_bytes);
+                let Some(bytes) = parse_state_bytes(parse, remaining) else {
+                    self.stop_caching();
+                    self.push_parsed(hash, len, spans, parse, highlight);
+                    return;
+                };
+                self.state_bytes += bytes;
+                let snapshot = HighlightStateSnapshot {
+                    parse: parse.clone(),
+                    highlight: highlight.clone(),
+                };
+                (Rc::new(snapshot), bytes)
+            }
+        };
+        self.cached.push(HighlightWorkerLine {
+            hash,
+            len,
+            spans,
+            end_state,
+            state_bytes,
+        });
+    }
+
+    /// Drops every retained state, keeping the lines so far as render lines.
+    fn stop_caching(&mut self) {
+        self.uncached = Some(worker_lines_to_render_lines(&self.cached));
+        self.cached = Vec::new();
+        self.state_bytes = 0;
+    }
 }
 
 /// Spawns the syntect worker thread and returns its channel endpoints.
@@ -231,6 +375,18 @@ fn highlight_in_worker(
     cache: &mut HighlightWorkerCache,
     req: HighlightRequest,
 ) -> HighlightWorkerResult {
+    let super::HighlightRequestText::Rope(rope) = &req.text;
+    let state_budget = retained_state_budget(rope.len_bytes());
+    highlight_within_budget(settings, cache, req, state_budget)
+}
+
+/// Runs one worker pass whose cache may retain at most `state_budget` bytes of parser state.
+fn highlight_within_budget(
+    settings: &SyntectSettings,
+    cache: &mut HighlightWorkerCache,
+    req: HighlightRequest,
+    state_budget: usize,
+) -> HighlightWorkerResult {
     let HighlightRequest {
         buffer_epoch: _,
         paste_id,
@@ -314,7 +470,7 @@ fn highlight_in_worker(
         highlight: highlight_state.clone(),
     };
 
-    let mut new_lines = Vec::with_capacity(lines.len().max(1));
+    let mut new_lines = PassLines::new(state_budget, lines.len().max(1));
     let mut changed_start: Option<usize> = None;
     let mut changed_end: usize = 0;
     let same_len_single_step = had_cached_lines
@@ -344,7 +500,7 @@ fn highlight_in_worker(
                 .expect("single-step path requires same-length cached line");
             parse_state = old_line.end_state.parse.clone();
             highlight_state = old_line.end_state.highlight.clone();
-            new_lines.push(old_line);
+            new_lines.push_cached(old_line);
         }
 
         let mut idx = start_line;
@@ -371,7 +527,7 @@ fn highlight_in_worker(
                         let (_, old_line) = old_line_slot
                             .take()
                             .expect("single-step path requires same-length cached tail");
-                        new_lines.push(old_line);
+                        new_lines.push_cached(old_line);
                     }
                     break;
                 }
@@ -380,7 +536,7 @@ fn highlight_in_worker(
                     .expect("single-step path requires same-length cached line");
                 parse_state = old_line.end_state.parse.clone();
                 highlight_state = old_line.end_state.highlight.clone();
-                new_lines.push(old_line);
+                new_lines.push_cached(old_line);
                 idx = idx.saturating_add(1);
                 continue;
             }
@@ -396,16 +552,7 @@ fn highlight_in_worker(
                 &mut highlight_state,
                 line,
             );
-            let end_state = HighlightStateSnapshot {
-                parse: parse_state.clone(),
-                highlight: highlight_state.clone(),
-            };
-            new_lines.push(HighlightWorkerLine {
-                hash: line_hash,
-                len: line.len(),
-                spans,
-                end_state,
-            });
+            new_lines.push_parsed(line_hash, line.len(), spans, &parse_state, &highlight_state);
             idx = idx.saturating_add(1);
         }
     } else {
@@ -433,7 +580,7 @@ fn highlight_in_worker(
                 let (old_idx, old_line) = old_lines[idx].take().expect("checked Some");
                 parse_state = old_line.end_state.parse.clone();
                 highlight_state = old_line.end_state.highlight.clone();
-                new_lines.push(old_line);
+                new_lines.push_cached(old_line);
                 prev_reused_index = Some(old_idx);
                 continue;
             }
@@ -448,21 +595,29 @@ fn highlight_in_worker(
                 &mut highlight_state,
                 line,
             );
-            let end_state = HighlightStateSnapshot {
-                parse: parse_state.clone(),
-                highlight: highlight_state.clone(),
-            };
-            new_lines.push(HighlightWorkerLine {
-                hash: line_hash,
-                len: line.len(),
-                spans,
-                end_state,
-            });
+            new_lines.push_parsed(line_hash, line.len(), spans, &parse_state, &highlight_state);
             prev_reused_index = None;
         }
     }
 
-    cache.lines = new_lines;
+    if let Some(lines) = new_lines.uncached {
+        // Nothing retained can seed or patch a later pass, so the next one starts cold.
+        cache.lines.clear();
+        cache.last_revision = None;
+        cache.last_text_len = None;
+        return HighlightWorkerResult::Render(HighlightRender {
+            paste_id,
+            revision,
+            text_len,
+            base_revision: cache_base_revision,
+            base_text_len: cache_base_text_len,
+            language_hint,
+            theme_key,
+            changed_line_range: None,
+            lines,
+        });
+    }
+    cache.lines = new_lines.cached;
     cache.last_revision = Some(revision);
     cache.last_text_len = Some(text_len);
     let total_lines = cache.lines.len();
@@ -510,465 +665,4 @@ fn highlight_in_worker(
 }
 
 #[cfg(test)]
-mod resolver_tests {
-    use super::super::{resolve_syntax, syntect_language_hint, HighlightRequestText};
-    use super::{
-        highlight_in_worker, HighlightRender, HighlightRequest, HighlightWorkerResult,
-        SyntectSettings,
-    };
-    use crate::app::highlight::worker::HighlightWorkerCache;
-    use ropey::Rope;
-
-    fn render_for_label(settings: &SyntectSettings, label: &str, text: &str) -> HighlightRender {
-        let mut cache = HighlightWorkerCache::default();
-        let req = HighlightRequest {
-            buffer_epoch: 0,
-            paste_id: "test".to_string(),
-            revision: 1,
-            text: HighlightRequestText::Rope(Rope::from_str(text)),
-            language_hint: label.to_string(),
-            theme_key: "base16-mocha.dark".to_string(),
-            edit_hint: None,
-            patch_base_revision: None,
-            patch_base_text_len: None,
-        };
-        match highlight_in_worker(settings, &mut cache, req) {
-            HighlightWorkerResult::Render(render) => render,
-            HighlightWorkerResult::Patch(_) => panic!("expected full render for cold worker cache"),
-        }
-    }
-
-    fn has_non_default_coloring(settings: &SyntectSettings, render: &HighlightRender) -> bool {
-        let theme = settings
-            .ts
-            .themes
-            .get(render.theme_key.as_str())
-            .expect("theme exists");
-        let default = theme
-            .settings
-            .foreground
-            .map(|color| [color.r, color.g, color.b, color.a]);
-        render
-            .lines
-            .iter()
-            .flat_map(|line| line.spans.iter())
-            .any(|span| Some(span.style.color) != default)
-    }
-
-    fn rust_request(
-        revision: u64,
-        text: &str,
-        patch_base_revision: Option<u64>,
-        patch_base_text_len: Option<usize>,
-    ) -> HighlightRequest {
-        HighlightRequest {
-            buffer_epoch: 0,
-            paste_id: "test".to_string(),
-            revision,
-            text: HighlightRequestText::Rope(Rope::from_str(text)),
-            language_hint: "rust".to_string(),
-            theme_key: "base16-mocha.dark".to_string(),
-            edit_hint: None,
-            patch_base_revision,
-            patch_base_text_len,
-        }
-    }
-
-    fn seed_worker_cache(settings: &SyntectSettings, cache: &mut HighlightWorkerCache) -> usize {
-        let text_v1 = "let a = 1;\nlet b = 2;\n";
-        let first = highlight_in_worker(settings, cache, rust_request(1, text_v1, None, None));
-        assert!(matches!(first, HighlightWorkerResult::Render(_)));
-        text_v1.len()
-    }
-
-    #[test]
-    fn multiline_edit_rechecks_changed_lines_after_unchanged_interior_line() {
-        let settings = SyntectSettings::default();
-        for separator in [
-            "\r", "\n", "\r\n", "\u{b}", "\u{c}", "\u{85}", "\u{2028}", "\u{2029}",
-        ] {
-            let before = format!(
-                "let a = 1;{separator}{separator}let b = 2;{separator}let c = 3;{separator}"
-            );
-            let after = format!(
-                "    let a = 1;{separator}{separator}// let b = 2;{separator}let c = 3;{separator}"
-            );
-            let mut cache = HighlightWorkerCache::default();
-            let HighlightWorkerResult::Render(mut base) =
-                highlight_in_worker(&settings, &mut cache, rust_request(1, &before, None, None))
-            else {
-                panic!("cold render")
-            };
-            let mut next = rust_request(2, &after, Some(1), Some(before.len()));
-            next.edit_hint = Some(super::super::VirtualEditHint {
-                start_byte: 0,
-                touched_lines: 3,
-                inserted_chars: after.find("let c").unwrap(),
-                deleted_chars: before.find("let c").unwrap(),
-            });
-            match highlight_in_worker(&settings, &mut cache, next) {
-                HighlightWorkerResult::Render(render) => base = render,
-                HighlightWorkerResult::Patch(patch) => {
-                    base.lines.splice(patch.line_range, patch.lines);
-                }
-            }
-            let cold = render_for_label(&settings, "rust", &after);
-            assert!(
-                base.lines == cold.lines,
-                "block edits must match a cold parse with {separator:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn editor_line_hints_remain_safe_with_non_lf_line_breaks() {
-        let settings = SyntectSettings::default();
-        for separator in [
-            "\r", "\n", "\r\n", "\u{b}", "\u{c}", "\u{85}", "\u{2028}", "\u{2029}",
-        ] {
-            let comment = format!("// comment{separator}let b = 2;\n");
-            let fence = format!("```text{separator}body{separator}```{separator}prose\n");
-            for (label, text, following_line, expected) in [
-                ("rust", comment, 1, "let b = 2;\n"),
-                ("markdown", fence, 3, "prose\n"),
-            ] {
-                let render = render_for_label(&settings, label, &text);
-                let standalone = render_for_label(&settings, label, expected);
-                assert!(
-                    render.lines[following_line] == standalone.lines[0],
-                    "stateful {label} with {separator:?}"
-                );
-            }
-            let before = format!("let café = 1;{separator}let été = 2;\n");
-            let after = before.replace('2', "200");
-            let mut cache = HighlightWorkerCache::default();
-            let HighlightWorkerResult::Render(mut base) =
-                highlight_in_worker(&settings, &mut cache, rust_request(1, &before, None, None))
-            else {
-                panic!("cold render")
-            };
-            let rope = Rope::from_str(&before);
-            assert_eq!(
-                base.lines.len(),
-                rope.len_lines(),
-                "line separator {separator:?}"
-            );
-            for (highlighted, line) in base.lines.iter().zip(rope.lines()) {
-                assert_eq!(highlighted.len, line.len_bytes());
-                let source = line.to_string();
-                for span in &highlighted.spans {
-                    assert!(source.is_char_boundary(span.range.start));
-                    assert!(source.is_char_boundary(span.range.end));
-                }
-            }
-            let following = render_for_label(&settings, "rust", "let été = 2;\n");
-            assert!(
-                base.lines[1] == following.lines[0],
-                "line separator {separator:?}"
-            );
-            let mut next = rust_request(2, &after, Some(1), Some(before.len()));
-            next.edit_hint = Some(super::super::VirtualEditHint {
-                start_byte: before.find('2').unwrap(),
-                touched_lines: 1,
-                inserted_chars: 3,
-                deleted_chars: 1,
-            });
-            match highlight_in_worker(&settings, &mut cache, next) {
-                HighlightWorkerResult::Render(render) => base = render,
-                HighlightWorkerResult::Patch(patch) => {
-                    base.lines.splice(patch.line_range, patch.lines);
-                }
-            }
-            let cold = render_for_label(&settings, "rust", &after);
-            assert!(base.lines == cold.lines, "line separator {separator:?}");
-        }
-    }
-
-    #[test]
-    fn crlf_boundary_edits_do_not_reuse_stale_prefix_lines() {
-        let settings = SyntectSettings::default();
-        for (before, old, new) in [
-            ("a\rb\n# c\n", "b", ""),
-            ("// alpha\r\nlet b=2;\n", "\n", "x"),
-            ("// alpha\r\nlet b=2;\n", "\n", ""),
-            ("// alpha\rxlet b=2;\n", "x", "\n"),
-        ] {
-            let after = before.replacen(old, new, 1);
-            let mut cache = HighlightWorkerCache::default();
-            let HighlightWorkerResult::Render(mut base) =
-                highlight_in_worker(&settings, &mut cache, rust_request(1, before, None, None))
-            else {
-                panic!("cold render")
-            };
-            let mut next = rust_request(2, &after, Some(1), Some(before.len()));
-            next.edit_hint = Some(super::super::VirtualEditHint {
-                start_byte: before.find(old).unwrap(),
-                touched_lines: 2,
-                inserted_chars: new.chars().count(),
-                deleted_chars: old.chars().count(),
-            });
-            match highlight_in_worker(&settings, &mut cache, next) {
-                HighlightWorkerResult::Render(render) => base = render,
-                HighlightWorkerResult::Patch(patch) => {
-                    base.lines.splice(patch.line_range, patch.lines);
-                }
-            }
-            assert!(base.lines == render_for_label(&settings, "rust", &after).lines);
-        }
-    }
-
-    #[test]
-    fn markdown_fence_edit_updates_downstream_highlights_like_a_cold_parse() {
-        let settings = SyntectSettings::default();
-        for (before, old, new) in [
-            (
-                "```rust\nfn main() {}\n```\nprose after fence\n",
-                "```rust\n",
-                "",
-            ),
-            (
-                "# Note\n```rust\nfn main() {}\n```\nprose after fence\nmore prose\n",
-                "```\nprose",
-                "prose",
-            ),
-            (
-                "# Note\n```rust\nfn main() {}\n```\nprose after fence\n",
-                "```rust\n",
-                "",
-            ),
-            (
-                "# Note\n```rust\nfn main() {}\nprose after fence\nmore prose\n",
-                "prose after fence",
-                "```\nprose after fence",
-            ),
-            (
-                "# Note\nfn main() {}\nmore prose\n",
-                "fn main() {}",
-                "```rust\nfn main() {}",
-            ),
-            (
-                "# Note\r\n```rust\r\nfn main() {}\r\n```\r\nprose after fence\r\n",
-                "```\r\nprose",
-                "prose",
-            ),
-            (
-                "# Note\n```rust\nfn main() {}\n```\nprose after fence\n",
-                "```\nprose",
-                "~~~\nprose",
-            ),
-            ("```rust\ncode\n```\nprose\n", "rust", "python"),
-            ("````rust\ncode\n```\nprose\n", "````rust", "```rust"),
-            ("```rust\ncode\n```", "```rust", "````rust"),
-            ("a\rb\n# c\n", "b", ""),
-            ("a\u{2028}b\n# c\n", "b", "longer"),
-            (
-                "- item\n   ```sh\n     ls\n     ```\n  prose\n",
-                "     ```",
-                "      ```",
-            ),
-            (
-                "1. item\n    ~~~sh\n      ls\n      ~~~\n   prose\n",
-                "~~~sh",
-                "~~~~sh",
-            ),
-            (
-                "> ```text\n> code\n> # Inside quote\nOutside prose\n",
-                "> # Inside quote",
-                "# Outside quote",
-            ),
-        ] {
-            let mut cache = HighlightWorkerCache::default();
-            let after = before.replacen(old, new, 1);
-            let mut first = rust_request(1, before, None, None);
-            first.language_hint = "markdown".into();
-            let HighlightWorkerResult::Render(mut base) =
-                highlight_in_worker(&settings, &mut cache, first)
-            else {
-                panic!("cold render")
-            };
-            // Apply, undo, and redo against the same worker cache. Each step
-            // must match an independent cold parse, including line lengths.
-            for (step, (previous, current, removed, inserted)) in [
-                (before, after.as_str(), old, new),
-                (after.as_str(), before, new, old),
-                (before, after.as_str(), old, new),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let revision = step as u64 + 2;
-                let mut next =
-                    rust_request(revision, current, Some(revision - 1), Some(previous.len()));
-                next.language_hint = "markdown".into();
-                next.edit_hint = Some(super::super::VirtualEditHint {
-                    start_byte: before.find(old).unwrap(),
-                    touched_lines: removed
-                        .matches('\n')
-                        .count()
-                        .max(inserted.matches('\n').count())
-                        + 1,
-                    inserted_chars: inserted.chars().count(),
-                    deleted_chars: removed.chars().count(),
-                });
-                if step > 0 {
-                    // Actual history operations clear the single-edit hint.
-                    next.edit_hint = None;
-                }
-                match highlight_in_worker(&settings, &mut cache, next) {
-                    HighlightWorkerResult::Render(render) => base = render,
-                    HighlightWorkerResult::Patch(patch) => {
-                        base.lines.splice(patch.line_range, patch.lines);
-                    }
-                }
-                let cold = render_for_label(&settings, "markdown", current);
-                assert!(
-                    base.lines == cold.lines,
-                    "incremental step {step} must match cold parse: {old:?} -> {new:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn resolve_syntax_handles_common_canonical_labels() {
-        let settings = SyntectSettings::default();
-        let cases = [
-            "rust",
-            "python",
-            "javascript",
-            "go",
-            "java",
-            "html",
-            "css",
-            "json",
-            "yaml",
-            "sql",
-        ];
-        for label in cases {
-            let syntax = resolve_syntax(&settings.ps, label);
-            assert_ne!(syntax.name, "Plain Text", "label: {label}");
-        }
-    }
-
-    #[test]
-    fn resolve_syntax_falls_back_to_plain_for_unknown_or_text() {
-        let settings = SyntectSettings::default();
-        assert_eq!(
-            resolve_syntax(&settings.ps, "somethingtotallyunknown").name,
-            "Plain Text"
-        );
-        assert_eq!(resolve_syntax(&settings.ps, "").name, "Plain Text");
-        assert_eq!(resolve_syntax(&settings.ps, "text").name, "Plain Text");
-        assert_eq!(resolve_syntax(&settings.ps, "txt").name, "Plain Text");
-    }
-
-    #[test]
-    fn syntect_hint_uses_canonical_labels() {
-        assert_eq!(syntect_language_hint(" csharp "), "cs");
-        assert_eq!(syntect_language_hint("bash"), "shell");
-        assert_eq!(syntect_language_hint("jsonl"), "json");
-        assert_eq!(syntect_language_hint(""), "text");
-    }
-
-    #[test]
-    fn resolve_syntax_alias_and_unsupported_matrix() {
-        let settings = SyntectSettings::default();
-        let cases = [
-            ("cs", false),
-            ("shell", false),
-            ("cpp", false),
-            ("powershell", false),
-            ("zig", true),
-            ("scss", true),
-            ("kotlin", true),
-            ("elixir", true),
-            ("dart", true),
-        ];
-        for (label, expect_plain) in cases {
-            let syntax = resolve_syntax(&settings.ps, label);
-            if expect_plain {
-                assert_eq!(syntax.name, "Plain Text", "label: {label}");
-            } else {
-                assert_ne!(syntax.name, "Plain Text", "label: {label}");
-            }
-        }
-    }
-
-    #[test]
-    fn high_priority_fallbacks_produce_non_default_coloring() {
-        let settings = SyntectSettings::default();
-        let cases = [
-            (
-                "typescript",
-                "type User = { name: string };\nconst user: User = { name: \"ada\" };",
-            ),
-            (
-                "toml",
-                "[tool.localpaste]\nname = \"demo\"\nenabled = true\n",
-            ),
-            (
-                "swift",
-                "import Foundation\nstruct User { let id: Int }\nfunc main() { print(\"hi\") }\n",
-            ),
-            (
-                "powershell",
-                "param([string]$Name)\nWrite-Host \"hello $Name\"\n",
-            ),
-        ];
-        for (label, content) in cases {
-            let render = render_for_label(&settings, label, content);
-            assert!(
-                has_non_default_coloring(&settings, &render),
-                "expected non-default coloring for {label}"
-            );
-        }
-    }
-
-    #[test]
-    fn worker_emits_patch_only_when_ui_base_matches_worker_cache() {
-        let settings = SyntectSettings::default();
-        let mut cache = HighlightWorkerCache::default();
-        let base_text_len = seed_worker_cache(&settings, &mut cache);
-
-        let text_v2 = "let a = 1;\nlet b = 3;\n";
-        let req_v2_patch = rust_request(2, text_v2, Some(1), Some(base_text_len));
-        let second = highlight_in_worker(&settings, &mut cache, req_v2_patch);
-        assert!(matches!(second, HighlightWorkerResult::Patch(_)));
-
-        let text_v3 = "let a = 4;\nlet b = 3;\n";
-        let req_v3_wrong_base = rust_request(3, text_v3, Some(0), Some(123));
-        let third = highlight_in_worker(&settings, &mut cache, req_v3_wrong_base);
-        assert!(matches!(third, HighlightWorkerResult::Render(_)));
-    }
-
-    #[test]
-    fn worker_emits_full_render_when_line_count_changes() {
-        let settings = SyntectSettings::default();
-        let mut cache = HighlightWorkerCache::default();
-        let base_text_len = seed_worker_cache(&settings, &mut cache);
-
-        let text_v2 = "let a = 1;\nlet inserted = 9;\nlet b = 2;\n";
-        let req_v2_line_insert = rust_request(2, text_v2, Some(1), Some(base_text_len));
-        let second = highlight_in_worker(&settings, &mut cache, req_v2_line_insert);
-        assert!(matches!(second, HighlightWorkerResult::Render(_)));
-    }
-
-    #[test]
-    fn worker_accepts_rope_payload_requests() {
-        let settings = SyntectSettings::default();
-        let mut cache = HighlightWorkerCache::default();
-        let req = HighlightRequest {
-            buffer_epoch: 0,
-            paste_id: "test".to_string(),
-            revision: 1,
-            text: HighlightRequestText::Rope(ropey::Rope::from_str("let a = 1;\n")),
-            language_hint: "rust".to_string(),
-            theme_key: "base16-mocha.dark".to_string(),
-            edit_hint: None,
-            patch_base_revision: None,
-            patch_base_text_len: None,
-        };
-        let out = highlight_in_worker(&settings, &mut cache, req);
-        assert!(matches!(out, HighlightWorkerResult::Render(_)));
-    }
-}
+mod resolver_tests;
