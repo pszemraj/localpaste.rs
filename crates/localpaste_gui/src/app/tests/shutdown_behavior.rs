@@ -270,7 +270,12 @@ fn on_exit_forces_final_dirty_snapshots_even_when_acks_never_arrive() {
 
 #[test]
 fn on_exit_saves_input_accepted_while_its_paste_loads() {
-    for case in ["append", "picker text", "picker paste"] {
+    for case in [
+        "append",
+        "picker text",
+        "picker paste",
+        "append then picker text",
+    ] {
         let mut harness = make_app();
         let dir = TempDir::new().expect("temp dir");
         let db_path = dir.path().join("db").to_string_lossy().into_owned();
@@ -295,11 +300,16 @@ fn on_exit_saves_input_accepted_while_its_paste_loads() {
                 "existing\nappended"
             }
             _ => {
+                // An append queued before the picker opens the same paste applies
+                // ahead of the input the picker retains, as it does in a frame.
+                if case.starts_with("append") {
+                    harness.app.paste_into_editor(&ctx, vec!["A".into()]);
+                }
                 harness.app.open_palette_selection("alpha".into());
-                let (event, expected) = if case == "picker text" {
-                    (egui::Event::Text("typed ".into()), "typed existing")
-                } else {
-                    (egui::Event::Paste("pasted ".into()), "pasted existing")
+                let (event, expected) = match case {
+                    "picker text" => (egui::Event::Text("typed ".into()), "typed existing"),
+                    "picker paste" => (egui::Event::Paste("pasted ".into()), "pasted existing"),
+                    _ => (egui::Event::Text("B".into()), "existing\nAB"),
                 };
                 let mut input = egui::RawInput {
                     events: vec![event],

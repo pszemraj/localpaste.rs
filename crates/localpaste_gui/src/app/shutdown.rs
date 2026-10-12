@@ -105,18 +105,21 @@ impl LocalPasteApp {
     ///
     /// Overlays no longer own the keyboard once the app exits, so only a
     /// version reset, which replaces the buffer, holds the input back.
+    /// A queued append predates any input the picker retains for the same
+    /// paste, because the picker retains `Ctrl/Cmd+Shift+V` itself, so the
+    /// append applies first, as it does in a frame.
     fn apply_deferred_editor_input_for_shutdown(&mut self, ctx: &egui::Context) {
         if self.reset_transition_active() || self.history_reset_flush_active() {
             return;
+        }
+        if self.pending_editor_paste_target_loaded() {
+            self.apply_pending_editor_paste(ctx);
         }
         if let Some(events) = self.take_ready_pending_picker_input() {
             let commands = commands_from_events(&events, true);
             if self.apply_virtual_commands(ctx, &commands).changed {
                 self.mark_dirty();
             }
-        }
-        if self.pending_editor_paste_target_loaded() {
-            self.apply_pending_editor_paste(ctx);
         }
     }
 
