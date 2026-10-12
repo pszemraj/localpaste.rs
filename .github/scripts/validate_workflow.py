@@ -463,25 +463,14 @@ def validate_release_trigger_rules(path: Path, data: dict[str, Any]) -> list[str
         errors.append(f"{path}: expected 'on' to be a mapping")
         return errors
 
-    if "pull_request" in on_section:
-        errors.append(f"{path}: release workflow must not define pull_request trigger")
+    for trigger in on_section:
+        if trigger not in {"release", "workflow_dispatch"}:
+            errors.append(f"{path}: release workflow must not define {trigger} trigger")
 
-    if "push" not in on_section:
-        errors.append(f"{path}: release workflow must define push tag trigger")
-        return errors
-
-    push_section = on_section.get("push")
-    if not isinstance(push_section, dict):
-        errors.append(f"{path}: release workflow push trigger must be a mapping")
-        return errors
-
-    tags = push_section.get("tags")
-    accepted_tag_globs = {"v*", "v[0-9]*.[0-9]*.[0-9]*"}
-    if not isinstance(tags, list) or not any(
-        isinstance(tag, str) and tag in accepted_tag_globs for tag in tags
-    ):
+    release_section = on_section.get("release")
+    if not isinstance(release_section, dict) or release_section.get("types") != ["published"]:
         errors.append(
-            f"{path}: release workflow push.tags must include one of {sorted(accepted_tag_globs)}"
+            f"{path}: release workflow must trigger only on release.types: [published]"
         )
 
     if "workflow_dispatch" not in on_section:

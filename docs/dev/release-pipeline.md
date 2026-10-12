@@ -4,19 +4,19 @@ Artifact names and installation steps for users are in [GUI Releases](../release
 
 ## Workflows
 
-[`release-gui.yml`](../../.github/workflows/release-gui.yml) builds and publishes the artifacts when a version tag is pushed or when started manually; a pushed tag that is not a stable `vX.Y.Z` fails tag resolution. It runs a server and CLI smoke test on Linux similar to the [devlog runbook](devlog.md#runtime-smoke-test-server-cli) (create, search, delete, and a second paste read back after a restart), then builds, packages, and checks the GUI on Windows, Linux, and macOS in parallel. A run that [publishes](#source-modes) then uploads the assets and a `checksums.sha256` file to the GitHub release for the tag, which needs all three platform jobs to succeed.
+[`release-gui.yml`](../../.github/workflows/release-gui.yml) builds and uploads artifacts when a GitHub Release is published or when started manually; the release tag must be a stable `vX.Y.Z`. It runs a server and CLI smoke test on Linux similar to the [devlog runbook](devlog.md#runtime-smoke-test-server-cli) (create, search, delete, and a second paste read back after a restart), then builds, packages, and checks the GUI on Windows, Linux, and macOS in parallel. A run that [publishes](#source-modes) then uploads the assets and a `checksums.sha256` file to the GitHub release for the tag, which needs all three platform jobs to succeed.
 
 [`verify-gui-packaging.yml`](../../.github/workflows/verify-gui-packaging.yml) is a manual, macOS-only rehearsal: workspace check, GUI tests, packaging, and signing when credentials exist. It publishes nothing and keeps its output as a workflow artifact for seven days.
 
 [`workflow-lint.yml`](../../.github/workflows/workflow-lint.yml) runs `validate_workflow.py` (YAML, embedded shell, and release invariants such as job order, the platform matrix, and the macOS signing and WiX rules) plus the release helper tests, on pull requests that touch workflows or scripts and when started manually. The same commands are in the [validation loop](devlog.md#validation-loop) for local runs.
 
-Nothing runs on pushes to the main branch or on a schedule.
+Release builds do not run on PR merges, branch or tag pushes, draft saves, release-note edits, or a schedule. Publishing a saved draft triggers the build, just like publishing a new release directly. The workflow validator rejects extra release-build triggers, including schedules and tag pushes.
 
 ## Source modes
 
 A run packages either a release tag or the current commit.
 
-In `release_tag` mode the tag must be a stable `vX.Y.Z` (the leading `v` is optional on manual input) that exists in the repository, and `[workspace.package].version` in the root `Cargo.toml` at that tag must equal it. The smoke and build jobs check out the tag's commit, so the build matches the tag exactly. They also run the helper scripts from that checkout, so a change to a script's command-line flags must keep working against older tags; the workflow probes `release_gui_prepare.py --help` before passing `--expected-wix-major` for that reason. A pushed tag always uses this mode and publishes.
+In `release_tag` mode the tag must be a stable `vX.Y.Z` (the leading `v` is optional on manual input) that exists in the repository, and `[workspace.package].version` in the root `Cargo.toml` at that tag must equal it. The smoke and build jobs check out the tag's commit, so the build matches the tag exactly. They also run the helper scripts from that checkout, so a change to a script's command-line flags must keep working against older tags; the workflow probes `release_gui_prepare.py --help` before passing `--expected-wix-major` for that reason. A published release always uses this mode and uploads to that release.
 
 In `current_ref` mode the run packages the commit it was started from and never publishes. The version comes from the workspace version, which may be a prerelease. Artifact names keep the full prerelease version, but the MSI uses only `major.minor.patch`, because WiX product versions cannot carry prerelease or build metadata.
 
@@ -26,8 +26,8 @@ A manual run defaults to `current_ref` with `dry_run` enabled. To publish manual
 
 1. Set `[workspace.package].version` in the root `Cargo.toml` to the release version, build once so `Cargo.lock` records it (release builds use `--locked`), and merge both. The workflow rejects a tag that disagrees with the version.
 2. Optionally rehearse: start `release-gui` manually on the branch with the defaults. The packages are kept as workflow artifacts for one day.
-3. Tag the release commit `vX.Y.Z` and push the tag.
-4. Watch the run. On success the release for the tag holds the three packages, the three archives, and `checksums.sha256`. The workflow writes no release notes beyond the macOS note below, so add the rest on the release page.
+3. In GitHub Releases, choose **Draft a new release**, select or create the tag `vX.Y.Z` on the merged release commit, and write the release notes. You can save the draft and return to it later without starting a build.
+4. Click **Publish release**. This starts the build; on success the same release holds the three packages, the three archives, and `checksums.sha256`. The workflow preserves your release notes and appends only the macOS note below.
 
 Re-running the workflow for a tag replaces assets that have the same names.
 
