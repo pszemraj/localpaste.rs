@@ -685,6 +685,12 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+    env:
+      # Same six secrets as build_package's mac_signing gate; a signed DMG needs no Gatekeeper workaround.
+      MACOS_SIGNED: >-
+        ${{ secrets.APPLE_SIGNING_CERT_BASE64 != '' && secrets.APPLE_SIGNING_CERT_PASSWORD != ''
+        && secrets.APPLE_SIGNING_IDENTITY != '' && secrets.APPLE_ID != ''
+        && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
     steps:
       - name: Download packaged assets
         uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
@@ -722,7 +728,7 @@ jobs:
             dist/release-assets/checksums.sha256
       - name: Update macOS Gatekeeper instructions
         id: mac_gatekeeper
-        if: steps.mac_dmg.outputs.found == 'true'
+        if: steps.mac_dmg.outputs.found == 'true' && env.MACOS_SIGNED != 'true'
         # Install guidance must never turn a successful asset upload into a failed release.
         continue-on-error: true
         timeout-minutes: 2

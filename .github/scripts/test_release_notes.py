@@ -143,3 +143,12 @@ else:
         steps = data["jobs"]["publish"]["steps"]
         steps.insert(0, steps.pop())
         self.assertTrue(validate_workflow.validate_release_note_rules(WORKFLOW_PATH, data))
+
+    def test_signed_builds_skip_unsigned_install_instructions(self):
+        data = load_workflow()
+        gate = validate_workflow.find_step(data["jobs"]["build_package"], step_id="mac_signing")
+        signed = data["jobs"]["publish"]["env"]["MACOS_SIGNED"]
+        self.assertTrue(gate["env"])
+        for secret in gate["env"]:
+            self.assertIn(f"secrets.{secret} != ''", signed)
+        self.assertIn("env.MACOS_SIGNED != 'true'", self.step["if"])
