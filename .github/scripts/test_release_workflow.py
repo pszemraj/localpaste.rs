@@ -167,8 +167,8 @@ class ReleaseSourceTests(unittest.TestCase):
         self.assertFalse(helper.exists())
         self.assertEqual(self.git("rev-parse", "HEAD"), self.release_sha)
 
-    def test_local_mac_cache_resolution_ignores_dirty_manifests_and_preserves_cache(self):
-        """Exercise the real source/cache shell logic without a native Mac build."""
+    def test_local_mac_build_uses_tagged_source_with_checkout_cache_and_config(self):
+        """Exercise the real source/cache/config shell logic without a native Mac build."""
         manifest = self.root / "Cargo.toml"
         lockfile = self.root / "Cargo.lock"
         manifest.write_text("[workspace\n# unfinished local edit\n")
@@ -185,7 +185,8 @@ class ReleaseSourceTests(unittest.TestCase):
         probe = tools / "cache-probe.sh"
         # Only native platform detection and JSON decoding are substituted.
         probe.write_text(prefix.replace("/usr/bin/plutil", "plutil") +
-                         '\nprintf "%s\\n" "$target_dir"\n')
+                         '\nprintf "%s\\n" "$target_dir"\n'
+                         'if [[ -f .cargo/config.toml ]]; then cat .cargo/config.toml; fi\n')
         stubs = self.root / "test-bin"
         stubs.mkdir()
         commands = {
@@ -220,8 +221,17 @@ print(json.dumps({"target_directory": str(target.resolve())}))
             "METADATA_LOG": str(metadata_log),
         }
         env.pop("CARGO_TARGET_DIR", None)
-        for configured in (None, str(self.root / "cache with spaces"), "relative cache"):
-            with self.subTest(configured=configured):
+        local_config = self.root / ".cargo/config.toml"
+        cases = [(configured, cargo_config)
+                 for configured in (None, str(self.root / "cache with spaces"), "relative cache")
+                 for cargo_config in (None, "[build]\njobs = 3\n")]
+        for configured, cargo_config in cases:
+            with self.subTest(configured=configured, cargo_config=cargo_config):
+                if cargo_config:
+                    local_config.parent.mkdir(exist_ok=True)
+                    local_config.write_text(cargo_config)
+                elif local_config.exists():
+                    local_config.unlink()
                 case_env = env | ({"CARGO_TARGET_DIR": configured} if configured else {})
                 result = subprocess.run(
                     ["/bin/bash", str(probe), "v0.5.0"], cwd=self.root,
@@ -231,7 +241,10 @@ print(json.dumps({"target_directory": str(target.resolve())}))
                 expected = Path(configured) if configured else self.root / "target"
                 if not expected.is_absolute():
                     expected = self.root / expected
-                self.assertEqual(Path(result.stdout.strip()).resolve(), expected.resolve())
+                target, _, build_config = result.stdout.partition("\n")
+                self.assertEqual(Path(target).resolve(), expected.resolve())
+                # The untracked repo-local Cargo config reaches the build's working directory.
+                self.assertEqual(build_config, cargo_config or "")
                 metadata = json.loads(metadata_log.read_text())
                 self.assertEqual(Path(metadata["cwd"]), self.root.resolve())
                 self.assertNotEqual(Path(metadata["manifest"]), manifest.resolve())

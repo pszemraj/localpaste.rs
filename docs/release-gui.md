@@ -35,7 +35,7 @@ From a source checkout on macOS, build an existing tag without publishing a rele
 bash tools/build-macos-app.sh v0.5.0
 ```
 
-The script builds the committed source for your Mac and prints the path to `LocalPaste.app` under `dist/macos/`. Drag that app into Applications, double-click it, and choose **Keep in Dock** from its Dock menu. Omit the tag to build `HEAD`; uncommitted changes are excluded, including unfinished manifest or lockfile edits. Cargo uses the configured build cache, or this checkout's `target/` directory by default. The current checkout stays on its branch, and repeated builds produce separate output directories.
+The script builds the committed source for your Mac and prints the path to `LocalPaste.app` under `dist/macos/`. Drag that app into Applications, double-click it, and choose **Keep in Dock** from its Dock menu. Omit the tag to build `HEAD`; uncommitted changes are excluded, including unfinished manifest or lockfile edits. Cargo uses this checkout's configuration, including an untracked `.cargo/config.toml`, and builds into the configured cache or this checkout's `target/` directory. The current checkout stays on its branch, and repeated builds produce separate output directories.
 
 This needs the Git, Rust, and native build tools listed in the [Quick Start](../README.md#quick-start). It uses built-in macOS tools to assemble the app and apply a local ad-hoc signature, with no Apple account, notarization, DMG, or extra packaging tool. It does not install or launch the app.
 

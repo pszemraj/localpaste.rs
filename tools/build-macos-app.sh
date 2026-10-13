@@ -28,6 +28,11 @@ if [[ "$target_dir" == "$source_dir/target" ]]; then
     # Cargo's default follows the archived workspace; reuse a persistent cache.
     target_dir="$repo/target"
 fi
+# Cargo reads config from the cwd and git archive omits the untracked repo-local one; keep it.
+if [[ -f "$repo/.cargo/config.toml" ]]; then
+    mkdir -p "$source_dir/.cargo"
+    cp "$repo/.cargo/config.toml" "$source_dir/.cargo/config.toml"
+fi
 cd "$source_dir"
 
 package_id="$(cargo pkgid -p localpaste_gui)"
