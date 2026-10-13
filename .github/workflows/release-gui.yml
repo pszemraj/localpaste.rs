@@ -269,7 +269,8 @@ jobs:
           WORKFLOW_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
-          RELEASE_SCRIPTS="$(mktemp -d "${RUNNER_TEMP}/localpaste-release-tools.XXXXXX")"
+          # `pwd` turns Windows' D:\a\_temp into /d/a/_temp, which Git Bash's tar can open.
+          RELEASE_SCRIPTS="$(cd "$(mktemp -d "${RUNNER_TEMP}/localpaste-release-tools.XXXXXX")" && pwd)"
           git archive --format=tar "${WORKFLOW_SHA}" .github/scripts | tar -xf - -C "${RELEASE_SCRIPTS}"
           echo "RELEASE_SCRIPTS=${RELEASE_SCRIPTS}/.github/scripts" >> "$GITHUB_ENV"
       - name: Summarize build source
