@@ -10,7 +10,7 @@ Artifact names and installation steps for users are in [GUI Releases](../release
 
 [`workflow-lint.yml`](../../.github/workflows/workflow-lint.yml) runs `validate_workflow.py` (YAML, embedded shell, and release invariants such as job order, the platform matrix, and the macOS signing and WiX rules) plus the release helper tests, on pull requests that touch workflows or scripts and when started manually. The same commands are in the [validation loop](devlog.md#validation-loop) for local runs.
 
-Release builds do not run on PR merges, branch or tag pushes, draft saves, release-note edits, or a schedule. Publishing a saved draft triggers the build, just like publishing a new release directly. The workflow validator rejects extra release-build triggers, including schedules and tag pushes.
+Release builds do not run on PR merges, branch or tag pushes, draft saves, release-note edits, or a schedule. Publishing a saved draft triggers the build, just like publishing a new release directly. The run uses the workflow file from the tag's commit, so publishing a release whose tag points at a commit without the `release` trigger starts no build. The workflow validator rejects extra release-build triggers, including schedules and tag pushes.
 
 ## Source modes
 
@@ -25,11 +25,13 @@ A manual run defaults to `current_ref` with `dry_run` enabled. To publish manual
 ## Cutting a release
 
 1. Set `[workspace.package].version` in the root `Cargo.toml` to the release version, build once so `Cargo.lock` records it (release builds use `--locked`), and merge both. The workflow rejects a tag that disagrees with the version.
-2. Optionally rehearse: start `release-gui` manually on the branch with the defaults. The packages are kept as workflow artifacts for one day.
+2. Optionally rehearse: start `release-gui` manually on the branch with the defaults. The packages are kept as workflow artifacts for one day. A rehearsal catches packaging failures before the release is public.
 3. In GitHub Releases, choose **Draft a new release**, select or create the tag `vX.Y.Z` on the merged release commit, and write the release notes. You can save the draft and return to it later without starting a build.
 4. Click **Publish release**. This starts the build; on success the same release holds the three packages, the three archives, and `checksums.sha256`. The workflow preserves your release notes and appends only the macOS note below.
 
 Re-running the workflow for a tag replaces assets that have the same names.
+
+If the build fails after publishing, the release stays public without assets. When the fix belongs in the workflow or its helper scripts, merge it, then start `release-gui` manually in `release_tag` mode for the same tag with `dry_run` off: the run builds the tagged source with the fixed helpers and uploads to the existing release. A fix to the Rust source needs a new version.
 
 ## Packaging
 
