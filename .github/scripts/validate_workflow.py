@@ -463,25 +463,14 @@ def validate_release_trigger_rules(path: Path, data: dict[str, Any]) -> list[str
         errors.append(f"{path}: expected 'on' to be a mapping")
         return errors
 
-    if "pull_request" in on_section:
-        errors.append(f"{path}: release workflow must not define pull_request trigger")
+    for trigger in on_section:
+        if trigger not in {"release", "workflow_dispatch"}:
+            errors.append(f"{path}: release workflow must not define {trigger} trigger")
 
-    if "push" not in on_section:
-        errors.append(f"{path}: release workflow must define push tag trigger")
-        return errors
-
-    push_section = on_section.get("push")
-    if not isinstance(push_section, dict):
-        errors.append(f"{path}: release workflow push trigger must be a mapping")
-        return errors
-
-    tags = push_section.get("tags")
-    accepted_tag_globs = {"v*", "v[0-9]*.[0-9]*.[0-9]*"}
-    if not isinstance(tags, list) or not any(
-        isinstance(tag, str) and tag in accepted_tag_globs for tag in tags
-    ):
+    release_section = on_section.get("release")
+    if not isinstance(release_section, dict) or release_section.get("types") != ["published"]:
         errors.append(
-            f"{path}: release workflow push.tags must include one of {sorted(accepted_tag_globs)}"
+            f"{path}: release workflow must trigger only on release.types: [published]"
         )
 
     if "workflow_dispatch" not in on_section:
@@ -539,10 +528,10 @@ def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> li
         )
         return errors
 
-    sign_step = find_step(build_job, step_name="Sign, notarize, and verify macOS artifacts")
+    sign_step = find_step(build_job, step_name="Notarize DMG and verify macOS artifacts")
     if sign_step is None:
         errors.append(
-            f"{path}: build_package must include 'Sign, notarize, and verify macOS artifacts' step"
+            f"{path}: build_package must include 'Notarize DMG and verify macOS artifacts' step"
         )
     else:
         sign_if = sign_step.get("if")
@@ -575,7 +564,7 @@ def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> li
     return errors
 
 
-def validate_release_wix_prepare_guard(path: Path, data: dict[str, Any]) -> list[str]:
+def validate_release_packaging_helpers(path: Path, data: dict[str, Any]) -> list[str]:
     if path.name != "release-gui.yml":
         return []
 
@@ -588,32 +577,43 @@ def validate_release_wix_prepare_guard(path: Path, data: dict[str, Any]) -> list
     if not isinstance(build_job, dict):
         return errors
 
-    prepare_step = find_step(
-        build_job,
-        step_name="Prepare packager config and staged runtime",
-    )
-    if prepare_step is None:
+    loader = find_step(build_job, step_name="Load packaging helpers from workflow commit")
+    if loader is None or loader.get("env", {}).get("WORKFLOW_SHA") != "${{ github.workflow_sha }}":
         errors.append(
-            f"{path}: build_package must include 'Prepare packager config and staged runtime' step"
+            f"{path}: build_package must load packaging helpers from github.workflow_sha"
         )
-        return errors
+    for name, helper in (
+        ("Prepare packager config and staged runtime", "release_gui_prepare.py"),
+        ("Collect release assets", "release_gui_collect.py"),
+    ):
+        step = find_step(build_job, step_name=name)
+        if step is None or f"${{RELEASE_SCRIPTS}}/{helper}" not in str(step.get("run", "")):
+            errors.append(f"{path}: '{name}' must use the workflow commit's packaging helpers")
+        elif helper == "release_gui_prepare.py" and "--expected-wix-major 3" not in step["run"]:
+            errors.append(f"{path}: release packager prepare step must assert WiX major 3")
 
-    run_script = prepare_step.get("run")
-    if not isinstance(run_script, str):
-        errors.append(
-            f"{path}: release packager prepare step must define a run script"
-        )
-        return errors
+    return errors
 
-    if "--expected-wix-major" not in run_script:
-        errors.append(
-            f"{path}: release packager prepare step must assert the expected WiX major when supported"
-        )
-    if "release_gui_prepare.py --help" not in run_script or "grep -q" not in run_script:
-        errors.append(
-            f"{path}: release packager prepare step must guard --expected-wix-major with the checked-out helper's --help output"
-        )
 
+def validate_release_note_rules(path: Path, data: dict[str, Any]) -> list[str]:
+    """Keep release-note errors optional while requiring successful asset uploads."""
+    if path.name != "release-gui.yml":
+        return []
+    publish = data.get("jobs", {}).get("publish")
+    if not isinstance(publish, dict):
+        return []
+    errors: list[str] = []
+    upload = find_step(publish, step_id="publish_release")
+    note = find_step(publish, step_id="mac_gatekeeper")
+    if publish.get("continue-on-error") not in (None, False):
+        errors.append(f"{path}: publish job must fail when required publishing fails")
+    if upload is None or upload.get("continue-on-error") not in (None, False):
+        errors.append(f"{path}: release asset upload must remain required")
+    if note is None or note.get("continue-on-error") is not True:
+        errors.append(f"{path}: macOS release-note update must use continue-on-error: true")
+    if note is not None and upload is not None:
+        if publish["steps"].index(note) <= publish["steps"].index(upload):
+            errors.append(f"{path}: macOS release-note update must follow asset upload")
     return errors
 
 
@@ -625,7 +625,8 @@ def validate_workflow_file(path: Path) -> list[str]:
     errors.extend(validate_release_trigger_rules(path, data))
     errors.extend(validate_release_job_shape(path, data))
     errors.extend(validate_release_macos_signing_rules(path, data))
-    errors.extend(validate_release_wix_prepare_guard(path, data))
+    errors.extend(validate_release_packaging_helpers(path, data))
+    errors.extend(validate_release_note_rules(path, data))
 
     run_blocks = extract_job_run_blocks(data)
     for block_path, shell, script in run_blocks:

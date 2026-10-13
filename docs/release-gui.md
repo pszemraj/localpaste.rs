@@ -12,7 +12,7 @@ Every release also includes `checksums.sha256`, which lists a SHA-256 sum for ea
 
 ## Install A Release
 
-**Windows.** Run the MSI installer. Alternatively, extract the ZIP and run `localpaste.exe`.
+**Windows.** Run the MSI installer. Alternatively, extract the entire ZIP and run `localpaste.exe`; keep its bundled runtime DLLs beside the executable.
 
 **Linux.** Make the AppImage executable and run it:
 
@@ -27,12 +27,36 @@ Alternatively, extract the `.tar.gz` and run `./localpaste`.
 
 The `localpaste` executable inside the archives is the GUI under a shorter name. Releases do not include the standalone server (also called `localpaste` when built from source) or the `lpaste` CLI; build those from source.
 
+## Build A Local Mac App
+
+From a source checkout on macOS, build an existing tag without publishing a release:
+
+```bash
+bash tools/build-macos-app.sh v0.5.0
+```
+
+The script builds the committed source for your Mac and prints the path to `LocalPaste.app` under `dist/macos/`. Drag that app into Applications, double-click it, and choose **Keep in Dock** from its Dock menu. Omit the tag to build `HEAD`; uncommitted changes are excluded, including unfinished manifest or lockfile edits. Cargo uses this checkout's configuration, including an untracked `.cargo/config.toml`, and builds into the configured cache or this checkout's `target/` directory. The current checkout stays on its branch, and repeated builds produce separate output directories.
+
+This needs the Git, Rust, and native build tools listed in the [Quick Start](../README.md#quick-start). It uses built-in macOS tools to assemble the app and apply a local ad-hoc signature, with no Apple account, notarization, DMG, or extra packaging tool. It does not install or launch the app.
+
 ## macOS Gatekeeper
 
-macOS builds are signed and notarized only when the release was built with the maintainer's Apple signing credentials. Otherwise Gatekeeper blocks the first launch with a message that LocalPaste cannot be verified. To open it anyway, use either of these:
-
-1. Try to open `LocalPaste.app` once, then open System Settings > Privacy & Security, find the message about LocalPaste, and choose Open Anyway.
-2. Remove the quarantine flag from the installed app in a terminal, then open it normally: `xattr -cr /Applications/LocalPaste.app`
+> [!TIP]
+> macOS packages are intentionally unsigned and unnotarized by default. Open the DMG and drag **LocalPaste.app** to **Applications**.
+>
+> If macOS blocks the installed app, run this in Terminal, then open the app again:
+>
+> ```sh
+> xattr -dr com.apple.quarantine "/Applications/LocalPaste.app"
+> ```
+>
+> If the downloaded DMG itself is blocked, remove its quarantine flag first, then reopen it (replace `<tag>` with the version you downloaded):
+>
+> ```sh
+> xattr -d com.apple.quarantine "$HOME/Downloads/localpaste-<tag>-macos-aarch64.dmg"
+> ```
+>
+> Adjust the paths if you downloaded or installed elsewhere. Alternatively, try opening the app once, then choose **Open Anyway** in **System Settings > Privacy & Security** ([Apple's instructions](https://support.apple.com/en-us/102445)).
 
 ## Verify A Download
 

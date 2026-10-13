@@ -67,7 +67,7 @@ After these checks, run the [server/CLI smoke test](#runtime-smoke-test-server-c
 
 Documentation-only changes need checks for the content changed, not the full Rust loop.
 
-For changes to `.github/workflows/*` or `.github/scripts/*`, run these checks locally; [Workflows](release-pipeline.md#workflows) lists when CI runs them. They do not exercise `packaging/`, so rehearse packaging changes with a manual `release-gui` or `verify-gui-packaging` run.
+For changes to `.github/workflows/*` or `.github/scripts/*`, run these checks locally; [Workflows](release-pipeline.md#workflows) lists when CI runs them. They do not exercise `packaging/`, so rehearse packaging changes with a manual `release-gui` run, which packages and checks all three platforms without publishing.
 
 ```bash
 # release helper regression tests

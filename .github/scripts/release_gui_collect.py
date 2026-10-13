@@ -17,6 +17,7 @@ import zipfile
 from pathlib import Path
 
 from release_versioning import VersionValidationError, normalize_packaging_tag
+from release_windows_runtime import runtime_dlls
 
 
 def fail(message: str) -> None:
@@ -93,10 +94,17 @@ def collect_windows(
     ensure_non_empty(stage_binary)
     ensure_non_empty(stage_license)
 
+    try:
+        dlls = runtime_dlls(stage_dir)
+    except ValueError as exc:
+        fail(str(exc))
+
     zip_path = release_dir / f"localpaste-{tag}-{asset_suffix}.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.write(stage_binary, arcname="localpaste.exe")
         archive.write(stage_license, arcname="LICENSE")
+        for dll in dlls:
+            archive.write(dll, arcname=dll.name)
 
     ensure_non_empty(msi_target)
     ensure_non_empty(zip_path)

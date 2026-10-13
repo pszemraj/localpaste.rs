@@ -13,6 +13,7 @@ from unittest import mock
 
 import release_gui_collect
 import release_gui_prepare
+from release_windows_runtime import REQUIRED_DLLS
 from release_versioning import (
     VersionValidationError,
     normalize_packaging_tag,
@@ -52,7 +53,7 @@ def create_packager_fixture(
     is_windows = platform == "windows"
     binary_name = "localpaste-gui.exe" if is_windows else "localpaste-gui"
     icon_name = "localpaste.ico" if is_windows else "icon.png"
-    formats = ["wix"] if is_windows else ["appimage"]
+    formats = {"windows": ["wix"], "linux": ["appimage"], "macos": ["dmg", "app"]}[platform]
 
     config_dir = root / "packaging" / platform
     config_dir.mkdir(parents=True)
@@ -63,6 +64,10 @@ def create_packager_fixture(
     (target_dir / binary_name).write_text("binary\n", encoding="utf-8")
 
     (config_dir / icon_name).write_text("icon\n", encoding="utf-8")
+    if platform == "macos":
+        icon_dir = root / "assets" / "icons"
+        icon_dir.mkdir(parents=True)
+        (icon_dir / "desktop_icon.icns").write_bytes(b"icns fixture")
     packager_config = config_dir / "packager.json"
     packager_config.write_text(
         json.dumps({"formats": formats, "icons": [icon_name]}),
@@ -169,6 +174,10 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
         with workspace_tempdir() as root:
             target = "x86_64-pc-windows-msvc"
             packager_config = create_packager_fixture(root, "windows", target)
+            runtime_dir = root / "crt"
+            runtime_dir.mkdir()
+            for name in REQUIRED_DLLS:
+                (runtime_dir / name).write_bytes(b"runtime fixture")
 
             with working_directory(root):
                 argv = [
@@ -191,6 +200,7 @@ class ReleaseGuiPrepareTests(unittest.TestCase):
                         "discover_wix_bin",
                         return_value=(Path("C:/WiX/bin"), "3.14.1"),
                     ),
+                    mock.patch.object(release_gui_prepare, "discover_vc_runtime", return_value=runtime_dir),
                 ):
                     self.assertEqual(release_gui_prepare.main(), 0)
 
