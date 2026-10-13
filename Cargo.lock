@@ -2472,7 +2472,7 @@ checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
 name = "localpaste_cli"
-version = "0.5.0"
+version = "0.5.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2484,7 +2484,7 @@ dependencies = [
 
 [[package]]
 name = "localpaste_core"
-version = "0.5.0"
+version = "0.5.2"
 dependencies = [
  "bincode",
  "blake3",
@@ -2505,7 +2505,7 @@ dependencies = [
 
 [[package]]
 name = "localpaste_gui"
-version = "0.5.0"
+version = "0.5.2"
 dependencies = [
  "bincode",
  "chrono",
@@ -2531,7 +2531,7 @@ dependencies = [
 
 [[package]]
 name = "localpaste_server"
-version = "0.5.0"
+version = "0.5.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -2550,7 +2550,7 @@ dependencies = [
 
 [[package]]
 name = "localpaste_tools"
-version = "0.5.0"
+version = "0.5.2"
 dependencies = [
  "clap",
  "localpaste_core",
