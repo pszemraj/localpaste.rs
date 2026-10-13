@@ -6,8 +6,6 @@ Artifact names and installation steps for users are in [GUI Releases](../release
 
 [`release-gui.yml`](../../.github/workflows/release-gui.yml) builds and uploads artifacts when a GitHub Release is published or when started manually; the release tag must be a stable `vX.Y.Z`. It runs a server and CLI smoke test on Linux similar to the [devlog runbook](devlog.md#runtime-smoke-test-server-cli) (create, search, delete, and a second paste read back after a restart), then builds, packages, and checks the GUI on Windows, Linux, and macOS in parallel. A run that [publishes](#source-modes) then uploads the assets and a `checksums.sha256` file to the GitHub release for the tag, which needs all three platform jobs to succeed.
 
-[`verify-gui-packaging.yml`](../../.github/workflows/verify-gui-packaging.yml) is a manual, macOS-only rehearsal: workspace check, GUI tests, packaging, and signing when credentials exist. Its Cargo commands use `--locked`, like release builds. It publishes nothing and keeps its output as a workflow artifact for seven days.
-
 [`workflow-lint.yml`](../../.github/workflows/workflow-lint.yml) runs `validate_workflow.py` (YAML, embedded shell, and release invariants such as job order, the platform matrix, and the macOS signing and WiX rules) plus the release helper tests, on pull requests that touch workflows or scripts and when started manually. The same commands are in the [validation loop](devlog.md#validation-loop) for local runs.
 
 Release builds do not run on PR merges, branch or tag pushes, draft saves, release-note edits, or a schedule. Publishing a saved draft triggers the build, just like publishing a new release directly. The run uses the workflow file from the tag's commit, so publishing a release whose tag points at a commit without the `release` trigger starts no build. The workflow validator rejects extra release-build triggers, including schedules and tag pushes.
@@ -53,14 +51,14 @@ When a release contains a DMG and the six secrets are not all set, the publish j
 
 ## Integrity controls
 
-The workflows default to a read-only token, and only the publish job has `contents: write`. Every action is pinned to a full commit SHA with a trailing comment naming its release or branch, and `validate_workflow.py` rejects unpinned ones. The Rust toolchain and `cargo-packager` versions are pinned in both `release-gui.yml` and `verify-gui-packaging.yml` (the toolchain also in `rust-toolchain.toml`), so change them together.
+The workflows default to a read-only token, and only the publish job has `contents: write`. Every action is pinned to a full commit SHA with a trailing comment naming its release or branch, and `validate_workflow.py` rejects unpinned ones. `release-gui.yml` pins the Rust toolchain and `cargo-packager` versions; the toolchain is also pinned in `rust-toolchain.toml`, so change the two together.
 
 ## Where to change what
 
 | To change | Edit |
 | --- | --- |
 | Runners, targets, job order, publishing, WiX installation | `.github/workflows/release-gui.yml` |
-| Pinned toolchain and `cargo-packager` versions | `release-gui.yml`, `verify-gui-packaging.yml`, `rust-toolchain.toml` |
+| Pinned toolchain and `cargo-packager` versions | `release-gui.yml`, `rust-toolchain.toml` |
 | Package formats, product name, identifier, minimum macOS version | `packaging/<platform>/packager.json` |
 | Version injection, staging, WiX version check | `.github/scripts/release_gui_prepare.py` |
 | Microsoft C++ redistributable discovery and required DLLs | `.github/scripts/release_windows_runtime.py` |

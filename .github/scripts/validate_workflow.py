@@ -509,7 +509,7 @@ def validate_release_trigger_rules(path: Path, data: dict[str, Any]) -> list[str
 
 
 def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> list[str]:
-    if path.name not in {"release-gui.yml", "verify-gui-packaging.yml"}:
+    if path.name != "release-gui.yml":
         return []
 
     errors: list[str] = []
@@ -517,22 +517,21 @@ def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> li
     if not isinstance(jobs, dict):
         return errors
 
-    job_name = "build_package" if path.name == "release-gui.yml" else "macos-package-verify"
-    build_job = jobs.get(job_name)
+    build_job = jobs.get("build_package")
     if not isinstance(build_job, dict):
         return errors
 
     mac_gate_step = find_step(build_job, step_id="mac_signing")
     if mac_gate_step is None:
         errors.append(
-            f"{path}: {job_name} must define a mac signing gate step with id 'mac_signing'"
+            f"{path}: build_package must define a mac signing gate step with id 'mac_signing'"
         )
         return errors
 
     sign_step = find_step(build_job, step_name="Notarize DMG and verify macOS artifacts")
     if sign_step is None:
         errors.append(
-            f"{path}: {job_name} must include 'Notarize DMG and verify macOS artifacts' step"
+            f"{path}: build_package must include 'Notarize DMG and verify macOS artifacts' step"
         )
     else:
         sign_if = sign_step.get("if")
@@ -543,19 +542,18 @@ def validate_release_macos_signing_rules(path: Path, data: dict[str, Any]) -> li
 
     verify_step = find_step(build_job, step_name="Verify macOS DMG usability")
     if verify_step is None:
-        errors.append(f"{path}: {job_name} must include 'Verify macOS DMG usability' step")
-    elif path.name == "release-gui.yml":
+        errors.append(f"{path}: build_package must include 'Verify macOS DMG usability' step")
+    else:
         verify_if = verify_step.get("if")
         if not isinstance(verify_if, str) or "runner.os == 'macOS'" not in verify_if:
             errors.append(
                 f"{path}: 'Verify macOS DMG usability' step must run on macOS runners"
             )
 
-    upload_name = "Upload release assets" if path.name == "release-gui.yml" else "Upload macOS verify artifacts"
-    for step_name in ("Collect release assets", upload_name):
+    for step_name in ("Collect release assets", "Upload release assets"):
         step = find_step(build_job, step_name=step_name)
         if step is None:
-            errors.append(f"{path}: missing '{step_name}' step in {job_name}")
+            errors.append(f"{path}: missing '{step_name}' step in build_package")
             continue
         condition = step.get("if")
         if isinstance(condition, str) and "steps.mac_signing.outputs.enabled == 'true'" in condition:
