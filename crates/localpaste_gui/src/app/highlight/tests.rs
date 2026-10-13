@@ -21,7 +21,7 @@ fn assert_sections_cover(job: &LayoutJob, len: usize) {
     let mut ranges: Vec<Range<usize>> = job
         .sections
         .iter()
-        .map(|section| section.byte_range.clone())
+        .map(|section| section.byte_range.start.0..section.byte_range.end.0)
         .collect();
     ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start).then_with(|| a.end.cmp(&b.end)));
     let mut cursor = 0usize;
@@ -39,7 +39,7 @@ fn assert_sections_cover(job: &LayoutJob, len: usize) {
 fn assert_has_section(job: &LayoutJob, expected: Range<usize>) {
     assert!(
         job.sections.iter().any(|section| {
-            section.byte_range.start == expected.start && section.byte_range.end == expected.end
+            section.byte_range.start.0 == expected.start && section.byte_range.end.0 == expected.end
         }),
         "expected section {:?} not found",
         expected
@@ -48,8 +48,8 @@ fn assert_has_section(job: &LayoutJob, expected: Range<usize>) {
 
 fn assert_sections_use_char_boundaries(job: &LayoutJob) {
     for section in &job.sections {
-        assert!(job.text.is_char_boundary(section.byte_range.start));
-        assert!(job.text.is_char_boundary(section.byte_range.end));
+        assert!(job.text.is_char_boundary(section.byte_range.start.0));
+        assert!(job.text.is_char_boundary(section.byte_range.end.0));
     }
 }
 
@@ -59,8 +59,8 @@ fn assert_virtual_line_segment_gaps(
     visible_range: Range<usize>,
     expected_gaps: &[Range<usize>],
 ) {
-    egui::__run_test_ctx(|ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    egui::__run_test_ui(|ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let font = egui::FontId::monospace(14.0);
             let job = build_virtual_line_segment_job_owned(
                 ui,
@@ -109,8 +109,8 @@ fn virtual_line_segment_job_fills_unstyled_gaps() {
 
 #[test]
 fn render_job_fills_unstyled_gaps_with_default_format() {
-    egui::__run_test_ctx(|ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    egui::__run_test_ui(|ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let font = egui::FontId::monospace(14.0);
             let text = "abcdef\n";
             let render = HighlightRender {
@@ -139,8 +139,8 @@ fn render_job_fills_unstyled_gaps_with_default_format() {
 
 #[test]
 fn virtual_line_segment_job_clamps_non_boundary_spans() {
-    egui::__run_test_ctx(|ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    egui::__run_test_ui(|ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let font = egui::FontId::monospace(14.0);
             let line = "🔥Title".to_string();
             let render_line = HighlightRenderLine {
@@ -164,8 +164,8 @@ fn virtual_line_segment_job_clamps_non_boundary_spans() {
 
 #[test]
 fn render_job_clamps_stale_line_offsets_with_emoji_boundaries() {
-    egui::__run_test_ctx(|ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    egui::__run_test_ui(|ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let font = egui::FontId::monospace(14.0);
             let text = "🔥Title\nok\n";
             let render = HighlightRender {

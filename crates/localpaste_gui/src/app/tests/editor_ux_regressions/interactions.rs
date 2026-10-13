@@ -7,7 +7,7 @@ mod drag_lifecycle;
 fn review_frame(
     app: &mut LocalPasteApp,
     ctx: &egui::Context,
-    events: Vec<egui::Event>,
+    mut events: Vec<egui::Event>,
 ) -> egui::FullOutput {
     let modifiers = events
         .iter()
@@ -19,6 +19,9 @@ fn review_frame(
             _ => None,
         })
         .unwrap_or_default();
+    if modifiers != app.native_modifiers {
+        events.insert(0, egui::Event::ModifiersChanged(modifiers));
+    }
     run_full_update_with_input(
         app,
         ctx,
@@ -28,7 +31,7 @@ fn review_frame(
                 egui::vec2(1200.0, 900.0),
             )),
             events,
-            modifiers,
+
             ..Default::default()
         },
     )

@@ -108,7 +108,14 @@ fn window_deactivation_mid_drag_ends_the_editor_drag() {
     );
     // The first idle frame still repaints for the previous frame's pointer motion.
     review_frame(&mut harness.app, &ctx, vec![]);
-    let output = review_frame(&mut harness.app, &ctx, vec![]);
+    let mut output = review_frame(&mut harness.app, &ctx, vec![]);
+    // The scroll bar now fades after hover leaves; let that animation settle.
+    for _ in 0..20 {
+        if !requests_immediate_repaint(&output) {
+            break;
+        }
+        output = review_frame(&mut harness.app, &ctx, vec![]);
+    }
     assert!(ctx.input(|input| input.pointer.primary_down()));
     assert_eq!(
         harness.app.virtual_editor_state.selection_range(),

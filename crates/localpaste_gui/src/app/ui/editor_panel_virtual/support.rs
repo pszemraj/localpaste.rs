@@ -92,7 +92,9 @@ pub(super) fn request_virtual_editor_focus(
     shortcuts_available: bool,
 ) {
     ui.memory_mut(|m| {
-        m.request_focus(editor_id);
+        if !m.has_focus(editor_id) {
+            m.request_focus(editor_id);
+        }
         m.set_focus_lock_filter(
             editor_id,
             virtual_editor_focus_lock_filter(shortcuts_available),

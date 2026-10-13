@@ -54,7 +54,7 @@ fn command_shift_v_uses_caret_only_in_focused_editor_and_appends_elsewhere() {
                 harness.app.search_focus_requested = true;
                 run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
                 run_discovery_frame_once(&mut harness.app, &ctx, Vec::new());
-                assert!(ctx.wants_keyboard_input());
+                assert!(ctx.egui_wants_keyboard_input());
                 assert!(!harness.app.virtual_editor_state.has_focus);
             }
             _ => assert!(harness.app.virtual_editor_state.has_focus),
@@ -133,10 +133,10 @@ fn command_shift_v_appends_after_an_abandoned_ime_composition() {
     run_discovery_frame_once(
         &mut harness.app,
         &ctx,
-        vec![
-            egui::Event::Ime(egui::ImeEvent::Enabled),
-            egui::Event::Ime(egui::ImeEvent::Preedit("に".into())),
-        ],
+        vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "に".into(),
+            active_range_chars: None,
+        })],
     );
     assert!(harness.app.virtual_editor_state.ime.preedit_range.is_some());
     harness.app.search_focus_requested = true;
@@ -398,5 +398,183 @@ fn command_shift_v_leaves_discovery_overlay_input_alone() {
                 .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })),
             "{overlay}"
         );
+    }
+}
+
+/// Delivers a native batch and drains discovery slices without changing its modifiers.
+fn native_batch(app: &mut LocalPasteApp, ctx: &egui::Context, events: Vec<egui::Event>) {
+    let passes = events.len() + app.deferred_discovery_events.len() + 2;
+    run_full_update(app, ctx, events);
+    for _ in 0..passes {
+        if app.deferred_discovery_events.is_empty() {
+            return;
+        }
+        run_full_update(app, ctx, vec![]);
+    }
+    assert!(app.deferred_discovery_events.is_empty());
+}
+
+#[test]
+fn native_shift_paste_keeps_pressed_modifiers_after_same_batch_release() {
+    for platform in [
+        virtual_editor::PlatformFlavor::Mac,
+        virtual_editor::PlatformFlavor::Other,
+    ] {
+        with_platform(platform, || {
+            for owner in ["editor", "title", "search", "unfocused"] {
+                let mut harness = make_app();
+                let ctx = egui::Context::default();
+                harness.app.reset_virtual_editor("café 🦀 original");
+                harness.app.focus_editor_next = true;
+                native_batch(&mut harness.app, &ctx, vec![]);
+                harness
+                    .app
+                    .virtual_editor_state
+                    .restore_selection(4, None, 15);
+                if owner != "editor" {
+                    harness.app.virtual_editor_state.has_focus = false;
+                    ctx.memory_mut(|memory| {
+                        memory.surrender_focus(egui::Id::new(VIRTUAL_EDITOR_ID));
+                        if owner == "title" {
+                            memory.request_focus(egui::Id::new(TITLE_INPUT_ID));
+                        } else if owner == "search" {
+                            memory.request_focus(egui::Id::new(SEARCH_INPUT_ID));
+                        }
+                    });
+                }
+                let name = harness.app.edit_name.clone();
+                let tags = harness.app.edit_tags.clone();
+                drain_cmds(&harness);
+                native_batch(
+                    &mut harness.app,
+                    &ctx,
+                    vec![
+                        egui::Event::ModifiersChanged(command_shift()),
+                        egui::Event::Paste("日本".into()),
+                        egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+                    ],
+                );
+                let expected = if owner == "editor" {
+                    "café日本 🦀 original"
+                } else {
+                    "café 🦀 original\n日本"
+                };
+                assert_eq!(
+                    harness.app.active_snapshot(),
+                    expected,
+                    "{platform:?} {owner}"
+                );
+                assert_eq!(harness.app.edit_name, name);
+                assert_eq!(harness.app.edit_tags, tags);
+                assert_eq!(harness.app.search_query, "");
+                assert!(!drain_cmds(&harness)
+                    .iter()
+                    .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })));
+            }
+        });
+    }
+}
+
+#[test]
+fn native_modifier_state_survives_batches_and_resets_before_plain_metadata_paste() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.reset_virtual_editor("body");
+    native_batch(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::ModifiersChanged(command_shift())],
+    );
+    native_batch(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::Paste("one".into()),
+            egui::Event::Paste("two".into()),
+            egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+        ],
+    );
+    assert_eq!(harness.app.active_snapshot(), "body\nonetwo");
+    harness.app.virtual_editor_state.has_focus = false;
+    ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(TITLE_INPUT_ID)));
+    let name = harness.app.edit_name.clone();
+    native_batch(
+        &mut harness.app,
+        &ctx,
+        vec![
+            egui::Event::ModifiersChanged(primary_command_modifiers()),
+            egui::Event::Paste("title".into()),
+            egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+        ],
+    );
+    assert_eq!(harness.app.active_snapshot(), "body\nonetwo");
+    assert_eq!(harness.app.edit_name, format!("{name}title"));
+}
+
+#[test]
+fn native_paste_marker_keeps_chord_across_each_discovery_dismissal() {
+    for overlay in ["palette", "picker", "help"] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        harness.app.reset_virtual_editor("body");
+        native_batch(&mut harness.app, &ctx, vec![]);
+        match overlay {
+            "palette" => harness.app.command_palette_open = true,
+            "picker" => harness.app.paste_picker_open = true,
+            _ => harness.app.shortcut_help_open = true,
+        }
+        harness.app.focus_discovery_input(&ctx);
+        native_batch(&mut harness.app, &ctx, vec![]);
+        native_batch(
+            &mut harness.app,
+            &ctx,
+            vec![
+                key_event(egui::Key::Escape, egui::Modifiers::NONE),
+                egui::Event::ModifiersChanged(command_shift()),
+                egui::Event::Paste("clip".into()),
+                egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+            ],
+        );
+        assert_eq!(harness.app.active_snapshot(), "body\nclip", "{overlay}");
+        assert_eq!(harness.app.command_palette_query, "");
+        assert_eq!(harness.app.paste_picker_query, "");
+        assert_eq!(harness.app.shortcut_help_query, "");
+    }
+}
+
+#[test]
+fn mixed_native_paste_chords_in_one_batch_keep_separate_owners() {
+    for shifted_first in [false, true] {
+        let mut harness = make_app();
+        let ctx = egui::Context::default();
+        harness.app.reset_virtual_editor("body");
+        native_batch(&mut harness.app, &ctx, vec![]);
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new(TITLE_INPUT_ID)));
+        let name = harness.app.edit_name.clone();
+        let shift = command_shift();
+        let plain = primary_command_modifiers();
+        native_batch(
+            &mut harness.app,
+            &ctx,
+            vec![
+                egui::Event::ModifiersChanged(if shifted_first { shift } else { plain }),
+                egui::Event::Paste("first".into()),
+                egui::Event::ModifiersChanged(if shifted_first { plain } else { shift }),
+                egui::Event::Paste("second".into()),
+                egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+            ],
+        );
+        if shifted_first {
+            // The append focuses the editor, so the following plain paste follows it.
+            assert_eq!(harness.app.active_snapshot(), "body\nfirstsecond");
+            assert_eq!(harness.app.edit_name, name);
+        } else {
+            assert_eq!(harness.app.active_snapshot(), "body\nsecond");
+            assert_eq!(harness.app.edit_name, format!("{name}first"));
+        }
+        assert_eq!(harness.app.edit_tags, "");
+        assert!(!drain_cmds(&harness)
+            .iter()
+            .any(|cmd| matches!(cmd, CoreCmd::CreatePaste { .. })));
     }
 }

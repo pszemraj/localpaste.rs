@@ -660,9 +660,6 @@ impl LocalPasteApp {
                         self.highlight_edit_hint = None;
                     }
                 }
-                VirtualInputCommand::ImeEnabled => {
-                    self.virtual_editor_state.ime.enabled = true;
-                }
                 VirtualInputCommand::ImePreedit(text) => {
                     self.virtual_editor_state.ime.enabled = true;
                     if text.is_empty() {
@@ -722,8 +719,18 @@ impl LocalPasteApp {
                     }
                     self.virtual_editor_state.clear_preferred_column();
                 }
-                VirtualInputCommand::ImeDisabled => {
+                VirtualInputCommand::ImeDeleteSurrounding {
+                    before_chars,
+                    after_chars,
+                } => {
                     result.changed |= self.cancel_virtual_ime_preedit_if_active(now);
+                    let cursor = self.virtual_editor_state.cursor();
+                    let end = cursor
+                        .saturating_add(*after_chars)
+                        .min(self.virtual_editor_buffer.len_chars());
+                    let range = cursor.saturating_sub(*before_chars)..end;
+                    result.changed |=
+                        self.replace_virtual_range(range, "", EditIntent::Other, true, now);
                     self.virtual_editor_state.clear_preferred_column();
                 }
             }

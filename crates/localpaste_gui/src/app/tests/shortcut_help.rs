@@ -467,6 +467,7 @@ fn shortcut_help_reopens_at_the_top_of_its_list() {
             vec![
                 egui::Event::PointerMoved(shortcut_help_viewport().center()),
                 egui::Event::MouseWheel {
+                    phase: egui::TouchPhase::Move,
                     unit: egui::MouseWheelUnit::Point,
                     delta: egui::vec2(0.0, -400.0),
                     modifiers: egui::Modifiers::NONE,
@@ -675,6 +676,7 @@ fn check_help_rows_at_default_window_size(
                 vec![
                     egui::Event::PointerMoved(window.center()),
                     egui::Event::MouseWheel {
+                        phase: egui::TouchPhase::Move,
                         unit: egui::MouseWheelUnit::Point,
                         delta: egui::vec2(0.0, -200.0),
                         modifiers: egui::Modifiers::NONE,

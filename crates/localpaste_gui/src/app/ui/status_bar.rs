@@ -5,10 +5,10 @@ use eframe::egui;
 
 impl LocalPasteApp {
     /// Renders the bottom status bar with save state and API metadata.
-    pub(crate) fn render_status_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::bottom("status")
+    pub(crate) fn render_status_bar(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::bottom("status")
             .resizable(false)
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let mut has_primary_item = false;
                     if self.selected_id.is_some() {

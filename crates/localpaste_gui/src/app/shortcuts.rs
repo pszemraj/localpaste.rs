@@ -192,30 +192,16 @@ pub(crate) const RUNTIME_SHORTCUTS: &[RuntimeShortcut] = &[
 pub(crate) fn pressed_runtime_shortcuts(
     input: &egui::InputState,
 ) -> impl Iterator<Item = RuntimeShortcutAction> + '_ {
-    // egui-winit emits Paste instead of Key(V). Other integrations may supply
-    // the key too; retain its position without dispatching the same paste twice.
-    let has_paste_key = input.events.iter().any(|event| {
-        matches!(
-            runtime_shortcut_action(event),
-            Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteIntoEditor)
-        )
-    });
-    input.events.iter().filter_map(move |event| {
-        runtime_shortcut_action(event).or_else(|| {
-            if has_paste_key {
-                None
-            } else {
-                native_paste_shortcut_action(event, input.modifiers)
-            }
-        })
-    })
+    // The native hook places a key marker immediately before each Paste, using
+    // its ordered modifier state before discovery can defer either event.
+    input.events.iter().filter_map(runtime_shortcut_action)
 }
 
 /// Matches egui-winit's paste-only shortcut representation.
 ///
 /// # Arguments
 /// - `event`: Native event, which has no embedded modifiers for paste.
-/// - `modifiers`: Modifier snapshot accompanying this input frame.
+/// - `modifiers`: Modifier state at this event's position in the native stream.
 ///
 /// # Returns
 /// Paste action inferred from Command and Shift, or `None` for other input.
@@ -351,25 +337,30 @@ pub(crate) const STATIC_SHORTCUT_SECTIONS: &[ShortcutSection] = &[
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::run_ui;
     use super::*;
     use std::collections::HashSet;
 
     fn pressed_actions(key: egui::Key, modifiers: egui::Modifiers) -> Vec<RuntimeShortcutAction> {
         let ctx = egui::Context::default();
         let mut actions = Vec::new();
-        let _ = ctx.run(
+        let _ = run_ui(
+            &ctx,
             egui::RawInput {
-                modifiers,
-                events: vec![egui::Event::Key {
-                    key,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers,
-                }],
+                events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                    .chain(vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    }])
+                    .collect(),
                 ..Default::default()
             },
-            |ctx| {
+            |ui| {
+                let ctx = &ui.ctx().clone();
+
                 actions = ctx.input(|input| pressed_runtime_shortcuts(input).collect());
             },
         );
@@ -392,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn native_paste_events_match_frame_modifiers_without_duplicate_key_dispatch() {
+    fn native_paste_events_match_ordered_modifiers_without_duplicate_key_dispatch() {
         for (modifiers, expected) in [
             (command_modifiers(), Some(RuntimeShortcutAction::PlainPaste)),
             (
@@ -421,18 +412,25 @@ mod tests {
                     });
                 }
                 events.push(egui::Event::Paste("clip".into()));
-                let _ = ctx.run(
-                    egui::RawInput {
-                        modifiers,
-                        events,
-                        ..Default::default()
-                    },
-                    |ctx| {
-                        let actual =
-                            ctx.input(|input| pressed_runtime_shortcuts(input).collect::<Vec<_>>());
-                        assert_eq!(actual, expected.into_iter().collect::<Vec<_>>());
-                    },
+                events.push(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+                let mut input = egui::RawInput {
+                    events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                        .chain(events)
+                        .collect(),
+                    ..Default::default()
+                };
+                let mut native_modifiers = egui::Modifiers::NONE;
+                super::super::LocalPasteApp::stage_native_paste_shortcuts(
+                    &mut input,
+                    &mut native_modifiers,
                 );
+                let _ = run_ui(&ctx, input, |ui| {
+                    let ctx = &ui.ctx().clone();
+
+                    let actual =
+                        ctx.input(|input| pressed_runtime_shortcuts(input).collect::<Vec<_>>());
+                    assert_eq!(actual, expected.into_iter().collect::<Vec<_>>());
+                });
             }
         }
     }
@@ -452,12 +450,15 @@ mod tests {
                 modifiers,
             })
             .collect();
-        let _ = ctx.run(
+        let _ = run_ui(
+            &ctx,
             egui::RawInput {
                 events,
                 ..Default::default()
             },
-            |ctx| {
+            |ui| {
+                let ctx = &ui.ctx().clone();
+
                 actions = ctx.input(|input| pressed_runtime_shortcuts(input).collect());
             },
         );

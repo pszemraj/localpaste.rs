@@ -90,7 +90,7 @@ fn ime_commit_and_disable_clear_preedit_state_with_expected_buffer_results() {
         harness.app.virtual_editor_state.set_cursor(1, len);
         let ctx = egui::Context::default();
 
-        let mut commands = vec![VirtualInputCommand::ImeEnabled];
+        let mut commands = vec![];
         commands.push(VirtualInputCommand::ImePreedit("に".to_string()));
         match case.tail_action {
             TailAction::Commit(text) => {
@@ -99,7 +99,7 @@ fn ime_commit_and_disable_clear_preedit_state_with_expected_buffer_results() {
             TailAction::Mutate(command) => commands.push(command),
             TailAction::None => {}
         }
-        commands.push(VirtualInputCommand::ImeDisabled);
+        commands.push(VirtualInputCommand::ImePreedit(String::new()));
 
         let result = harness
             .app
@@ -127,7 +127,6 @@ fn empty_preedit_clears_composition_and_allows_insert_text() {
     let result = harness.app.apply_virtual_commands(
         &ctx,
         &[
-            VirtualInputCommand::ImeEnabled,
             VirtualInputCommand::ImePreedit("に".to_string()),
             VirtualInputCommand::ImePreedit(String::new()),
             VirtualInputCommand::InsertText("x".to_string()),
@@ -879,10 +878,15 @@ fn off_focus_commands_do_not_mutate_virtual_editor_with_selection() {
         egui::Event::Paste("ZZ".to_string()),
         egui::Event::Copy,
         egui::Event::Cut,
-        egui::Event::Ime(egui::ImeEvent::Enabled),
-        egui::Event::Ime(egui::ImeEvent::Preedit("Z".to_string())),
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "Z".to_string(),
+            active_range_chars: None,
+        }),
         egui::Event::Ime(egui::ImeEvent::Commit("Z".to_string())),
-        egui::Event::Ime(egui::ImeEvent::Disabled),
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: String::new(),
+            active_range_chars: None,
+        }),
         key_event(egui::Key::Delete, egui::Modifiers::default()),
         key_event(egui::Key::A, command_modifiers),
     ];

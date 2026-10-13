@@ -6,7 +6,7 @@
 ## Current Items
 
 - [ ] Split `LocalPasteApp` into domain state groups (`EditorState`, `HighlightState`, `SearchState`, `UiState`) to reduce coupling and simplify test harness construction.
-- [ ] Extract the virtual input-routing/control-flow block from `LocalPasteApp::update` into a dedicated per-frame input pipeline API.
+- [ ] Extract the virtual input-routing/control-flow block from `LocalPasteApp::ui` into a dedicated per-frame input pipeline API.
 - [ ] Split the remaining files above the 900-line warning threshold by responsibility: `localpaste_gui/src/app/highlight/mod.rs`, `localpaste_gui/src/app/tests/highlight_behaviors.rs`, and `localpaste_tools/src/main.rs`. They remain below the 1000-line cap; defer this unrelated refactor until work in those modules can validate each extraction.
 - [ ] Preserve New's editor-focus intent through save-before-selection transitions, and define how typing or paste during that loading gap should behave. The existing path returns before setting the New focus request when a save is outstanding; reproduce native event delivery before changing input buffering.
 - [ ] Add local perf microbench coverage (list-from-metadata and highlight/layout paths) to catch regressions earlier than manual perf runs.
@@ -20,7 +20,7 @@
 - [ ] Make dev validation deterministic under concurrent local runs (ephemeral smoke-test port selection and isolated `CARGO_TARGET_DIR`).
 - [ ] Add a native cold-start visibility check to the navigation probe, because headless tests stop at the rendering boundary. Keyboard ownership is covered by the macOS, Linux X11, and Windows runners in [gui-notes.md#navigation-probe](gui-notes.md#navigation-probe).
 - [ ] Complete Windows release checks still missing from native navigation coverage: MSI installation, startup with a clean GUI profile, ~~composing IME~~, physical hold/release gestures, and intercepted F1. Synthetic chords and isolated databases do not establish those results. IME/CJK testing is optional; additional testing and insights welcome.
-- [ ] [Upgrade egui/eframe for MCP inspection and reliable native paste (#35)](https://github.com/pszemraj/localpaste.rs/issues/35) in a standalone migration to at least `0.35.0`; evaluate `0.36.2` for its ordered modifier-change events to resolve the [native paste limitation](gui-notes.md#keyboard-and-navigation-contract). Preserve paste intent through event routing, cover text-layout regressions and real Windows cold-start behavior, and keep the current dependency line at `0.33.3` until that migration lands.
+- [~] [Upgrade egui/eframe for MCP inspection and reliable native paste (#35)](https://github.com/pszemraj/localpaste.rs/issues/35): migrated the crate family to `0.36.2` and Rust `1.95`, with opt-in inspection and ordered modifier routing that preserves #34's clipboard behavior. Native Windows cold-start and clipboard-under-load checks still require a Windows machine; Linux and in-memory checks do not establish those results.
 - [ ] Preserve CRLF line endings in clipboard pastes. egui-winit's paste handler rewrites `\r\n` to `\n` before the app sees the text ([gui-notes.md](gui-notes.md#keyboard-and-navigation-contract)); keeping them needs the raw clipboard text on paste chords, which fits the #35 migration.
 - [ ] Capture newline-burst highlight perf evidence before adopting the tighter [performance gate](gui-perf-protocol.md#scope).
 - [ ] Enforce key/value identity checks for authoritative paste rows (table key must match decoded `Paste.id`) and define repair behavior for mismatches.
@@ -54,6 +54,7 @@
 - [ ] Decide whether YAML alias-only markers (`*alias`) should count as distinctive YAML structure or remain rejected as ambiguous prose.
 
 - [ ] Consolidate the paired sidebar-to-Find tests in `crates/localpaste_gui/src/app/tests/editor_find.rs` if a table keeps the contrasting body-match and metadata-only assertions readable. The duplicate-code audit reports shared setup; behavior is intentionally distinct.
+- [ ] Revisit test-only near-miss setup in `localpaste_gui/src/app/tests/highlight_behaviors.rs` and `localpaste_core/src/detection/classification_tests.rs` only when consolidation keeps the distinct cache-update and classification assertions clear. The migration audit found no production duplicates or dead symbols.
 
 The non-LF regression in `app/tests/virtual_editor_behaviors.rs` keeps edit byte offsets, rendered caret geometry, Undo/Redo, typing, and CRLF navigation/selection in one scenario so correct buffer contents cannot hide an invisible caret. Preserve these assertions when reorganizing the test module.
 

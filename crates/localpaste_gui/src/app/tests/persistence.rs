@@ -19,6 +19,10 @@ impl eframe::Storage for MemoryStorage {
     }
 
     fn flush(&mut self) {}
+
+    fn remove_string(&mut self, key: &str) {
+        self.values.remove(key);
+    }
 }
 
 #[test]

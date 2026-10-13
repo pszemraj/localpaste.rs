@@ -140,23 +140,32 @@ fn focused_plain_paste_with_payload_does_not_request_second_paste() {
 
     let ctx = egui::Context::default();
     configure_virtual_editor_test_ctx(&ctx);
+    harness.app.ensure_style(&ctx);
     let mut frame = eframe::Frame::_new_kittest();
     let editor_id = egui::Id::new(VIRTUAL_EDITOR_ID);
     ctx.memory_mut(|memory| memory.request_focus(editor_id));
-    let _ = ctx.run(egui::RawInput::default(), |ctx| {
-        harness.app.update(ctx, &mut frame);
+    let _ = run_ui(&ctx, egui::RawInput::default(), |ui| {
+        let ctx = &ui.ctx().clone();
+
+        harness.app.logic(ctx, &mut frame);
+        harness.app.ui(ui, &mut frame);
     });
     assert!(ctx.memory(|memory| memory.has_focus(editor_id)));
 
     let modifiers = primary_command_modifiers();
-    let output = ctx.run(
+    let output = run_ui(
+        &ctx,
         egui::RawInput {
-            modifiers,
-            events: vec![egui::Event::Paste(" beta".to_string())],
+            events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                .chain(vec![egui::Event::Paste(" beta".to_string())])
+                .collect(),
             ..Default::default()
         },
-        |ctx| {
-            harness.app.update(ctx, &mut frame);
+        |ui| {
+            let ctx = &ui.ctx().clone();
+
+            harness.app.logic(ctx, &mut frame);
+            harness.app.ui(ui, &mut frame);
         },
     );
 
@@ -182,10 +191,12 @@ fn same_frame_editor_click_and_sidebar_arrow_does_not_change_selection() {
 
     let ctx = egui::Context::default();
     configure_virtual_editor_test_ctx(&ctx);
+    harness.app.ensure_style(&ctx);
     let mut frame = eframe::Frame::_new_kittest();
     let screen_rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1200.0, 900.0));
     let click_pos = egui::pos2(520.0, 700.0);
-    let _ = ctx.run(
+    let _ = run_ui(
+        &ctx,
         egui::RawInput {
             screen_rect: Some(screen_rect),
             events: vec![
@@ -200,8 +211,11 @@ fn same_frame_editor_click_and_sidebar_arrow_does_not_change_selection() {
             ],
             ..Default::default()
         },
-        |ctx| {
-            harness.app.update(ctx, &mut frame);
+        |ui| {
+            let ctx = &ui.ctx().clone();
+
+            harness.app.logic(ctx, &mut frame);
+            harness.app.ui(ui, &mut frame);
         },
     );
 

@@ -15,17 +15,21 @@ mod list;
 const APP_VERSION_LABEL: &str = concat!("- v", env!("CARGO_PKG_VERSION"));
 const SIDEBAR_LANGUAGE_COLUMN_WIDTH: f32 = 84.0;
 const SIDEBAR_ROWS_SCROLL_SALT: &str = "sidebar_rows";
+/// Compact row height that keeps navigation usable at the minimum window size.
+pub(in crate::app) const SIDEBAR_ROW_HEIGHT: f32 = 28.0;
+/// Vertical gap between compact sidebar controls and rows.
+pub(in crate::app) const SIDEBAR_ROW_SPACING: f32 = 4.0;
 
 /// Returns the id under which the sidebar rows scroll area stores its state.
 ///
-/// `ScrollArea::id_salt` wraps its argument in `Id::new` before deriving the
+/// `ScrollArea::id_salt` wraps its argument in `IdSalt::new` before deriving the
 /// persistent id, so a lookup must wrap the salt the same way. Hashing the raw
 /// salt yields a different id, and the stored scroll offset is never found.
 ///
 /// # Arguments
 /// - `ui`: Sidebar UI the rows scroll area is added to.
 fn sidebar_rows_scroll_id(ui: &egui::Ui) -> egui::Id {
-    ui.make_persistent_id(egui::Id::new(SIDEBAR_ROWS_SCROLL_SALT))
+    ui.make_persistent_id(egui::IdSalt::new(SIDEBAR_ROWS_SCROLL_SALT))
 }
 
 fn sidebar_hover_text(paste: &PasteSummary) -> String {
@@ -104,48 +108,53 @@ fn sidebar_row_galley(
 
 impl LocalPasteApp {
     /// Renders the top title/status bar.
-    pub(crate) fn render_top_bar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("top")
-            .resizable(false)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.heading(RichText::new("LocalPaste.rs").color(COLOR_ACCENT_TEXT));
-                    ui.label(
-                        RichText::new(APP_VERSION_LABEL)
+    pub(crate) fn render_top_bar(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
+        egui::Panel::top("top").resizable(false).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.heading(RichText::new("LocalPaste.rs").color(COLOR_ACCENT_TEXT));
+                ui.label(
+                    RichText::new(APP_VERSION_LABEL)
+                        .small()
+                        .color(COLOR_TEXT_MUTED),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Background chrome should not enter egui's keyboard focus ring while the
+                    // editor owns arrow/home/end navigation on muscle memory.
+                    let shortcuts = ui.add(
+                        egui::Button::new("Shortcuts (F1)")
                             .small()
-                            .color(COLOR_TEXT_MUTED),
+                            .sense(non_focusable_click_sense()),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Background chrome should not enter egui's keyboard focus ring while the
-                        // editor owns arrow/home/end navigation on muscle memory.
-                        let shortcuts = ui.add(
-                            egui::Button::new("Shortcuts (F1)")
-                                .small()
-                                .sense(non_focusable_click_sense()),
-                        );
-                        // Capture the opener before the editor blurs on this press.
-                        if shortcuts.is_pointer_button_down_on() {
-                            self.remember_discovery_focus(ctx);
-                        }
-                        if shortcuts.clicked() {
-                            self.open_shortcut_help(ctx);
-                        } else if ui.input(|input| input.pointer.primary_released())
-                            && !self.command_palette_open
-                            && !self.paste_picker_open
-                            && !self.shortcut_help_open
-                        {
-                            self.discovery_return_focus = None;
-                        }
-                    });
+                    // Capture the opener before the editor blurs on this press.
+                    if shortcuts.is_pointer_button_down_on() {
+                        self.remember_discovery_focus(ctx);
+                    }
+                    if shortcuts.clicked() {
+                        self.open_shortcut_help(ctx);
+                    } else if ui.input(|input| input.pointer.primary_released())
+                        && !self.command_palette_open
+                        && !self.paste_picker_open
+                        && !self.shortcut_help_open
+                    {
+                        self.discovery_return_focus = None;
+                    }
                 });
             });
+        });
     }
 
     /// Renders the left sidebar with search, filters, and paste list.
-    pub(crate) fn render_sidebar(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("sidebar")
-            .default_width(300.0)
-            .show(ctx, |ui| {
+    pub(crate) fn render_sidebar(&mut self, ui: &mut egui::Ui) {
+        let mut expanded = self.sidebar_expanded || self.search_focus_requested;
+        egui::Panel::left("sidebar")
+            .default_size(300.0)
+            .resizable(true)
+            .show_collapsible(ui, &mut expanded, |ui| {
+                // Keep six rows visible at the minimum window height after
+                // reserving the status panel's space in the root UI.
+                ui.spacing_mut().interact_size.y = SIDEBAR_ROW_HEIGHT;
+                ui.spacing_mut().item_spacing.y = SIDEBAR_ROW_SPACING;
                 let mutation_block_reason = self.mutation_shortcut_block_reason();
                 let background_mutation_blocked = mutation_block_reason.is_some();
                 ui.heading(
@@ -177,6 +186,7 @@ impl LocalPasteApp {
                 }
                 ui.horizontal(|ui| {
                     // Scope and language share one row, each half the sidebar width.
+                    ui.spacing_mut().interact_size.y = 34.0;
                     let combo_width =
                         ((ui.available_width() - ui.spacing().item_spacing.x) * 0.5).max(0.0);
                     let scope = super::search_scope::scope_selector(
@@ -345,6 +355,7 @@ impl LocalPasteApp {
                     self.select_paste(id);
                 }
             });
+        self.sidebar_expanded = expanded;
     }
 
     /// Returns the list offset that brings the selected row into view.

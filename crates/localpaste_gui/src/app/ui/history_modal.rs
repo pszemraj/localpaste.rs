@@ -289,6 +289,7 @@ impl LocalPasteApp {
         }
 
         egui::Window::new("History")
+            .id(egui::Id::new("History"))
             .open(&mut keep_open)
             .fit_to_viewport(ctx, egui::vec2(1080.0, 760.0))
             .show_modal(ctx, |ui| {
@@ -485,7 +486,7 @@ impl LocalPasteApp {
                 self.version_ui.clear_history_reset_confirm();
             }
             let mut confirm_open = self.version_ui.history_reset_confirm_open;
-            egui::Window::new("Confirm reset")
+            egui::Window::new("Confirm reset").id(egui::Id::new("Confirm reset"))
                     .resizable(false)
                     .open(&mut confirm_open)
                     .show_modal(ctx, |ui| {

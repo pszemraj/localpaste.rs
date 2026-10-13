@@ -132,8 +132,10 @@ pub(super) fn raw_input_with_viewport_focus(
     let mut input = egui::RawInput {
         focused,
         screen_rect: Some(screen_rect()),
-        modifiers,
-        events,
+
+        events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+            .chain(events)
+            .collect(),
         ..Default::default()
     };
     input

@@ -37,7 +37,8 @@ impl egui::Plugin for NativeClipboardObserver {
         "localpaste_native_clipboard"
     }
 
-    fn on_end_pass(&mut self, ctx: &egui::Context) {
+    fn on_end_pass(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
         let Some((request_id, command_start)) = self.pass.take() else {
             return;
         };
@@ -54,6 +55,45 @@ impl egui::Plugin for NativeClipboardObserver {
 }
 
 impl LocalPasteApp {
+    /// Consumes background replies and advances timed work without rebuilding the UI.
+    ///
+    /// # Arguments
+    /// - `ctx`: Context used only for clipboard observation and repaint scheduling.
+    pub(super) fn poll_background_work(&mut self, ctx: &egui::Context) {
+        self.reconcile_native_clipboard(ctx);
+        let now = Instant::now();
+        if self
+            .status
+            .as_ref()
+            .is_some_and(|status| now >= status.expires_at)
+        {
+            self.status = None;
+        }
+        self.prune_expired_toasts(now);
+        loop {
+            match self.backend.evt_rx.try_recv() {
+                Ok(event) => self.apply_event(event),
+                Err(crossbeam_channel::TryRecvError::Empty) => break,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    self.handle_backend_event_channel_disconnected();
+                    break;
+                }
+            }
+        }
+        self.poll_export_result();
+        while let Ok(reply) = self.highlight_worker.rx.try_recv() {
+            self.queue_highlight_reply(reply);
+        }
+        if ctx.input(|input| input.viewport().visible()) == Some(false) {
+            self.maybe_dispatch_palette_search();
+            self.maybe_dispatch_search();
+            self.maybe_autosave();
+        }
+        if let Some(delay) = self.backend_event_poll_repaint_after(Instant::now()) {
+            ctx.request_repaint_after(delay);
+        }
+    }
+
     /// Reconciles native clipboard writes before draining delayed copy replies.
     ///
     /// # Arguments

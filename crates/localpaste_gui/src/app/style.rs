@@ -142,7 +142,7 @@ impl LocalPasteApp {
         }
         ctx.set_fonts(fonts);
 
-        let mut style = (*ctx.style()).clone();
+        let mut style = (*ctx.global_style()).clone();
         style.visuals = Visuals::dark();
         style.visuals.override_text_color = Some(COLOR_TEXT_PRIMARY);
         // Placeholders and other weak text use the muted token; see `MutedHintExt`.
@@ -238,7 +238,7 @@ impl LocalPasteApp {
             FontId::new(12.0, FontFamily::Proportional),
         );
 
-        ctx.set_style(style);
+        ctx.set_global_style(style);
         self.style_applied = true;
     }
 }

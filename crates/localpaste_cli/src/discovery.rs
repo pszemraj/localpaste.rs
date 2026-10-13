@@ -85,25 +85,17 @@ fn discovery_probe_response_looks_like_localpaste(response: &[u8]) -> bool {
         let name = name.trim().to_ascii_lowercase();
         let value = value.trim().to_ascii_lowercase();
         match name.as_str() {
-            "content-type" => {
-                if value.contains("application/json") {
-                    has_json_content_type = true;
-                }
+            "content-type" if value.contains("application/json") => {
+                has_json_content_type = true;
             }
-            "x-content-type-options" => {
-                if value == "nosniff" {
-                    has_nosniff = true;
-                }
+            "x-content-type-options" if value == "nosniff" => {
+                has_nosniff = true;
             }
-            "x-frame-options" => {
-                if value == "deny" {
-                    has_frame_deny = true;
-                }
+            "x-frame-options" if value == "deny" => {
+                has_frame_deny = true;
             }
-            header if header == LOCALPASTE_SERVER_HEADER => {
-                if value == LOCALPASTE_SERVER_VALUE {
-                    has_localpaste_server = true;
-                }
+            header if header == LOCALPASTE_SERVER_HEADER && value == LOCALPASTE_SERVER_VALUE => {
+                has_localpaste_server = true;
             }
             _ => {}
         }

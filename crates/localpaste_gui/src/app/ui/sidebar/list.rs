@@ -167,8 +167,8 @@ impl SidebarListMetrics {
     /// The list metrics for that spacing.
     pub(super) fn from_spacing(spacing: &egui::style::Spacing) -> Self {
         Self {
-            item_height: spacing.interact_size.y,
-            item_spacing: spacing.item_spacing.y,
+            item_height: spacing.interact_size.y.min(super::SIDEBAR_ROW_HEIGHT),
+            item_spacing: spacing.item_spacing.y.min(super::SIDEBAR_ROW_SPACING),
             cluster_gap: MAX_CLUSTER_GAP,
         }
     }

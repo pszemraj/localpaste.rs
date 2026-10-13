@@ -223,7 +223,11 @@ impl LocalPasteApp {
             },
         );
         // Escape also takes focus away, but it cancels the rename instead of applying it.
-        if name_response.lost_focus() && self.metadata_dirty && !cancelled {
+        if name_response.lost_focus()
+            && ui.memory(|memory| memory.had_focus_last_frame(egui::Id::new(TITLE_INPUT_ID)))
+            && self.metadata_dirty
+            && !cancelled
+        {
             requests.apply_metadata = true;
         }
         if name_response.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {

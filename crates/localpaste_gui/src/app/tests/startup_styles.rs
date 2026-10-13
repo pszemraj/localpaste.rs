@@ -18,7 +18,7 @@ fn pump_until(
                 ..Default::default()
             },
         );
-        let style = ctx.style();
+        let style = ctx.global_style();
         assert!(
             style.visuals.dark_mode,
             "system theme must not replace app styling"
@@ -59,7 +59,7 @@ fn normal_startup_first_paste_and_populated_restart_render_without_test_styles()
     assert_eq!(app.selected_id.as_deref(), Some(id.as_str()));
     assert_eq!(app.active_snapshot(), "first paste café 🦀");
     // Replacing a native theme can remove named text styles after initialization.
-    ctx.set_style(egui::Style::default());
+    ctx.set_global_style(egui::Style::default());
     run_full_update(&mut app, &ctx, vec![]);
     assert!(app.virtual_line_height > 0.0);
     app.flush_pending_saves_for_shutdown();

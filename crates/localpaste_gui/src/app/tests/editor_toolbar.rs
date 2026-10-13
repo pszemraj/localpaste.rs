@@ -100,7 +100,7 @@ fn toolbar_fits_one_row_at_common_widths() {
 fn properties_drawer_left(ctx: &egui::Context) -> f32 {
     egui::containers::panel::PanelState::load(ctx, egui::Id::new("properties_drawer"))
         .expect("drawer")
-        .rect
+        .outer_rect
         .left()
 }
 

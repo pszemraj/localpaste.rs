@@ -11,21 +11,47 @@ use eframe::egui;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum VirtualInputCommand {
     // Cursor movement
-    MoveLeft { select: bool, word: bool },
-    MoveRight { select: bool, word: bool },
-    MoveUp { select: bool },
-    MoveDown { select: bool },
+    MoveLeft {
+        select: bool,
+        word: bool,
+    },
+    MoveRight {
+        select: bool,
+        word: bool,
+    },
+    MoveUp {
+        select: bool,
+    },
+    MoveDown {
+        select: bool,
+    },
     // Logical-line boundaries.
-    MoveLineHome { select: bool },
-    MoveLineEnd { select: bool },
-    MoveDocHome { select: bool },
-    MoveDocEnd { select: bool },
-    PageUp { select: bool },
-    PageDown { select: bool },
+    MoveLineHome {
+        select: bool,
+    },
+    MoveLineEnd {
+        select: bool,
+    },
+    MoveDocHome {
+        select: bool,
+    },
+    MoveDocEnd {
+        select: bool,
+    },
+    PageUp {
+        select: bool,
+    },
+    PageDown {
+        select: bool,
+    },
 
     // Deletion
-    Backspace { word: bool },
-    DeleteForward { word: bool },
+    Backspace {
+        word: bool,
+    },
+    DeleteForward {
+        word: bool,
+    },
     DeleteToLineStart,
     DeleteToLineEnd,
 
@@ -44,10 +70,12 @@ pub(crate) enum VirtualInputCommand {
     Redo,
 
     // IME
-    ImeEnabled,
     ImePreedit(String),
     ImeCommit(String),
-    ImeDisabled,
+    ImeDeleteSurrounding {
+        before_chars: usize,
+        after_chars: usize,
+    },
 }
 
 /// Coarse platform flavor used for keyboard shortcut mapping.
@@ -341,45 +369,44 @@ fn commands_from_events_for_platform(
 
     for event in events {
         match event {
-            egui::Event::Text(text) => {
-                if focused && !text.is_empty() {
-                    out.push(VirtualInputCommand::InsertText(text.clone()));
-                }
+            egui::Event::Text(text) if focused && !text.is_empty() => {
+                out.push(VirtualInputCommand::InsertText(text.clone()));
             }
 
-            egui::Event::Paste(text) => {
-                if focused {
-                    out.push(VirtualInputCommand::Paste(text.clone()));
-                }
+            egui::Event::Paste(text) if focused => {
+                out.push(VirtualInputCommand::Paste(text.clone()));
             }
 
-            egui::Event::Copy => {
-                if focused && !emitted_copy {
-                    out.push(VirtualInputCommand::Copy);
-                    emitted_copy = true;
-                }
+            egui::Event::Copy if focused && !emitted_copy => {
+                out.push(VirtualInputCommand::Copy);
+                emitted_copy = true;
             }
 
-            egui::Event::Cut => {
-                if focused && !emitted_cut {
-                    out.push(VirtualInputCommand::Cut);
-                    emitted_cut = true;
-                }
+            egui::Event::Cut if focused && !emitted_cut => {
+                out.push(VirtualInputCommand::Cut);
+                emitted_cut = true;
             }
 
             egui::Event::Ime(ime) => {
                 if !focused {
                     continue;
                 }
+                #[allow(deprecated)]
                 match ime {
-                    egui::ImeEvent::Enabled => out.push(VirtualInputCommand::ImeEnabled),
-                    egui::ImeEvent::Preedit(text) => {
+                    egui::ImeEvent::Enabled | egui::ImeEvent::Disabled => {}
+                    egui::ImeEvent::Preedit { text, .. } => {
                         out.push(VirtualInputCommand::ImePreedit(text.clone()))
                     }
                     egui::ImeEvent::Commit(text) => {
                         out.push(VirtualInputCommand::ImeCommit(text.clone()))
                     }
-                    egui::ImeEvent::Disabled => out.push(VirtualInputCommand::ImeDisabled),
+                    egui::ImeEvent::DeleteSurrounding {
+                        before_chars,
+                        after_chars,
+                    } => out.push(VirtualInputCommand::ImeDeleteSurrounding {
+                        before_chars: *before_chars,
+                        after_chars: *after_chars,
+                    }),
                 }
             }
 

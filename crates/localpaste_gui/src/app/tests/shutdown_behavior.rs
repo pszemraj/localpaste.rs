@@ -25,7 +25,7 @@ fn on_exit_dispatches_dirty_content_and_metadata_save_and_drop_releases_selected
         .expect("acquire alpha lock");
     let locks = app.locks.clone();
 
-    eframe::App::on_exit(&mut app, None);
+    eframe::App::on_exit(&mut app);
 
     match recv_cmd(&cmd_rx) {
         CoreCmd::UpdatePasteVirtual { id, content, .. } => {
@@ -84,7 +84,7 @@ fn on_exit_dispatches_dirty_saves_even_with_version_overlay_open() {
             OverlayCase::Diff => harness.app.version_ui.diff_modal_open = true,
         }
 
-        eframe::App::on_exit(&mut harness.app, None);
+        eframe::App::on_exit(&mut harness.app);
 
         let first = recv_cmd(&harness.cmd_rx);
         let second = recv_cmd(&harness.cmd_rx);
@@ -159,7 +159,7 @@ fn on_exit_requeues_dirty_tails_after_stale_in_flight_acks() {
         let _ = evt_tx.send(CoreEvent::PasteMetaSaved { paste: stale_meta });
     });
 
-    eframe::App::on_exit(&mut harness.app, None);
+    eframe::App::on_exit(&mut harness.app);
 
     let first = recv_cmd(&harness.cmd_rx);
     let second = recv_cmd(&harness.cmd_rx);
@@ -224,7 +224,7 @@ fn on_exit_forces_final_dirty_snapshots_even_when_acks_never_arrive() {
         tags_csv: String::new(),
     });
 
-    eframe::App::on_exit(&mut harness.app, None);
+    eframe::App::on_exit(&mut harness.app);
 
     let first = recv_cmd(&harness.cmd_rx);
     let second = recv_cmd(&harness.cmd_rx);
@@ -336,7 +336,7 @@ fn on_exit_saves_input_accepted_while_its_paste_loads() {
             "{case}: the paste is still loading"
         );
 
-        eframe::App::on_exit(&mut harness.app, None);
+        eframe::App::on_exit(&mut harness.app);
         drop(harness);
         drop(db);
         let reopened = Database::new(&db_path).expect("reopen db");
@@ -420,7 +420,7 @@ fn native_close_drains_ordered_discovery_input_before_persisting() {
         assert!(closed, "the original close request must resume");
         assert!(harness.app.deferred_discovery_events.is_empty());
         assert_eq!(harness.app.shortcut_help_query, query_text);
-        eframe::App::on_exit(&mut harness.app, None);
+        eframe::App::on_exit(&mut harness.app);
         drop(harness);
         drop(db);
         let reopened = Database::new(&db_path).expect("reopen db");
@@ -543,7 +543,7 @@ fn native_close_drains_loading_editor_input_before_saving() {
         } else {
             assert!(close_commands.contains(&egui::ViewportCommand::Close));
         }
-        eframe::App::on_exit(&mut harness.app, None);
+        eframe::App::on_exit(&mut harness.app);
         drop(harness);
         drop(db);
         let reopened = Database::new(&db_path).expect("reopen db");

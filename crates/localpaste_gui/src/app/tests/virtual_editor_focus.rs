@@ -491,16 +491,17 @@ fn stale_virtual_focus_does_not_steal_arrow_from_other_focus_owner() {
     let other_focus_id = egui::Id::new("title_like_text_input");
     ctx.memory_mut(|m| m.request_focus(other_focus_id));
     let mut title_text = "title".to_string();
-    let _ = ctx.run(
+    let _ = run_ui(
+        &ctx,
         egui::RawInput {
             events: vec![key_event(egui::Key::ArrowRight, egui::Modifiers::default())],
             ..Default::default()
         },
-        |ctx| {
-            egui::TopBottomPanel::top("title_like_panel").show(ctx, |ui| {
+        |ui| {
+            egui::Panel::top("title_like_panel").show(ui, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut title_text).id(other_focus_id));
             });
-            harness.app.render_editor_panel(ctx);
+            harness.app.render_editor_panel(ui);
         },
     );
 
@@ -602,17 +603,18 @@ fn focused_virtual_editor_owns_tab_without_focus_traversal() {
 
     let mut other_text = "other".to_string();
     let mut render_with_neighbor = |events| {
-        ctx.run(
+        run_ui(
+            &ctx,
             egui::RawInput {
                 events,
                 screen_rect: Some(screen_rect()),
                 ..Default::default()
             },
-            |ctx| {
-                egui::TopBottomPanel::top("tab_traversal_neighbor").show(ctx, |ui| {
+            |ui| {
+                egui::Panel::top("tab_traversal_neighbor").show(ui, |ui| {
                     ui.add(egui::TextEdit::singleline(&mut other_text).id(other_focus_id));
                 });
-                harness.app.render_editor_panel(ctx);
+                harness.app.render_editor_panel(ui);
             },
         )
     };
@@ -680,8 +682,10 @@ fn focused_editor_keeps_platform_mod_arrow_focus_inside_real_app_chrome() {
             &ctx,
             egui::RawInput {
                 screen_rect: Some(screen_rect()),
-                events: vec![key_event(key, modifiers)],
-                modifiers,
+                events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                    .chain(vec![key_event(key, modifiers)])
+                    .collect(),
+
                 ..Default::default()
             },
         );

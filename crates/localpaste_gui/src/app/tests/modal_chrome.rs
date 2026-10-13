@@ -45,7 +45,7 @@ impl Surface {
 /// Renders enough frames in the standard test viewport for windows to size, fade in, and settle.
 fn settle(app: &mut LocalPasteApp, ctx: &egui::Context) -> egui::FullOutput {
     let mut output = run_discovery_frame_once(app, ctx, Vec::new());
-    for _ in 0..8 {
+    for _ in 0..20 {
         output = run_discovery_frame_once(app, ctx, Vec::new());
     }
     output
