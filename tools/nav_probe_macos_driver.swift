@@ -211,6 +211,9 @@ func postChord(pid: pid_t, keyCode: CGKeyCode, modifiers: [ModifierSpec], delayM
         currentFlags = CGEventFlags(rawValue: currentFlags.rawValue & ~modifier.flag.rawValue)
         try postKey(source: source, keyCode: modifier.keyCode, keyDown: false, flags: currentFlags, delayMs: delayMs)
     }
+    // Posting is asynchronous. Keep the event source and driver alive briefly
+    // after the final release, including when transition delays are zero.
+    usleep(50_000)
 }
 
 struct ParsedArgs {
