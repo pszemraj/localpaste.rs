@@ -9,8 +9,9 @@ mod selection_load;
 
 use super::util::parse_tags_csv;
 use super::{
-    ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, SaveStatus, SidebarCollection,
-    BACKEND_EVENT_POLL_INTERVAL, BACKEND_EVENT_POLL_WINDOW, PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
+    CursorReveal, ExportCompletion, LocalPasteApp, MetadataDraftSnapshot, SaveStatus,
+    SidebarCollection, BACKEND_EVENT_POLL_INTERVAL, BACKEND_EVENT_POLL_WINDOW,
+    PALETTE_SEARCH_LIMIT, SEARCH_DEBOUNCE,
 };
 use crate::backend::{CoreCmd, CoreErrorSource, CoreEvent, PasteSummary};
 use eframe::egui;
@@ -324,6 +325,9 @@ impl LocalPasteApp {
                     return;
                 }
                 self.select_loaded_paste(paste);
+                let len = self.virtual_editor_buffer.len_chars();
+                self.virtual_editor_state.set_cursor(len, len);
+                self.virtual_cursor_reveal = Some(CursorReveal::Minimal);
                 self.pending_selection_id = None;
                 self.picker_selection_pin = (!paste_listed).then_some(paste_id);
                 self.focus_editor_next = true;
