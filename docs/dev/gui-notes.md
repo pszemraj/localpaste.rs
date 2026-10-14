@@ -43,6 +43,8 @@ The sidebar's resize edge can be dragged closed or double-clicked to collapse it
 
 Focus ownership: the virtual editor keeps the keyboard until the window loses native focus, a text field or discovery surface takes focus, or a click lands outside it (editor toolbar actions that preserve focus excepted). Native deactivation first applies the text and paste events that arrived earlier in the same frame, then releases editor focus while keeping the selection. When a frame carries several focus events the last one decides, so a deactivate-and-reactivate pair keeps editing. While unfocused, `Ctrl/Cmd+C` still copies the editor selection if no other text input has focus, `Ctrl/Cmd+V` creates a new paste, and a click on the editor resumes editing. Uncommitted IME composition is canceled on deactivation and when a discovery surface takes focus, restoring the displaced text and selection; a later commit is one undoable replacement of the original selection.
 
+IME surrounding-text deletion removes characters outside the selection or active preedit, preserving its text and direction. It records one undoable edit against the original text, so canceling or committing composition afterward never restores provisional text through Undo.
+
 Navigation/selection contract:
 
 - `Up`/`Down` move the sidebar selection only as bare arrows while neither the editor nor a text input owns the keyboard and no overlay, combo list, or menu is open, so arrows pressed with a language popup open never switch pastes or save its type-ahead choice; if the selected paste is not in the visible list, the first press selects the first visible row. Arrows with `Ctrl`/`Alt`/`Shift`/`Cmd` stay with editor-selection semantics.

@@ -528,6 +528,7 @@ mod focus_and_paste_routing;
 mod highlight_behaviors;
 mod highlight_repaint;
 mod history_reset;
+mod ime_surrounding;
 mod keyboard_navigation_audit;
 mod metadata_language_sync;
 mod modal_chrome;
