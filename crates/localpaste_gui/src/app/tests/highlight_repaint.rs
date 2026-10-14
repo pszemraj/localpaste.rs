@@ -193,8 +193,8 @@ fn highlight_worker_repaints_attached_context_after_each_reply() {
     let ctx = egui::Context::default();
     // egui reports a wake only after passes have cleared its start-up repaints.
     let settle = || {
-        for _ in 0..2 {
-            let _ = ctx.run(egui::RawInput::default(), |_| {});
+        for _ in 0..4 {
+            let _ = run_ui(&ctx, egui::RawInput::default(), |_| {});
         }
     };
     settle();

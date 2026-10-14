@@ -328,7 +328,7 @@ impl LocalPasteApp {
     fn build_nav_probe_frame(&self, ctx: &egui::Context) -> NavProbeFrame {
         let probe = self.nav_probe.as_ref().expect("checked by caller");
 
-        let wants_keyboard_input = ctx.wants_keyboard_input();
+        let wants_keyboard_input = ctx.egui_wants_keyboard_input();
         let focus = ctx.memory(|memory| FocusSnapshot {
             virtual_editor: memory.has_focus(egui::Id::new(VIRTUAL_EDITOR_ID))
                 || self.virtual_editor_state.has_focus,
@@ -415,6 +415,15 @@ impl LocalPasteApp {
 
 fn describe_event(event: &egui::Event) -> ProbeEvent {
     match event {
+        egui::Event::ModifiersChanged(modifiers) => ProbeEvent {
+            kind: "modifiers_changed".to_string(),
+            key: None,
+            physical_key: None,
+            pressed: None,
+            repeat: None,
+            modifiers: describe_modifiers(*modifiers),
+            text_chars: None,
+        },
         egui::Event::Key {
             key,
             physical_key,

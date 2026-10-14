@@ -225,7 +225,7 @@ fn apply_language_typeahead(
 
 /// Returns the widget id egui assigns to a language combo box.
 ///
-/// `ComboBox::from_id_salt` wraps its argument in `Id::new` and derives the
+/// `ComboBox::from_id_salt` wraps its argument in `IdSalt::new` and derives the
 /// widget id with `ui.make_persistent_id`, and `ComboBox::is_open` expects that
 /// widget id. Looking up a bare `Id::new(salt)` yields a different id, so the
 /// popup state is never found and the combo always reads as closed.
@@ -234,7 +234,7 @@ fn apply_language_typeahead(
 /// - `ui`: UI the combo box is added to.
 /// - `combo_id_salt`: Id salt passed to `ComboBox::from_id_salt`.
 fn language_combo_id(ui: &egui::Ui, combo_id_salt: &str) -> egui::Id {
-    ui.make_persistent_id(egui::Id::new(combo_id_salt))
+    ui.make_persistent_id(egui::IdSalt::new(combo_id_salt))
 }
 
 /// A language popup opening or being cancelled during one frame.
@@ -429,6 +429,26 @@ impl LocalPasteApp {
         // so the value Escape returns to is read before the field runs.
         let before_input = (!had_focus).then(|| self.metadata_text_mut(field).clone());
         self.claim_discovery_focus(ui, id);
+        // TextEdit lays out its text before claiming pointer focus in 0.36.
+        // Claim an existing field on press so same-batch typing reaches it.
+        if let Some(previous) = ui.ctx().read_response(id) {
+            let pressed_pos = ui.input(|input| {
+                input.events.iter().find_map(|event| match event {
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        ..
+                    } if previous.rect.contains(*pos) => Some(*pos),
+                    _ => None,
+                })
+            });
+            let pressed_here =
+                pressed_pos.is_some_and(|pos| ui.ctx().layer_id_at(pos) == Some(ui.layer_id()));
+            if pressed_here && ui.is_visible() && !ui.is_sizing_pass() {
+                super::focus_visible_query(ui, id);
+            }
+        }
         let response = ui.add(style(
             egui::TextEdit::singleline(self.metadata_text_mut(field)).id(id),
         ));
@@ -518,7 +538,7 @@ impl LocalPasteApp {
     }
 
     /// Renders the side drawer used for less-frequent metadata edits.
-    pub(crate) fn render_properties_drawer(&mut self, ctx: &egui::Context) {
+    pub(crate) fn render_properties_drawer(&mut self, ui: &mut egui::Ui) {
         if !self.properties_drawer_open || self.selected_id.is_none() {
             return;
         }
@@ -528,10 +548,10 @@ impl LocalPasteApp {
         // shift the drawer whenever a block starts or ends.
         let background_mutation_blocked = self.mutation_shortcut_block_reason().is_some();
         let mut keep_open = true;
-        egui::SidePanel::right("properties_drawer")
-            .default_width(320.0)
+        egui::Panel::right("properties_drawer")
+            .default_size(320.0)
             .resizable(true)
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.heading("Properties");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

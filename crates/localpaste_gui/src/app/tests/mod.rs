@@ -76,7 +76,9 @@ fn test_summary_with_folder(
 /// Panics if egui test context fails to produce a galley.
 pub(super) fn shaped_test_galley() -> Arc<egui::Galley> {
     let mut galley = None;
-    egui::__run_test_ctx(|ctx| {
+    egui::__run_test_ui(|ui| {
+        let ctx = &ui.ctx().clone();
+
         galley = Some(ctx.fonts_mut(|fonts| {
             fonts.layout_no_wrap(
                 "x".to_owned(),
@@ -90,13 +92,13 @@ pub(super) fn shaped_test_galley() -> Arc<egui::Galley> {
 
 /// Configures deterministic font/style settings for virtual-editor test contexts.
 pub(super) fn configure_virtual_editor_test_ctx(ctx: &egui::Context) {
-    ctx.set_fonts(egui::FontDefinitions::empty());
-    let mut style = (*ctx.style()).clone();
+    ctx.set_fonts(egui::FontDefinitions::default());
+    let mut style = (*ctx.global_style()).clone();
     style.text_styles.insert(
         egui::TextStyle::Name(EDITOR_TEXT_STYLE.into()),
         egui::FontId::new(14.0, egui::FontFamily::Monospace),
     );
-    ctx.set_style(style);
+    ctx.set_global_style(style);
 }
 
 /// Renders an editor frame and reports whether the editor owned focus before input.
@@ -118,7 +120,7 @@ fn run_virtual_editor_frame(
         events,
         ..Default::default()
     };
-    let _ = ctx.run(raw_input, |ctx| app.render_editor_panel(ctx));
+    let _ = run_ui(ctx, raw_input, |ui| app.render_editor_panel(ui));
     focus_active_pre
 }
 
@@ -268,8 +270,8 @@ fn run_editor_panel_once_output(
     ctx: &egui::Context,
     input: egui::RawInput,
 ) -> egui::FullOutput {
-    ctx.run(input, |ctx| {
-        app.render_editor_panel(ctx);
+    run_ui(ctx, input, |ui| {
+        app.render_editor_panel(ui);
     })
 }
 
@@ -400,8 +402,11 @@ pub(super) fn run_full_update_with_input(
     app.ensure_style(ctx);
     let mut frame = eframe::Frame::_new_kittest();
     app.raw_input_hook(ctx, &mut input);
-    ctx.run(input, |ctx| {
-        app.update(ctx, &mut frame);
+    run_ui(ctx, input, |ui| {
+        let ctx = &ui.ctx().clone();
+
+        app.logic(ctx, &mut frame);
+        app.ui(ui, &mut frame);
     })
 }
 
@@ -418,16 +423,19 @@ fn run_discovery_frame_once(
 fn run_discovery_frame_with_modifiers(
     app: &mut LocalPasteApp,
     ctx: &egui::Context,
-    events: Vec<egui::Event>,
+    mut events: Vec<egui::Event>,
     modifiers: egui::Modifiers,
 ) -> egui::FullOutput {
+    if modifiers != app.native_modifiers {
+        events.insert(0, egui::Event::ModifiersChanged(modifiers));
+    }
     run_full_update_with_input(
         app,
         ctx,
         egui::RawInput {
             screen_rect: Some(virtual_editor_focus_support::screen_rect()),
             events,
-            modifiers,
+
             ..Default::default()
         },
     )
@@ -520,6 +528,7 @@ mod focus_and_paste_routing;
 mod highlight_behaviors;
 mod highlight_repaint;
 mod history_reset;
+mod ime_surrounding;
 mod keyboard_navigation_audit;
 mod metadata_language_sync;
 mod modal_chrome;
@@ -573,4 +582,23 @@ fn assert_accessible_focus(output: &egui::FullOutput) {
         "unpublished focus {:?}",
         update.focus
     );
+}
+
+/// Runs a headless UI pass, explicitly discarding texture uploads with no renderer.
+///
+/// # Arguments
+/// - `ctx`: Persistent context carrying the simulated window state.
+/// - `input`: Native-shaped input for this pass.
+/// - `add_contents`: UI rendering callback.
+///
+/// # Returns
+/// Frame output retaining shapes, platform commands, and viewport state for assertions.
+pub(in crate::app) fn run_ui(
+    ctx: &egui::Context,
+    input: egui::RawInput,
+    add_contents: impl FnMut(&mut egui::Ui),
+) -> egui::FullOutput {
+    let mut output = ctx.run_ui(input, add_contents);
+    output.textures_delta.clear();
+    output
 }

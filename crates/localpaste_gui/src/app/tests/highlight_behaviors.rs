@@ -15,8 +15,8 @@ fn highlight_cache_reuses_layout_when_unchanged() {
     let syntect = SyntectSettings::default();
     let revision = 0;
 
-    egui::__run_test_ctx(|ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    egui::__run_test_ui(|ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let font = egui::FontId::monospace(14.0);
             let theme = CodeTheme::dark(14.0);
             let _ = cache.layout(EditorLayoutRequest {
@@ -61,8 +61,8 @@ fn highlight_cache_updates_after_line_edit() {
     let syntect = SyntectSettings::default();
     let mut revision = 0;
 
-    egui::__run_test_ctx(|ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    egui::__run_test_ui(|ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             let font = egui::FontId::monospace(14.0);
             let theme = CodeTheme::dark(14.0);
             let _ = cache.layout(EditorLayoutRequest {
@@ -79,7 +79,7 @@ fn highlight_cache_updates_after_line_edit() {
                 syntect: &syntect,
             });
 
-            buffer.insert_text("x", 0);
+            buffer.insert_text("x", 0.into());
             revision += 1;
 
             let _ = cache.layout(EditorLayoutRequest {
@@ -354,14 +354,16 @@ fn virtual_editor_requests_highlight_for_small_markdown_buffers() {
     harness.app.edit_language_is_manual = true;
     set_active_content(&mut harness.app, markdown);
 
-    egui::__run_test_ctx(|ctx| {
-        let mut style = (*ctx.style()).clone();
+    egui::__run_test_ui(|ui| {
+        let ctx = &ui.ctx().clone();
+
+        let mut style = (*ctx.global_style()).clone();
         style.text_styles.insert(
             egui::TextStyle::Name(EDITOR_TEXT_STYLE.into()),
             egui::FontId::new(14.0, egui::FontFamily::Monospace),
         );
-        ctx.set_style(style);
-        harness.app.render_editor_panel(ctx);
+        ctx.set_global_style(style);
+        harness.app.render_editor_panel(ui);
     });
 
     let pending = harness
@@ -424,14 +426,16 @@ fn virtual_editor_plain_threshold_clears_stale_highlight_state() {
     harness.app.highlight_staged = Some(stale_render);
     let version_before = harness.app.highlight_version;
 
-    egui::__run_test_ctx(|ctx| {
-        let mut style = (*ctx.style()).clone();
+    egui::__run_test_ui(|ui| {
+        let ctx = &ui.ctx().clone();
+
+        let mut style = (*ctx.global_style()).clone();
         style.text_styles.insert(
             egui::TextStyle::Name(EDITOR_TEXT_STYLE.into()),
             egui::FontId::new(14.0, egui::FontFamily::Monospace),
         );
-        ctx.set_style(style);
-        harness.app.render_editor_panel(ctx);
+        ctx.set_global_style(style);
+        harness.app.render_editor_panel(ui);
     });
 
     assert!(harness.app.highlight_pending.is_none());
@@ -818,7 +822,9 @@ fn virtual_editor_render_reuses_cached_galleys_across_idle_frames() {
     let mut harness = make_app();
     set_active_content(&mut harness.app, "alpha\nbeta\ngamma\n");
 
-    egui::__run_test_ctx(|ctx| {
+    egui::__run_test_ui(|ui| {
+        let ctx = &ui.ctx().clone();
+
         configure_virtual_editor_test_ctx(ctx);
         run_editor_panel_once(&mut harness.app, ctx, egui::RawInput::default());
         let first = harness

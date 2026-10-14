@@ -35,8 +35,10 @@ fn native_paste_only_chords_route_without_a_v_key_event() {
             &ctx,
             egui::RawInput {
                 screen_rect: Some(screen_rect()),
-                modifiers,
-                events,
+
+                events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                    .chain(events)
+                    .collect(),
                 ..Default::default()
             },
         );
@@ -78,8 +80,10 @@ fn native_plain_paste_supersedes_a_canceled_clipboard_request() {
         &ctx,
         egui::RawInput {
             screen_rect: Some(screen_rect()),
-            modifiers: primary_command_modifiers(),
-            events: vec![egui::Event::Paste("fresh".into())],
+
+            events: std::iter::once(egui::Event::ModifiersChanged(primary_command_modifiers()))
+                .chain(vec![egui::Event::Paste("fresh".into())])
+                .collect(),
             ..Default::default()
         },
     );
@@ -373,8 +377,10 @@ fn ctrl_home_after_clicking_into_editor_stays_in_editor() {
         &ctx,
         egui::RawInput {
             screen_rect: Some(screen_rect()),
-            events: vec![key_event(egui::Key::Home, modifiers)],
-            modifiers,
+            events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                .chain(vec![key_event(egui::Key::Home, modifiers)])
+                .collect(),
+
             ..Default::default()
         },
     );
@@ -426,8 +432,10 @@ fn ctrl_home_after_search_focus_and_editor_click_stays_in_editor() {
         &ctx,
         egui::RawInput {
             screen_rect: Some(screen_rect()),
-            events: vec![key_event(egui::Key::Home, modifiers)],
-            modifiers,
+            events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                .chain(vec![key_event(egui::Key::Home, modifiers)])
+                .collect(),
+
             ..Default::default()
         },
     );
@@ -487,8 +495,10 @@ fn ctrl_home_after_title_focus_and_editor_click_stays_in_editor() {
         &ctx,
         egui::RawInput {
             screen_rect: Some(screen_rect()),
-            events: vec![key_event(egui::Key::Home, modifiers)],
-            modifiers,
+            events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                .chain(vec![key_event(egui::Key::Home, modifiers)])
+                .collect(),
+
             ..Default::default()
         },
     );
@@ -561,8 +571,10 @@ fn ctrl_home_after_command_palette_close_and_editor_click_stays_in_editor() {
         &ctx,
         egui::RawInput {
             screen_rect: Some(screen_rect()),
-            events: vec![key_event(egui::Key::Home, modifiers)],
-            modifiers,
+            events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                .chain(vec![key_event(egui::Key::Home, modifiers)])
+                .collect(),
+
             ..Default::default()
         },
     );
@@ -628,8 +640,10 @@ fn focused_editor_keeps_boundary_and_page_navigation_inside_chrome() {
                     &ctx,
                     egui::RawInput {
                         screen_rect: Some(screen_rect()),
-                        events: vec![key_event(key, modifiers)],
-                        modifiers,
+                        events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                            .chain(vec![key_event(key, modifiers)])
+                            .collect(),
+
                         ..Default::default()
                     },
                 );
@@ -675,8 +689,10 @@ fn word_selection_delete_keys_stay_in_focused_editor() {
             &ctx,
             egui::RawInput {
                 screen_rect: Some(screen_rect()),
-                events: vec![key_event(egui::Key::ArrowRight, word_select)],
-                modifiers: word_select,
+                events: std::iter::once(egui::Event::ModifiersChanged(word_select))
+                    .chain(vec![key_event(egui::Key::ArrowRight, word_select)])
+                    .collect(),
+
                 ..Default::default()
             },
         );
@@ -702,4 +718,33 @@ fn word_selection_delete_keys_stay_in_focused_editor() {
             Err(TryRecvError::Empty)
         ));
     }
+}
+
+#[test]
+fn ime_surrounding_deletion_uses_character_offsets_and_is_undoable() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.reset_virtual_editor("aé🦀z");
+    harness.app.focus_editor_next = true;
+    run_full_update(&mut harness.app, &ctx, vec![]);
+    harness
+        .app
+        .virtual_editor_state
+        .restore_selection(2, None, 4);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Ime(egui::ImeEvent::DeleteSurrounding {
+            before_chars: 1,
+            after_chars: 1,
+        })],
+    );
+    assert_eq!(harness.app.active_snapshot(), "az");
+    assert_eq!(harness.app.virtual_editor_state.cursor(), 1);
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![command_key_event(egui::Key::Z)],
+    );
+    assert_eq!(harness.app.active_snapshot(), "aé🦀z");
 }

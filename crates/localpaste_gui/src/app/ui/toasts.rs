@@ -13,14 +13,15 @@ impl LocalPasteApp {
     /// newest toast sits closest to the status bar. Keeping toasts out of the
     /// top bar and editor toolbar means they never cover those controls. The
     /// stack paints above floating windows and below popups and tooltips.
-    pub(crate) fn render_toasts(&mut self, ctx: &egui::Context) {
+    pub(crate) fn render_toasts(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
         if self.toasts.is_empty() {
             return;
         }
 
         // After the bottom panel, the remaining area ends at the status bar's top edge.
         let above_status_bar =
-            ctx.available_rect().right_bottom() - egui::vec2(TOAST_MARGIN, TOAST_MARGIN);
+            ui.available_rect_before_wrap().right_bottom() - egui::vec2(TOAST_MARGIN, TOAST_MARGIN);
         let mut restore_undo_token: Option<String> = None;
         let stack = egui::Area::new(egui::Id::new("toast_area"))
             .pivot(egui::Align2::RIGHT_BOTTOM)

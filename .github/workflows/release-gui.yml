@@ -153,7 +153,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master @ 2026-02-23
         with:
-          toolchain: 1.89.0
+          toolchain: 1.95.0
       - name: Cache Rust build artifacts
         uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
       - name: Build smoke binaries
@@ -332,7 +332,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # master @ 2026-02-23
         with:
-          toolchain: 1.89.0
+          toolchain: 1.95.0
           targets: ${{ matrix.target }}
       - name: Cache Rust build artifacts
         uses: swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8

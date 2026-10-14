@@ -40,10 +40,9 @@ fn row_number(label: &str) -> usize {
 
 /// Vertical sizes of sidebar rows in the app's style: the distance from one row
 /// to the next, and the extra space a cluster gap adds.
-fn row_metrics(frames: &SidebarFrames) -> (f32, f32) {
-    let spacing = frames.ctx.style().spacing.clone();
+fn row_metrics(_frames: &SidebarFrames) -> (f32, f32) {
     (
-        spacing.interact_size.y + spacing.item_spacing.y,
+        crate::app::ui::sidebar::SIDEBAR_ROW_HEIGHT + crate::app::ui::sidebar::SIDEBAR_ROW_SPACING,
         crate::app::ui::sidebar::MAX_CLUSTER_GAP,
     )
 }
@@ -96,7 +95,7 @@ fn selected_row_fill(
     output: &egui::FullOutput,
     frames: &SidebarFrames,
 ) -> (egui::Rect, egui::Rect) {
-    let selection = frames.ctx.style().visuals.selection.bg_fill;
+    let selection = frames.ctx.global_style().visuals.selection.bg_fill;
     output
         .shapes
         .iter()
@@ -297,7 +296,7 @@ fn a_cluster_gap_takes_no_click_hover_or_selection_fill() {
     );
     // Halfway between the two rows lies in the spacing and gap, outside both rows.
     let in_gap = egui::pos2(above.x, (above.y + below.y) / 2.0);
-    let selection = frames.ctx.style().visuals.selection.bg_fill;
+    let selection = frames.ctx.global_style().visuals.selection.bg_fill;
 
     let output = frames.render(&mut harness.app, vec![egui::Event::PointerMoved(in_gap)]);
     let fills = fills_behind(&output, in_gap);

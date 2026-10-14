@@ -79,10 +79,10 @@ def main() -> None:
             command_args += ["--pid", str(pid)]
         return subprocess.check_output(command_args + list(map(str, rest)), env=env, text=True)
 
-    def key(code: int, *modifiers: str, pid: int | None = None) -> None:
-        """Press a native key chord in the target process (default: the GUI) and pause briefly."""
+    def key(code: int, *modifiers: str, pid: int | None = None, delay_ms: int = 80) -> None:
+        """Press a native chord, holding setup keys reliably unless testing a specific delay."""
         driver("key", "--key-code", code, "--modifiers", ",".join(modifiers),
-               "--key-delay-ms", args.key_delay_ms, pid=pid or process.pid)
+               "--key-delay-ms", delay_ms, pid=pid or process.pid)
         time.sleep(0.12)
 
     def native_text(text: str, pid: int | None = None) -> None:
@@ -251,7 +251,7 @@ def main() -> None:
                             "db_path": env["DB_PATH"], "endpoint": endpoint, "native_ui": snapshot()})
         if precondition is None:
             for chord in scenario["driver"]["macos"]["keys"]:
-                key(chord["key_code"], *chord["modifiers"])
+                key(chord["key_code"], *chord["modifiers"], delay_ms=args.key_delay_ms)
             if mode in ("insert", "markdown", "no_open"):
                 key(1, "command")
         time.sleep(1.5)

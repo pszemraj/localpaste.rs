@@ -388,8 +388,8 @@ fn floating_query_focus_waits_until_its_accessibility_node_can_render() {
     let id = egui::Id::new(DIFF_QUERY_INPUT_ID);
     let mut requested = true;
     let mut query = String::new();
-    let output = ctx.run(egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    let output = run_ui(&ctx, egui::RawInput::default(), |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.scope_builder(egui::UiBuilder::new().sizing_pass().invisible(), |ui| {
                 if requested && super::super::ui::focus_visible_query(ui, id) {
                     requested = false;
@@ -404,8 +404,8 @@ fn floating_query_focus_waits_until_its_accessibility_node_can_render() {
     );
     assert!(!ctx.memory(|memory| memory.has_focus(id)));
     assert_accessible_focus(&output);
-    let output = ctx.run(egui::RawInput::default(), |ctx| {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    let output = run_ui(&ctx, egui::RawInput::default(), |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             if requested && super::super::ui::focus_visible_query(ui, id) {
                 requested = false;
             }
@@ -463,7 +463,8 @@ fn diff_open_focuses_query_once_for_toolbar_and_palette() {
                     events: vec![egui::Event::AccessKitActionRequest(
                         egui::accesskit::ActionRequest {
                             action: egui::accesskit::Action::Click,
-                            target,
+                            target_tree: egui::accesskit::TreeId::ROOT,
+                            target_node: target,
                             data: None,
                         },
                     )],

@@ -19,7 +19,11 @@ pub(in crate::app) fn focus_visible_query(ui: &egui::Ui, id: egui::Id) -> bool {
     if !ui.is_visible() || ui.is_sizing_pass() {
         return false;
     }
-    ui.memory_mut(|memory| memory.request_focus(id));
+    ui.memory_mut(|memory| {
+        if !memory.has_focus(id) {
+            memory.request_focus(id);
+        }
+    });
     true
 }
 
@@ -57,7 +61,7 @@ pub(in crate::app) trait ViewportFitExt: Sized {
 
 impl ViewportFitExt for egui::Window<'_> {
     fn fit_to_viewport(self, ctx: &egui::Context, preferred: egui::Vec2) -> Self {
-        let style = ctx.style();
+        let style = ctx.global_style();
         let frame = egui::Frame::window(&style);
         // The title bar is at least `interact_size.y` tall and sits above the
         // content area, separated from it by a rule one stroke wide.
@@ -101,14 +105,14 @@ impl ModalWindowExt for egui::Window<'_> {
         ctx: &egui::Context,
         add_contents: impl FnOnce(&mut egui::Ui) -> R,
     ) -> Option<egui::InnerResponse<Option<R>>> {
-        let app_style = ctx.style();
-        ctx.set_style(modal_chrome_style(&app_style));
+        let app_style = ctx.global_style();
+        ctx.set_global_style(modal_chrome_style(&app_style));
         let response = self.collapsible(false).show(ctx, |ui| {
-            ctx.set_style(app_style.clone());
+            ctx.set_global_style(app_style.clone());
             ui.set_style(app_style.clone());
             add_contents(ui)
         });
-        ctx.set_style(app_style);
+        ctx.set_global_style(app_style);
         response
     }
 }

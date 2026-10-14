@@ -5,7 +5,6 @@ use super::{
     DRAG_AUTOSCROLL_MIN_LINES_PER_FRAME, EDITOR_DOUBLE_CLICK_DISTANCE, EDITOR_DOUBLE_CLICK_WINDOW,
 };
 use eframe::egui;
-use std::ops::Range;
 use std::time::Instant;
 
 /// Returns whether bare arrow keys should drive sidebar selection navigation.
@@ -200,17 +199,17 @@ pub(crate) fn paint_virtual_selection_overlay(
     painter: &egui::Painter,
     row_rect: egui::Rect,
     galley: &egui::Galley,
-    selection: Range<usize>,
+    selection: egui::text::CharRange,
     selection_fill: egui::Color32,
 ) {
     if selection.start >= selection.end {
         return;
     }
-    let mut consumed = 0usize;
+    let mut consumed = egui::text::CharIndex::ZERO;
     for placed_row in &galley.rows {
         let row_chars = placed_row.char_count_excluding_newline();
-        let local_start = selection.start.saturating_sub(consumed).min(row_chars);
-        let local_end = selection.end.saturating_sub(consumed).min(row_chars);
+        let local_start = selection.start.saturating_sub(consumed.0).min(row_chars);
+        let local_end = selection.end.saturating_sub(consumed.0).min(row_chars);
         if local_end > local_start {
             let left = row_rect.min.x + placed_row.pos.x + placed_row.x_offset(local_start);
             let mut right = row_rect.min.x + placed_row.pos.x + placed_row.x_offset(local_end);
@@ -222,7 +221,7 @@ pub(crate) fn paint_virtual_selection_overlay(
             let rect = egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom));
             painter.rect_filled(rect, 2.0, selection_fill);
         }
-        consumed = consumed.saturating_add(placed_row.char_count_including_newline());
+        consumed += placed_row.char_count_including_newline();
         if consumed >= selection.end {
             break;
         }

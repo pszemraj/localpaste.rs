@@ -213,8 +213,9 @@ fn output_has_visible_true(output: &eframe::egui::FullOutput) -> bool {
 
 fn shortcut_raw_input(key: egui::Key, modifiers: egui::Modifiers) -> egui::RawInput {
     egui::RawInput {
-        modifiers,
-        events: vec![key_event(key, modifiers)],
+        events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+            .chain(vec![key_event(key, modifiers)])
+            .collect(),
         screen_rect: Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,
             egui::vec2(1200.0, 900.0),
@@ -354,12 +355,15 @@ fn shortcut_help_closes_on_escape() {
     harness.app.shortcut_help_open = true;
     let ctx = eframe::egui::Context::default();
 
-    let _ = ctx.run(
+    let _ = run_ui(
+        &ctx,
         eframe::egui::RawInput {
             events: vec![pressed_key(eframe::egui::Key::Escape)],
             ..Default::default()
         },
-        |ctx| {
+        |ui| {
+            let ctx = &ui.ctx().clone();
+
             harness.app.render_shortcut_help(ctx);
         },
     );
@@ -377,8 +381,11 @@ fn first_full_update_reveals_hidden_window_once() {
     harness.app.ensure_style(&ctx);
 
     let mut frame = eframe::Frame::_new_kittest();
-    let first_output = ctx.run(eframe::egui::RawInput::default(), |ctx| {
-        eframe::App::update(&mut harness.app, ctx, &mut frame);
+    let first_output = run_ui(&ctx, eframe::egui::RawInput::default(), |ui| {
+        let ctx = &ui.ctx().clone();
+
+        eframe::App::logic(&mut harness.app, ctx, &mut frame);
+        eframe::App::ui(&mut harness.app, ui, &mut frame);
     });
 
     assert!(harness.app.window_shown_once);
@@ -387,8 +394,11 @@ fn first_full_update_reveals_hidden_window_once() {
         "first update should reveal the initially hidden native window"
     );
 
-    let second_output = ctx.run(eframe::egui::RawInput::default(), |ctx| {
-        eframe::App::update(&mut harness.app, ctx, &mut frame);
+    let second_output = run_ui(&ctx, eframe::egui::RawInput::default(), |ui| {
+        let ctx = &ui.ctx().clone();
+
+        eframe::App::logic(&mut harness.app, ctx, &mut frame);
+        eframe::App::ui(&mut harness.app, ui, &mut frame);
     });
 
     assert!(
@@ -403,12 +413,15 @@ fn history_modal_closes_on_escape() {
     harness.app.version_ui.history_modal_open = true;
     let ctx = eframe::egui::Context::default();
 
-    let _ = ctx.run(
+    let _ = run_ui(
+        &ctx,
         eframe::egui::RawInput {
             events: vec![pressed_key(eframe::egui::Key::Escape)],
             ..Default::default()
         },
-        |ctx| {
+        |ui| {
+            let ctx = &ui.ctx().clone();
+
             harness.app.render_history_modal(ctx);
         },
     );
@@ -481,7 +494,8 @@ fn history_modal_headless_render_handles_long_inline_snapshot_band() {
         });
 
     let ctx = eframe::egui::Context::default();
-    let output = ctx.run(
+    let output = run_ui(
+        &ctx,
         eframe::egui::RawInput {
             screen_rect: Some(eframe::egui::Rect::from_min_size(
                 eframe::egui::Pos2::ZERO,
@@ -489,7 +503,9 @@ fn history_modal_headless_render_handles_long_inline_snapshot_band() {
             )),
             ..Default::default()
         },
-        |ctx| {
+        |ui| {
+            let ctx = &ui.ctx().clone();
+
             harness.app.render_history_modal(ctx);
         },
     );

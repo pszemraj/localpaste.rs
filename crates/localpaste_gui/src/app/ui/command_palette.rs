@@ -59,6 +59,12 @@ impl LocalPasteApp {
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut self.command_palette_query)
                         .id(egui::Id::new(COMMAND_PALETTE_INPUT_ID))
+                        .event_filter(egui::EventFilter {
+                            horizontal_arrows: true,
+                            vertical_arrows: true,
+                            escape: true,
+                            tab: false,
+                        })
                         .return_key(None)
                         .desired_width(f32::INFINITY)
                         .muted_hint("Search commands..."),

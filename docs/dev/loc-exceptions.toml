@@ -10,3 +10,11 @@
 # path = "crates/localpaste_gui/src/app/mod.rs"
 # max_lines = 1200
 # reason = "Temporary during editor state extraction work"
+
+# Existing watchlist files remain capped at 1000 lines during the egui migration:
+# - core semantic/db test suites keep their current fixtures together;
+# - GUI virtual-editor, save/metadata, and collection/search suites retain their
+#   scenario groups; splitting these unrelated tests is deferred;
+# - GUI highlight implementation/tests and the tools generator retain their
+#   current module boundaries pending the extraction recorded in the backlog.
+# These are reasons to defer the 900-line watchlist, not exceptions to the cap.

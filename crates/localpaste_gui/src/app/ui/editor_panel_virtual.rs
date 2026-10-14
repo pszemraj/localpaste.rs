@@ -82,7 +82,7 @@ impl LocalPasteApp {
             m.focused()
                 .map(|focused_id| focused_id != editor_id)
                 .unwrap_or(false)
-        }) && ui.ctx().wants_keyboard_input();
+        }) && ui.ctx().egui_wants_keyboard_input();
         if other_keyboard_input_has_focus && !focus_editor_requested {
             self.virtual_editor_state.has_focus = false;
         }
@@ -212,7 +212,7 @@ impl LocalPasteApp {
                             );
                             let cursor = self.galley.cursor_from_pos(local_pos);
                             self.segment_start
-                                .saturating_add(cursor.index.min(self.segment_chars))
+                                .saturating_add(cursor.index.0.min(self.segment_chars))
                         }
                     }
                     enum RowAction {
@@ -569,7 +569,7 @@ impl LocalPasteApp {
                         .duration_since(self.virtual_caret_phase_start)
                         .as_millis()
                         / CARET_BLINK_INTERVAL.as_millis().max(1);
-                    let caret_visible = blink_ticks % 2 == 0;
+                    let caret_visible = blink_ticks.is_multiple_of(2);
                     let clamped_caret_cursor =
                         self.clamp_virtual_cursor_for_render(self.virtual_editor_state.cursor());
                     let paint_started = perf_enabled.then(Instant::now);
@@ -582,7 +582,7 @@ impl LocalPasteApp {
                                 ui.painter(),
                                 row.text_rect,
                                 galley.as_ref(),
-                                selection,
+                                selection.start.into()..selection.end.into(),
                                 selection_fill,
                             );
                         }
@@ -795,17 +795,29 @@ impl LocalPasteApp {
                     .unwrap_or_default();
                 ui.output_mut(|output| {
                     output.ime = Some(egui::output::IMEOutput {
+                        purpose: egui::IMEPurpose::Normal,
                         rect: to_global * interaction_rect,
                         cursor_rect: to_global * cursor_rect,
+                        should_interrupt_composition: false,
                     });
                 });
             }
         }
         if editor_shortcuts_available {
             let route_started = Instant::now();
+            let owns_ime = ui.memory(|memory| memory.owns_ime_events(editor_id));
             let commands = ui.input(|input| {
                 commands_from_events(&input.events, true)
                     .into_iter()
+                    .filter(|command| {
+                        owns_ime
+                            || !matches!(
+                                command,
+                                VirtualInputCommand::ImePreedit(_)
+                                    | VirtualInputCommand::ImeCommit(_)
+                                    | VirtualInputCommand::ImeDeleteSurrounding { .. }
+                            )
+                    })
                     .filter(|command| !self.should_skip_virtual_command_for_paste_as_new(command))
                     .collect::<Vec<_>>()
             });

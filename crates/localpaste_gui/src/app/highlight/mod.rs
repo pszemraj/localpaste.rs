@@ -322,14 +322,14 @@ impl EditorLayoutCache {
                         };
                         sections.push(LayoutSection {
                             leading_space: 0.0,
-                            byte_range: range,
+                            byte_range: range.start.into()..range.end.into(),
                             format: syntect_style_to_format(style, editor_font),
                         });
                     }
                     if sections.is_empty() && !line.is_empty() {
                         sections.push(LayoutSection {
                             leading_space: 0.0,
-                            byte_range: 0..line.len(),
+                            byte_range: 0.into()..line.len().into(),
                             format: default_format.clone(),
                         });
                     }
@@ -610,8 +610,9 @@ fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usiz
         let mut section = section.clone();
         let start = section.byte_range.start.saturating_add(offset);
         let end = section.byte_range.end.saturating_add(offset);
-        if let Some(range) = clamp_byte_range_to_char_boundaries(job.text.as_str(), start..end) {
-            section.byte_range = range;
+        if let Some(range) = clamp_byte_range_to_char_boundaries(job.text.as_str(), start.0..end.0)
+        {
+            section.byte_range = range.start.into()..range.end.into();
             job.sections.push(section);
         }
     }
@@ -621,11 +622,11 @@ fn append_sections(job: &mut LayoutJob, sections: &[LayoutSection], offset: usiz
 fn debug_assert_layout_sections_char_boundaries(job: &LayoutJob) {
     for section in &job.sections {
         debug_assert!(
-            job.text.is_char_boundary(section.byte_range.start),
+            job.text.is_char_boundary(section.byte_range.start.0),
             "layout section start is not a char boundary"
         );
         debug_assert!(
-            job.text.is_char_boundary(section.byte_range.end),
+            job.text.is_char_boundary(section.byte_range.end.0),
             "layout section end is not a char boundary"
         );
     }
@@ -651,7 +652,7 @@ fn push_sections_with_default_gaps(
         ) {
             job.sections.push(LayoutSection {
                 leading_space: 0.0,
-                byte_range: range,
+                byte_range: range.start.into()..range.end.into(),
                 format: default_format.clone(),
             });
         }
@@ -679,7 +680,7 @@ fn push_sections_with_default_gaps(
             ) {
                 job.sections.push(LayoutSection {
                     leading_space: 0.0,
-                    byte_range: range,
+                    byte_range: range.start.into()..range.end.into(),
                     format: default_format.clone(),
                 });
             }
@@ -693,7 +694,7 @@ fn push_sections_with_default_gaps(
             ) {
                 job.sections.push(LayoutSection {
                     leading_space: 0.0,
-                    byte_range: range,
+                    byte_range: range.start.into()..range.end.into(),
                     format,
                 });
             }
@@ -708,7 +709,7 @@ fn push_sections_with_default_gaps(
         ) {
             job.sections.push(LayoutSection {
                 leading_space: 0.0,
-                byte_range: range,
+                byte_range: range.start.into()..range.end.into(),
                 format: default_format.clone(),
             });
         }

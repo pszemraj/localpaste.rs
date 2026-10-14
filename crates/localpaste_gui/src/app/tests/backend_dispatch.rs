@@ -160,7 +160,7 @@ fn sidebar_search_resends_a_query_whose_reply_arrived_while_it_was_edited() {
 /// The repaint delay requested by the last frame.
 fn settled_repaint_delay(app: &mut LocalPasteApp, ctx: &egui::Context) -> Duration {
     let mut delay = Duration::ZERO;
-    for _ in 0..10 {
+    for _ in 0..20 {
         delay = run_discovery_frame_once(app, ctx, Vec::new()).viewport_output
             [&egui::ViewportId::ROOT]
             .repaint_delay;
@@ -196,4 +196,43 @@ fn idle_frames_wake_when_the_external_refresh_falls_due() {
         delay > Duration::from_secs(1),
         "an unsent refresh must not request back-to-back frames: {delay:?}"
     );
+}
+
+#[test]
+fn hidden_logic_reveals_startup_once_without_replaying_editor_input() {
+    let mut harness = make_app();
+    let ctx = egui::Context::default();
+    harness.app.ensure_style(&ctx);
+    let mut frame = eframe::Frame::_new_kittest();
+    let mut hidden = egui::RawInput::default();
+    hidden
+        .viewports
+        .get_mut(&egui::ViewportId::ROOT)
+        .unwrap()
+        .minimized = Some(true);
+    let output = ctx.run_logic(&hidden, |ctx| harness.app.logic(ctx, &mut frame));
+    assert!(output
+        .viewport_commands
+        .values()
+        .flatten()
+        .any(|command| matches!(command, egui::ViewportCommand::Visible(true))));
+    assert!(harness.app.window_shown_once);
+    let next = ctx.run_logic(&hidden, |ctx| harness.app.logic(ctx, &mut frame));
+    assert!(!next
+        .viewport_commands
+        .values()
+        .flatten()
+        .any(|command| matches!(command, egui::ViewportCommand::Visible(true))));
+
+    harness.app.focus_editor_next = true;
+    run_full_update(
+        &mut harness.app,
+        &ctx,
+        vec![egui::Event::Text("once".into())],
+    );
+    let before = harness.app.active_snapshot();
+    assert!(before.contains("once"));
+    // Hidden logic sees the last displayed frame's events and must not edit again.
+    let _ = ctx.run_logic(&hidden, |ctx| harness.app.logic(ctx, &mut frame));
+    assert_eq!(harness.app.active_snapshot(), before);
 }

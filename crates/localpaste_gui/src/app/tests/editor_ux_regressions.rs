@@ -336,8 +336,9 @@ fn native_markdown_url_paste_uses_editor_ownership_and_reveals_the_link() {
         &mut harness.app,
         &ctx,
         egui::RawInput {
-            modifiers: primary_command_modifiers(),
-            events: vec![egui::Event::Paste("https://example.test/docs".into())],
+            events: std::iter::once(egui::Event::ModifiersChanged(primary_command_modifiers()))
+                .chain(vec![egui::Event::Paste("https://example.test/docs".into())])
+                .collect(),
             ..Default::default()
         },
     );
@@ -365,7 +366,10 @@ fn native_markdown_url_paste_uses_editor_ownership_and_reveals_the_link() {
     run_full_update(
         &mut harness.app,
         &ctx,
-        vec![egui::Event::Paste("https://new.test".into())],
+        vec![
+            egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+            egui::Event::Paste("https://new.test".into()),
+        ],
     );
     assert_eq!(harness.app.active_snapshot(), before);
     assert!(harness.cmd_rx.try_iter().any(
@@ -378,14 +382,14 @@ fn missing_named_editor_style_renders_with_resolved_fallback_font() {
     let mut harness = make_app();
     let ctx = egui::Context::default();
     assert!(!ctx
-        .style()
+        .global_style()
         .text_styles
         .contains_key(&TextStyle::Name(EDITOR_TEXT_STYLE.into())));
     render_editor_frames(&mut harness.app, &ctx, 1000.0);
     assert_caret_visible(&harness.app);
     // A native theme replacement can discard the named style after normal startup too.
     harness.app.ensure_style(&ctx);
-    ctx.set_style(egui::Style::default());
+    ctx.set_global_style(egui::Style::default());
     render_editor_frames(&mut harness.app, &ctx, 1000.0);
     assert_caret_visible(&harness.app);
 }

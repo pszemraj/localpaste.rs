@@ -31,7 +31,7 @@ pub(super) fn scope_selector(
     width: f32,
 ) -> SearchScope {
     // `ComboBox::from_id_salt` derives its widget id this way.
-    let combo_id = ui.make_persistent_id(egui::Id::new(id));
+    let combo_id = ui.make_persistent_id(egui::IdSalt::new(id));
     let (step, close) = if egui::ComboBox::is_open(ui.ctx(), combo_id) {
         ui.input_mut(|input| {
             let down = input.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown);
@@ -60,6 +60,7 @@ pub(super) fn scope_selector(
     egui::ComboBox::from_id_salt(id)
         .selected_text(label(selected))
         .width(width)
+        .truncate()
         .show_ui(ui, |ui| {
             if close {
                 ui.close();

@@ -3,7 +3,6 @@
 //! Scroll domain is visual rows, not physical lines.
 
 use super::buffer::{RopeBuffer, VirtualEditDelta};
-use eframe::egui::text::TAB_SIZE;
 use std::ops::Range;
 use unicode_width::UnicodeWidthChar;
 
@@ -13,7 +12,7 @@ use unicode_width::UnicodeWidthChar;
 /// so the width never depends on position. Other control characters count as one column.
 fn char_display_columns(ch: char) -> usize {
     if ch == '\t' {
-        TAB_SIZE
+        eframe::egui::FontTweak::default().tab_size as usize
     } else {
         UnicodeWidthChar::width(ch).unwrap_or(1)
     }

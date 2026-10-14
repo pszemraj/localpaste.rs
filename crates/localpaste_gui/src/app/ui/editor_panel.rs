@@ -10,8 +10,9 @@ impl LocalPasteApp {
     ///
     /// # Panics
     /// Panics if a virtual-editor highlight row fails internal consistency checks.
-    pub(crate) fn render_editor_panel(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    pub(crate) fn render_editor_panel(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
+        egui::CentralPanel::default().show(ui, |ui| {
             let selected_meta = self.selected_paste.as_ref().map(|paste| paste.id.clone());
 
             if let Some(id) = selected_meta {

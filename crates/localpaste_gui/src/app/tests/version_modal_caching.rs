@@ -542,7 +542,7 @@ fn history_rows_hover_neutral_and_keep_the_selection_fill() {
     open_history_with_versions(&mut harness.app);
     let (output, center) = hover_history_row(&mut harness.app, &ctx, "11 B");
     let fills = fills_behind(&output, center);
-    let selection = ctx.style().visuals.selection.bg_fill;
+    let selection = ctx.global_style().visuals.selection.bg_fill;
     assert!(
         fills.contains(&selection),
         "hovered selected version keeps the selection fill: {fills:?}"

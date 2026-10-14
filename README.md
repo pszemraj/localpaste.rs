@@ -20,7 +20,7 @@ It is local-first by design. The desktop app is the main workspace, backed by an
 
 Download the latest binary for your system from [GitHub Releases](https://github.com/pszemraj/localpaste.rs/releases), then install and run LocalPaste; [GUI releases](docs/release-gui.md) lists artifact names and platform installation details.
 
-Source builds need Git, Rust with Cargo (with rustup, the checkout's `rust-toolchain.toml` selects and installs 1.89.0), and a native C/C++ build toolchain. Linux builds also need `pkg-config` and OpenSSL development headers (`libssl-dev` on Debian and Ubuntu, `openssl-devel` on Fedora).
+Source builds need Git, Rust with Cargo (with rustup, the checkout's `rust-toolchain.toml` selects and installs 1.95.0), and a native C/C++ build toolchain. Linux builds also need `pkg-config` and OpenSSL development headers (`libssl-dev` on Debian and Ubuntu, `openssl-devel` on Fedora).
 
 ```bash
 git clone https://github.com/pszemraj/localpaste.rs.git

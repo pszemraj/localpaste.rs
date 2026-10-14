@@ -98,6 +98,7 @@ pub(crate) struct LocalPasteApp {
     active_collection: SidebarCollection,
     active_language_filter: Option<String>,
     properties_drawer_open: bool,
+    sidebar_expanded: bool,
     command_palette_open: bool,
     command_palette_query: String,
     command_palette_selected: usize,
@@ -148,6 +149,8 @@ pub(crate) struct LocalPasteApp {
     virtual_drag_active: bool,
     /// Modifiers of the primary press accepted by the editor for the current gesture.
     virtual_pointer_press_modifiers: Option<egui::Modifiers>,
+    /// Last native modifier change, before discovery defers any events.
+    native_modifiers: egui::Modifiers,
     virtual_viewport_height: f32,
     virtual_line_height: f32,
     virtual_wrap_width: f32,
@@ -455,7 +458,7 @@ impl LocalPasteApp {
 
 impl eframe::App for LocalPasteApp {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
-        Self::stage_native_paste_shortcuts(input);
+        Self::stage_native_paste_shortcuts(input, &mut self.native_modifiers);
         self.stage_discovery_input(ctx, input);
     }
 
@@ -463,7 +466,20 @@ impl eframe::App for LocalPasteApp {
         self.save_gui_storage(storage);
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Hidden windows run logic without a UI pass in eframe 0.36. Fonts and
+        // theme are already configured by the creation callback.
+        if !self.window_shown_once {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            self.window_shown_once = true;
+        }
+        self.poll_background_work(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = &ui.ctx().clone();
+        self.ensure_style(ctx);
+        ui.set_style(ctx.global_style());
         if ctx.current_pass_index() > 0 {
             // Repeated sizing/discard passes redraw the same native slice;
             // its keyboard actions and edits have already been applied.
@@ -476,26 +492,6 @@ impl eframe::App for LocalPasteApp {
         let max_size = egui::vec2(MAX_WINDOW_SIZE[0], MAX_WINDOW_SIZE[1]);
         enforce_window_bounds(ctx, _frame, &mut self.window_checked, min_size, max_size);
 
-        let now = Instant::now();
-        if let Some(status) = &self.status {
-            if now >= status.expires_at {
-                self.status = None;
-            }
-        }
-        self.prune_expired_toasts(now);
-
-        self.reconcile_native_clipboard(ctx);
-        loop {
-            match self.backend.evt_rx.try_recv() {
-                Ok(event) => self.apply_event(event),
-                Err(crossbeam_channel::TryRecvError::Empty) => break,
-                Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                    self.handle_backend_event_channel_disconnected();
-                    break;
-                }
-            }
-        }
-        self.poll_export_result();
         self.replay_pending_picker_input(ctx);
         self.maybe_apply_pending_editor_paste(ctx);
 
@@ -503,10 +499,6 @@ impl eframe::App for LocalPasteApp {
         // Exclude older queued writes; native TextEdit and selectable labels copy
         // during/after rendering. A later request in this pass remains the newest intent.
         self.observe_native_clipboard(ctx);
-
-        while let Ok(reply) = self.highlight_worker.rx.try_recv() {
-            self.queue_highlight_reply(reply);
-        }
 
         let focus_id = egui::Id::new(VIRTUAL_EDITOR_ID);
         let egui_focus_pre = ctx.memory(|m| m.has_focus(focus_id));
@@ -516,7 +508,7 @@ impl eframe::App for LocalPasteApp {
         let version_overlay_open = self.version_overlay_open();
         let editor_shortcuts_blocked_pre = self.editor_shortcuts_blocked();
         let mutation_shortcut_blocked = self.mutation_shortcut_block_reason();
-        let wants_keyboard_input_before = ctx.wants_keyboard_input();
+        let wants_keyboard_input_before = ctx.egui_wants_keyboard_input();
         // An open combo list or menu owns bare keys, though no widget has focus.
         let popup_open_pre = egui::Popup::is_any_open(ctx);
         // Respect clipboard event order before a newer explicit shortcut can
@@ -743,7 +735,7 @@ impl eframe::App for LocalPasteApp {
                     .retain(|event| !matches!(event, egui::Event::Paste(_)));
             });
         }
-        if copy_virtual_unfocused && !ctx.wants_keyboard_input() {
+        if copy_virtual_unfocused && !ctx.egui_wants_keyboard_input() {
             if let Some(selection) = self.virtual_selected_text() {
                 self.queue_clipboard_text(selection);
                 self.flush_clipboard_output(ctx);
@@ -754,10 +746,11 @@ impl eframe::App for LocalPasteApp {
             self.maybe_apply_staged_highlight(Instant::now());
         }
 
-        self.render_top_bar(ctx);
-        self.render_sidebar(ctx);
-        self.render_properties_drawer(ctx);
-        self.render_editor_panel(ctx);
+        self.render_top_bar(ui);
+        self.render_status_bar(ui);
+        self.render_sidebar(ui);
+        self.render_properties_drawer(ui);
+        self.render_editor_panel(ui);
         self.render_command_palette(ctx);
         self.render_paste_picker(ctx);
         self.render_shortcut_help(ctx);
@@ -767,7 +760,7 @@ impl eframe::App for LocalPasteApp {
             ctx.memory(|m| m.has_focus(focus_id)) || self.virtual_editor_state.has_focus;
         let editor_focus_for_plain_paste_post = virtual_editor_focus_post;
         let editor_focus_post = virtual_editor_focus_post;
-        let wants_keyboard_input_after = ctx.wants_keyboard_input();
+        let wants_keyboard_input_after = ctx.egui_wants_keyboard_input();
         if sidebar_direction != 0 && !virtual_editor_focus_post && !wants_keyboard_input_after {
             if let Some(next_id) = self.sidebar_arrow_target_id(sidebar_direction) {
                 self.select_paste(next_id);
@@ -808,7 +801,7 @@ impl eframe::App for LocalPasteApp {
         let _implicit_clipboard_created = self.maybe_route_implicit_global_clipboard_create(
             pasted_text,
             editor_focus_post,
-            ctx.wants_keyboard_input(),
+            ctx.egui_wants_keyboard_input(),
             false,
         );
         let _ = paste_as_new_consumed;
@@ -816,13 +809,7 @@ impl eframe::App for LocalPasteApp {
         // Finish edits received before native deactivation in their current owner.
         self.blur_deactivated_editor(ctx);
 
-        self.render_status_bar(ctx);
-        self.render_toasts(ctx);
-        if !self.window_shown_once {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            self.window_shown_once = true;
-        }
-
+        self.render_toasts(ui);
         self.maybe_dispatch_palette_search();
         self.maybe_dispatch_search();
         self.maybe_autosave();
@@ -880,7 +867,7 @@ impl eframe::App for LocalPasteApp {
         self.nav_probe_write_frame(ctx);
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         self.flush_pending_saves_for_shutdown();
     }
 }

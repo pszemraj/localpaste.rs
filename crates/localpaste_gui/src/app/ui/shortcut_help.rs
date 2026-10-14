@@ -25,9 +25,25 @@ impl LocalPasteApp {
     ) {
         let mut events = std::mem::take(&mut self.deferred_discovery_events);
         events.append(&mut input.events);
-        self.retain_pending_picker_input(&mut events, input.modifiers);
+        self.retain_pending_picker_input(&mut events);
+        let mut completed_paste_action = None;
+        let mut current_paste_action = None;
         let first_boundary = events.iter().enumerate().find_map(|(index, event)| {
+            let action = super::super::shortcuts::runtime_shortcut_action(event);
+            let paste_shortcut = matches!(
+                action,
+                Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteIntoEditor)
+            );
+            let paste_owner_changes = paste_shortcut
+                && completed_paste_action.is_some_and(|previous| Some(previous) != action);
+            if paste_shortcut {
+                current_paste_action = action;
+            }
+            if matches!(event, egui::Event::Paste(_)) {
+                completed_paste_action = current_paste_action;
+            }
             (discovery_toggle(event)
+                || paste_owner_changes
                 || (self.discovery_open() && discovery_escape(event))
                 || self.discovery_accepts_enter(event, index > 0))
             .then_some(index)
@@ -35,16 +51,20 @@ impl LocalPasteApp {
         // Opening needs a rendered sizing pass before its query accepts input.
         // Dismissal can immediately deliver its suffix to the existing opener.
         let split_at = first_boundary.and_then(|index| {
-            if index > 0 {
+            let only_modifiers_before = events
+                .iter()
+                .take(index)
+                .all(|event| matches!(event, egui::Event::ModifiersChanged(_)));
+            if index > 0 && !only_modifiers_before {
                 Some(index)
             } else if events
-                .first()
+                .get(index)
                 .is_some_and(|event| self.discovery_boundary_closes(event))
             {
                 events
                     .iter()
                     .enumerate()
-                    .skip(1)
+                    .skip(index + 1)
                     .find_map(|(index, event)| {
                         (discovery_toggle(event)
                             || discovery_escape(event)
@@ -52,7 +72,7 @@ impl LocalPasteApp {
                         .then_some(index)
                     })
             } else {
-                Some(1)
+                Some(index + 1)
             }
         });
         if let Some(index) = split_at {
@@ -67,18 +87,13 @@ impl LocalPasteApp {
     }
 
     /// Holds editor events with their accepted picker selection until its load completes.
-    fn retain_pending_picker_input(
-        &mut self,
-        events: &mut Vec<egui::Event>,
-        modifiers: egui::Modifiers,
-    ) {
+    fn retain_pending_picker_input(&mut self, events: &mut Vec<egui::Event>) {
         if self.discovery_open() || self.pending_picker_open.is_none() {
             return;
         }
         let mut retaining = true;
         events.retain(|event| {
-            let action = super::super::shortcuts::native_paste_shortcut_action(event, modifiers)
-                .or_else(|| super::super::shortcuts::runtime_shortcut_action(event));
+            let action = super::super::shortcuts::runtime_shortcut_action(event);
             let transfers_input = discovery_escape(event)
                 || matches!(event, egui::Event::PointerButton { pressed: true, .. })
                 || action.is_some_and(|action| {
@@ -212,6 +227,7 @@ impl LocalPasteApp {
         // A menu left open behind the new surface would draw over it, and an
         // open scope menu would keep claiming its arrows, Enter, and Escape.
         egui::Popup::close_all(ctx);
+        ctx.memory_mut(|memory| memory.interrupt_ime());
         if self.cancel_virtual_ime_preedit_if_active(Instant::now()) {
             self.mark_dirty();
         }
@@ -375,6 +391,7 @@ impl LocalPasteApp {
         let results_height = (ctx.content_rect().height() - 260.0).clamp(160.0, 360.0);
 
         egui::Window::new("Keyboard Shortcuts")
+            .id(egui::Id::new("Keyboard Shortcuts"))
             .open(&mut open)
             .resizable(false)
             .default_width(HELP_WINDOW_WIDTH)

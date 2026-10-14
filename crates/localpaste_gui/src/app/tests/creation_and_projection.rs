@@ -3,10 +3,11 @@
 use super::*;
 
 #[test]
-fn paste_created_clean_visible_focuses_virtual_editor_on_next_render() {
+fn paste_created_clean_visible_focuses_editor_after_content_on_next_render() {
     let mut harness = make_app();
 
-    let mut created = Paste::new("new-content".to_string(), "new-note".to_string());
+    let content = "café 🦀\nnew-content";
+    let mut created = Paste::new(content.to_string(), "new-note".to_string());
     created.id = "new-id".to_string();
 
     harness
@@ -29,6 +30,19 @@ fn paste_created_clean_visible_focuses_virtual_editor_on_next_render() {
         !harness.app.focus_editor_next,
         "virtual editor should consume the one-frame focus request"
     );
+    assert_eq!(
+        harness.app.virtual_editor_state.cursor(),
+        content.chars().count()
+    );
+    run_editor_panel_once(
+        &mut harness.app,
+        &ctx,
+        egui::RawInput {
+            events: vec![egui::Event::Paste("next".into())],
+            ..Default::default()
+        },
+    );
+    assert_eq!(harness.app.active_snapshot(), format!("{content}next"));
 }
 
 /// A harness whose Rust language filter lists only `alpha`, and a created Python paste it hides.

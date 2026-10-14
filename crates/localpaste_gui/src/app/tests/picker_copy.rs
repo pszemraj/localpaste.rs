@@ -205,13 +205,17 @@ fn review_regression_native_copy_keeps_a_later_detached_request_in_the_same_pass
         vec![command_key_event(egui::Key::A)],
     );
     let mut frame = eframe::Frame::_new_kittest();
-    let output = ctx.run(
+    let output = run_ui(
+        &ctx,
         egui::RawInput {
             events: vec![egui::Event::Copy],
             ..Default::default()
         },
-        |ctx| {
-            harness.app.update(ctx, &mut frame);
+        |ui| {
+            let ctx = &ui.ctx().clone();
+
+            harness.app.logic(ctx, &mut frame);
+            harness.app.ui(ui, &mut frame);
             if ctx.current_pass_index() == 0 {
                 harness.app.queue_palette_copy("gamma".into(), false);
             }

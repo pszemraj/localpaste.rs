@@ -77,7 +77,7 @@ impl LocalPasteApp {
         let mut pending_target: Option<String> = None;
         let _recomputed_diff_preview = self.sync_diff_preview_cache();
 
-        egui::Window::new("Diff")
+        egui::Window::new("Diff").id(egui::Id::new("Diff"))
             .open(&mut keep_open)
             .fit_to_viewport(ctx, egui::vec2(1180.0, 760.0))
             .show_modal(ctx, |ui| {

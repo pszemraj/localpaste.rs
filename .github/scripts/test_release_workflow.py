@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,15 @@ import validate_workflow
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = REPO_ROOT / ".github/workflows/release-gui.yml"
+
+
+def path_from_bash(value):
+    """Translate Git Bash path output for native Windows assertions."""
+    if os.name == "nt":
+        value = subprocess.check_output(
+            ["bash", "-c", 'cygpath -w "$1"', "bash", value], text=True,
+        ).strip()
+    return Path(value)
 
 
 def load_workflow():
@@ -108,8 +118,9 @@ class ReleaseSourceTests(unittest.TestCase):
             "GITHUB_SHA": self.current_sha, "GITHUB_REF_NAME": "main",
             "INPUT_SOURCE_MODE": "", "INPUT_TAG": "", "RELEASE_TAG": "", **inputs,
         }
+        script = step["run"].replace("python3", shlex.quote(Path(sys.executable).as_posix()))
         result = subprocess.run(
-            ["bash", "-c", step["run"]], cwd=self.root, env=env,
+            ["bash", "-c", script], cwd=self.root, env=env,
             capture_output=True, text=True,
         )
         outputs = {}
@@ -162,7 +173,7 @@ class ReleaseSourceTests(unittest.TestCase):
             env=self.env | {"RUNNER_TEMP": str(runner_temp), "WORKFLOW_SHA": workflow_sha,
                             "GITHUB_ENV": str(github_env)}, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        scripts = Path(github_env.read_text().strip().split("=", 1)[1])
+        scripts = path_from_bash(github_env.read_text().strip().split("=", 1)[1])
         self.assertEqual((scripts / helper.name).read_text(), "# corrected packaging helper\n")
         self.assertFalse(helper.exists())
         self.assertEqual(self.git("rev-parse", "HEAD"), self.release_sha)
@@ -184,16 +195,18 @@ class ReleaseSourceTests(unittest.TestCase):
         tools.mkdir()
         probe = tools / "cache-probe.sh"
         # Only native platform detection and JSON decoding are substituted.
+        prefix = prefix.replace("set -euo pipefail", 'set -euo pipefail\nexport PATH="$TEST_BIN:$PATH"')
         probe.write_text(prefix.replace("/usr/bin/plutil", "plutil") +
                          '\nprintf "%s\\n" "$target_dir"\n'
-                         'if [[ -f .cargo/config.toml ]]; then cat .cargo/config.toml; fi\n')
+                         'if [[ -f .cargo/config.toml ]]; then cat .cargo/config.toml; fi\n',
+                         newline="\n")
         stubs = self.root / "test-bin"
         stubs.mkdir()
         commands = {
             "uname": "#!/bin/sh\nprintf 'Darwin\\n'\n",
-            "plutil": f"#!{sys.executable}\nimport json, sys\n"
+            "plutil": f"#!{Path(sys.executable).as_posix()}\nimport json, sys\n"
                       "print(json.load(sys.stdin)['target_directory'])\n",
-            "cargo": f"#!{sys.executable}\n" + """import json, os, sys
+            "cargo": f"#!{Path(sys.executable).as_posix()}\n" + """import json, os, subprocess, sys
 from pathlib import Path
 args = sys.argv[1:]
 assert args[0] == "metadata" and "--locked" in args and "--no-deps" in args
@@ -207,16 +220,23 @@ target = target if target.is_absolute() else Path.cwd() / target
 Path(os.environ["METADATA_LOG"]).write_text(json.dumps({
     "manifest": str(manifest), "cwd": str(Path.cwd()),
 }))
-print(json.dumps({"target_directory": str(target.resolve())}))
+target = str(target.resolve())
+if os.name == "nt":
+    target = subprocess.check_output(["cygpath", "-u", target], text=True).strip()
+print(json.dumps({"target_directory": target}))
 """,
         }
         for name, content in commands.items():
             command = stubs / name
-            command.write_text(content)
+            command.write_text(content, newline="\n")
             command.chmod(0o755)
         metadata_log = self.root / "metadata-log.json"
+        test_bin = subprocess.check_output(
+            ["bash", "-c", 'cygpath -u "$1"', "bash", str(stubs)], text=True,
+        ).strip() if os.name == "nt" else str(stubs)
         env = self.env | {
             "PATH": str(stubs) + os.pathsep + os.environ["PATH"],
+            "TEST_BIN": test_bin,
             "EXPECTED_TAG_MANIFEST": tagged_manifest, "EXPECTED_TAG_LOCKFILE": tagged_lockfile,
             "METADATA_LOG": str(metadata_log),
         }
@@ -234,7 +254,7 @@ print(json.dumps({"target_directory": str(target.resolve())}))
                     local_config.unlink()
                 case_env = env | ({"CARGO_TARGET_DIR": configured} if configured else {})
                 result = subprocess.run(
-                    ["/bin/bash", str(probe), "v0.5.0"], cwd=self.root,
+                    ["bash", probe.as_posix(), "v0.5.0"], cwd=self.root,
                     env=case_env, capture_output=True, text=True,
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -242,7 +262,7 @@ print(json.dumps({"target_directory": str(target.resolve())}))
                 if not expected.is_absolute():
                     expected = self.root / expected
                 target, _, build_config = result.stdout.partition("\n")
-                self.assertEqual(Path(target).resolve(), expected.resolve())
+                self.assertEqual(path_from_bash(target).resolve(), expected.resolve())
                 # The untracked repo-local Cargo config reaches the build's working directory.
                 self.assertEqual(build_config, cargo_config or "")
                 metadata = json.loads(metadata_log.read_text())

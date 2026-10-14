@@ -294,6 +294,7 @@ impl SidebarFrames {
             vec![
                 egui::Event::PointerMoved(egui::pos2(150.0, 600.0)),
                 egui::Event::MouseWheel {
+                    phase: egui::TouchPhase::Move,
                     unit: egui::MouseWheelUnit::Point,
                     delta: egui::vec2(0.0, delta_y),
                     modifiers: egui::Modifiers::NONE,
@@ -693,7 +694,7 @@ fn sidebar_row_hover_is_neutral_and_weaker_than_the_selected_row() {
     let selected = rendered_label_center(&output, "Sidebar row 0");
     let output = frames.render(&mut harness.app, vec![egui::Event::PointerMoved(selected)]);
     let fills = fills_behind(&output, selected);
-    let selection = frames.ctx.style().visuals.selection.bg_fill;
+    let selection = frames.ctx.global_style().visuals.selection.bg_fill;
     assert!(
         fills.contains(&selection) && !fills.contains(&COLOR_BORDER),
         "hovered selected row keeps the selection fill: {fills:?}"
@@ -745,7 +746,7 @@ fn a_long_sidebar_name_ends_in_an_ellipsis_just_before_its_language_label() {
     let mut frames = SidebarFrames::new();
     let output = frames.render(&mut harness.app, vec![]);
     // Title and language label keep the theme's item spacing between them.
-    let gap = frames.ctx.style().spacing.item_spacing.x;
+    let gap = frames.ctx.global_style().spacing.item_spacing.x;
 
     let (long, _) = sidebar_text_shape(&output, long_name);
     let long_right = long.pos.x + long.galley.size().x;

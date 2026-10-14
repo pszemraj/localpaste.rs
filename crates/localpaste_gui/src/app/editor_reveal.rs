@@ -78,6 +78,7 @@ impl LocalPasteApp {
             self.virtual_pointer_press_modifiers = None;
         }
         if last_window_focus(ctx) == Some(false) {
+            ctx.memory_mut(|memory| memory.interrupt_ime());
             if self.cancel_virtual_ime_preedit_if_active(std::time::Instant::now()) {
                 self.mark_dirty();
             }

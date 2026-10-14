@@ -27,26 +27,39 @@ impl LocalPasteApp {
     /// is replayed after Command or Shift has been released.
     ///
     /// # Arguments
-    /// - `input`: Native events to stage, with their current modifier snapshot.
-    pub(super) fn stage_native_paste_shortcuts(input: &mut egui::RawInput) {
-        if input.events.iter().any(|event| {
-            matches!(
-                shortcuts::runtime_shortcut_action(event),
-                Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteIntoEditor)
-            )
-        }) {
-            return;
-        }
+    /// - `input`: Native events in arrival order.
+    /// - `modifiers`: Modifier state carried across native batches.
+    pub(super) fn stage_native_paste_shortcuts(
+        input: &mut egui::RawInput,
+        modifiers: &mut egui::Modifiers,
+    ) {
         let mut events = Vec::with_capacity(input.events.len());
+        let mut paste_key_pending = false;
         for event in std::mem::take(&mut input.events) {
-            if shortcuts::native_paste_shortcut_action(&event, input.modifiers).is_some() {
-                events.push(egui::Event::Key {
-                    key: egui::Key::V,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: input.modifiers,
-                });
+            match &event {
+                egui::Event::ModifiersChanged(changed) => *modifiers = *changed,
+                egui::Event::WindowFocused(false) => *modifiers = egui::Modifiers::NONE,
+                _ => {}
+            }
+            if matches!(
+                shortcuts::runtime_shortcut_action(&event),
+                Some(RuntimeShortcutAction::PlainPaste | RuntimeShortcutAction::PasteIntoEditor)
+            ) {
+                paste_key_pending = true;
+            }
+            if matches!(event, egui::Event::Paste(_)) {
+                if !paste_key_pending
+                    && shortcuts::native_paste_shortcut_action(&event, *modifiers).is_some()
+                {
+                    events.push(egui::Event::Key {
+                        key: egui::Key::V,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: *modifiers,
+                    });
+                }
+                paste_key_pending = false;
             }
             events.push(event);
         }
@@ -132,20 +145,11 @@ impl LocalPasteApp {
                 self.canceled_paste_request_at = None;
                 return;
             }
-            let has_paste_key = input.events.iter().any(|event| {
-                matches!(event, egui::Event::Key {
-                    key: egui::Key::V, pressed: true, modifiers, ..
-                } if modifiers.command)
-            });
-            let native_modifiers = input.modifiers;
             let mut discarded = false;
             input.events.retain(|event| {
                 if matches!(event, egui::Event::Key {
                     key: egui::Key::V, pressed: true, modifiers, ..
                 } if modifiers.command)
-                    || (!has_paste_key
-                        && shortcuts::native_paste_shortcut_action(event, native_modifiers)
-                            .is_some())
                 {
                     self.canceled_paste_request_at = None;
                 }

@@ -244,8 +244,11 @@ fn multipass_render_does_not_replay_discovery_chords_or_text() {
         ..Default::default()
     };
     harness.app.raw_input_hook(&ctx, &mut input);
-    let _ = ctx.run(input, |ctx| {
-        harness.app.update(ctx, &mut app_frame);
+    let _ = run_ui(&ctx, input, |ui| {
+        let ctx = &ui.ctx().clone();
+
+        harness.app.logic(ctx, &mut app_frame);
+        harness.app.ui(ui, &mut app_frame);
         passes += 1;
         if ctx.current_pass_index() == 0 {
             ctx.request_discard("test repeated native batch");
@@ -416,10 +419,10 @@ fn ime_disabled_during_discovery_does_not_poison_editor_typing() {
     frame(
         &mut harness.app,
         &ctx,
-        vec![
-            egui::Event::Ime(egui::ImeEvent::Enabled),
-            egui::Event::Ime(egui::ImeEvent::Preedit("に".into())),
-        ],
+        vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "に".into(),
+            active_range_chars: None,
+        })],
     );
     assert!(harness.app.virtual_editor_state.ime.preedit_range.is_some());
     frame(
@@ -430,7 +433,10 @@ fn ime_disabled_during_discovery_does_not_poison_editor_typing() {
     frame(
         &mut harness.app,
         &ctx,
-        vec![egui::Event::Ime(egui::ImeEvent::Disabled)],
+        vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: String::new(),
+            active_range_chars: None,
+        })],
     );
     frame(
         &mut harness.app,
@@ -479,10 +485,10 @@ fn ime_disabled_after_native_deactivation_does_not_poison_editor_typing() {
     frame(
         &mut harness.app,
         &ctx,
-        vec![
-            egui::Event::Ime(egui::ImeEvent::Enabled),
-            egui::Event::Ime(egui::ImeEvent::Preedit("に".into())),
-        ],
+        vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "に".into(),
+            active_range_chars: None,
+        })],
     );
     assert!(harness.app.virtual_editor_state.ime.preedit_range.is_some());
     frame(
@@ -490,7 +496,10 @@ fn ime_disabled_after_native_deactivation_does_not_poison_editor_typing() {
         &ctx,
         vec![
             egui::Event::WindowFocused(false),
-            egui::Event::Ime(egui::ImeEvent::Disabled),
+            egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            }),
         ],
     );
     frame(
@@ -603,10 +612,10 @@ fn canceling_selected_text_ime_on_discovery_preserves_original_text() {
         frame(
             &mut harness.app,
             &ctx,
-            vec![
-                egui::Event::Ime(egui::ImeEvent::Enabled),
-                egui::Event::Ime(egui::ImeEvent::Preedit("に".into())),
-            ],
+            vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "に".into(),
+                active_range_chars: None,
+            })],
         );
         assert_eq!(harness.app.active_snapshot(), "に");
         frame(&mut harness.app, &ctx, vec![boundary]);
@@ -635,16 +644,27 @@ fn selected_text_ime_commit_is_one_undoable_edit_after_preedit_updates() {
                 .virtual_editor_state
                 .restore_selection(cursor, Some(anchor), len);
             let mut events = vec![
-                egui::Event::Ime(egui::ImeEvent::Enabled),
-                egui::Event::Ime(egui::ImeEvent::Preedit("に".into())),
-                egui::Event::Ime(egui::ImeEvent::Preedit("にほん".into())),
+                egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "に".into(),
+                    active_range_chars: None,
+                }),
+                egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: "にほん".into(),
+                    active_range_chars: None,
+                }),
             ];
             if clear_preedit {
-                events.push(egui::Event::Ime(egui::ImeEvent::Preedit(String::new())));
+                events.push(egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: String::new(),
+                    active_range_chars: None,
+                }));
             }
             events.extend([
                 egui::Event::Ime(egui::ImeEvent::Commit("日本".into())),
-                egui::Event::Ime(egui::ImeEvent::Disabled),
+                egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: String::new(),
+                    active_range_chars: None,
+                }),
             ]);
             frame(&mut harness.app, &ctx, events);
             assert_eq!(harness.app.active_snapshot(), "日本");

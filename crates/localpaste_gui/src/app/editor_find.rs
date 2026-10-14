@@ -154,21 +154,29 @@ impl LocalPasteApp {
         let mut case_changed = false;
         let mut previous_requested = false;
         let mut next_requested = false;
-        // Egui clears focus on Escape before rendering widgets. Route it using
-        // the previous frame's owner instead of the TextEdit response.
         let find_id = egui::Id::new(EDITOR_FIND_INPUT_ID);
+        // The focus filter takes effect after the first focused pass. Escape
+        // immediately after opening still needs the previous frame's owner.
         let mut close_requested = ui.memory(|memory| memory.had_focus_last_frame(find_id))
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        let status = self.editor_find_status_text();
         let mut clear_focus_request = false;
 
         ui.scope(|ui| {
             apply_editor_find_row_style(ui);
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Find").small().color(COLOR_TEXT_MUTED));
                 self.claim_discovery_focus(ui, find_id);
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut query)
                         .id(find_id)
+                        .prefix(RichText::new("Find").small().color(COLOR_TEXT_MUTED))
+                        .suffix(RichText::new(status).small().color(COLOR_TEXT_MUTED))
+                        .event_filter(egui::EventFilter {
+                            horizontal_arrows: true,
+                            vertical_arrows: true,
+                            escape: true,
+                            tab: false,
+                        })
                         .return_key(None)
                         .desired_width((ui.available_width() * 0.38).clamp(180.0, 420.0))
                         .muted_hint("Search current paste"),
@@ -180,18 +188,14 @@ impl LocalPasteApp {
                 query_changed |= response.changed();
                 if response.has_focus() {
                     ui.input_mut(|input| {
+                        close_requested |=
+                            input.consume_key(egui::Modifiers::NONE, egui::Key::Escape);
                         previous_requested |=
                             input.consume_key(egui::Modifiers::SHIFT, egui::Key::Enter);
                         next_requested |=
                             input.consume_key(egui::Modifiers::NONE, egui::Key::Enter);
                     });
                 }
-
-                ui.label(
-                    RichText::new(self.editor_find_status_text())
-                        .small()
-                        .color(COLOR_TEXT_MUTED),
-                );
 
                 if ui.add(editor_find_button("Prev")).clicked() {
                     previous_requested = true;

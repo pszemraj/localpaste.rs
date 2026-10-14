@@ -148,7 +148,7 @@ impl LocalPasteApp {
                 // Loading frames return above without consuming this one-shot reset.
                 if std::mem::take(&mut self.paste_picker_scroll_reset_pending) {
                     // Clear animation targets and momentum along with the old offset.
-                    let id = ui.make_persistent_id(egui::Id::new(RESULTS_SCROLL_ID));
+                    let id = ui.make_persistent_id(egui::IdSalt::new(RESULTS_SCROLL_ID));
                     egui::scroll_area::State::default().store(ctx, id);
                 }
                 egui::ScrollArea::vertical()

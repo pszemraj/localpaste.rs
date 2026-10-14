@@ -679,13 +679,12 @@ impl LocalPasteApp {
             CoreEvent::DiffTargetLoaded { paste } => {
                 self.maybe_capture_diff_target_from_loaded_paste(paste);
             }
-            CoreEvent::PasteSaved { paste } => {
+            CoreEvent::PasteSaved { paste }
                 if self.version_ui.history_modal_open
                     && self.selected_id.as_deref() == Some(paste.id.as_str())
-                {
+                => {
                     self.request_versions_for_selected();
                 }
-            }
             CoreEvent::PasteVersionsLoaded { id, items } => {
                 if self.selected_id.as_deref() != Some(id.as_str()) {
                     return;
@@ -795,17 +794,16 @@ impl LocalPasteApp {
                     self.version_ui.clear_diff_target_state();
                 }
             }
-            CoreEvent::Error { source, .. } => {
+            CoreEvent::Error { source, .. }
                 // Version-preview cleanup is driven by version-specific failure events.
                 // Generic backend errors (save/search/list) must not tear down an
                 // unrelated history preview that is still waiting on its own reply.
                 if matches!(source, CoreErrorSource::SaveContent)
                     && self.version_ui.history_reset_in_flight()
                     && !self.save_in_flight
-                {
+                => {
                     self.version_ui.clear_history_reset_transition();
                 }
-            }
             _ => {}
         }
     }

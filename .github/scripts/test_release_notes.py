@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -59,7 +60,11 @@ else:
 
     def run_step(self, body, *, failure="", calls=None):
         self.state_path.write_text(json.dumps({"body": body, "failure": failure, "calls": calls or []}))
-        result = subprocess.run(["bash", "-c", self.step["run"]], cwd=self.root,
+        # Launch both Python and the fake CLI explicitly; Windows cannot execute shebang files.
+        script = self.step["run"].replace("python3", shlex.quote(Path(sys.executable).as_posix()))
+        script = script.replace('["gh",',
+                                f'[{json.dumps(Path(sys.executable).as_posix())}, {json.dumps(self.gh.as_posix())},')
+        result = subprocess.run(["bash", "-c", script], cwd=self.root,
             env=os.environ | {"PATH": str(self.root) + os.pathsep + os.environ["PATH"],
                 "FAKE_GH_STATE": str(self.state_path), "GH_REPO": "pszemraj/localpaste.rs",
                 "RELEASE_TAG": "v0.5.0", "GH_TOKEN": "fixture-token"},

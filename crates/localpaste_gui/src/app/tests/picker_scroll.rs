@@ -66,7 +66,8 @@ fn picker_selection_resets_reveal_first_result_after_loading() {
             } else {
                 0.5
             };
-            ctx.run(
+            run_ui(
+                &ctx,
                 egui::RawInput {
                     time: Some(time),
                     screen_rect: Some(egui::Rect::from_min_size(
@@ -76,7 +77,10 @@ fn picker_selection_resets_reveal_first_result_after_loading() {
                     events,
                     ..Default::default()
                 },
-                |ctx| app.render_paste_picker(ctx),
+                |ui| {
+                    let ctx = &ui.ctx().clone();
+                    app.render_paste_picker(ctx)
+                },
             )
         };
         render(&mut harness.app, vec![]);
@@ -121,6 +125,7 @@ fn picker_selection_resets_reveal_first_result_after_loading() {
             vec![
                 egui::Event::PointerMoved(egui::pos2(550.0, 250.0)),
                 egui::Event::MouseWheel {
+                    phase: egui::TouchPhase::Move,
                     unit: egui::MouseWheelUnit::Point,
                     delta: egui::vec2(0.0, -400.0),
                     modifiers: egui::Modifiers::NONE,

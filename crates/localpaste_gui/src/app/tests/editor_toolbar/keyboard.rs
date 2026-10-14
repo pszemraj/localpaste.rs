@@ -312,8 +312,10 @@ fn delete_selected_chord_waits_while_a_popup_is_open() {
                 let _ = delete_sent(&harness.cmd_rx);
 
                 let chord = egui::RawInput {
-                    events: vec![key_event(key, mac_command)],
-                    modifiers: mac_command,
+                    events: std::iter::once(egui::Event::ModifiersChanged(mac_command))
+                        .chain(vec![key_event(key, mac_command)])
+                        .collect(),
+
                     ..input_at(LANGUAGE_COMBO_FRAME_WIDTH)
                 };
                 let _ = run_full_update_with_input(&mut harness.app, &ctx, chord.clone());
@@ -388,8 +390,10 @@ fn a_surface_opened_over_a_language_popup_takes_the_typing() {
                 app,
                 &ctx,
                 egui::RawInput {
-                    events: vec![key_event(key, modifiers)],
-                    modifiers,
+                    events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                        .chain(vec![key_event(key, modifiers)])
+                        .collect(),
+
                     ..input_at(LANGUAGE_COMBO_FRAME_WIDTH)
                 },
             );

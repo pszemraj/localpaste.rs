@@ -178,7 +178,7 @@ fn palette_hover_is_neutral_and_weaker_than_the_selected_row() {
     harness.app.command_palette_open = true;
     let (output, center) = hover_palette_label(&mut harness.app, &ctx, "New paste");
     let fills = fills_behind(&output, center);
-    let selection = ctx.style().visuals.selection.bg_fill;
+    let selection = ctx.global_style().visuals.selection.bg_fill;
     assert!(
         fills.contains(&selection),
         "hovered selected row keeps the selection fill: {fills:?}"
@@ -195,7 +195,7 @@ fn list_hover_scope_leaves_toolbar_button_hover_accented() {
     let ctx = egui::Context::default();
     harness.app.command_palette_open = true;
     let _ = render_settled(&mut harness.app, &ctx);
-    let hovered = ctx.style().visuals.widgets.hovered;
+    let hovered = ctx.global_style().visuals.widgets.hovered;
     assert_eq!(hovered.weak_bg_fill, COLOR_ACCENT_SURFACE_HOVER);
     assert_eq!(hovered.bg_fill, COLOR_ACCENT_SURFACE_HOVER);
 }

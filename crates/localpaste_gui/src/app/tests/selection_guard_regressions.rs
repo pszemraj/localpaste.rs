@@ -683,7 +683,7 @@ fn deferred_picker_target_survives_input_transfer_before_save_ack() {
                     primary_pointer_events(egui::pos2(1.0, 1.0), true)
                 };
             }
-            harness.app.stage_discovery_input(&ctx, &mut input);
+            harness.app.raw_input_hook(&ctx, &mut input);
             assert_eq!(
                 harness.app.pending_picker_open.is_some(),
                 transfer.is_none()
@@ -739,12 +739,20 @@ fn native_paste_during_deferred_picker_open_retains_editor_paste_input() {
         let mut modifiers = primary_command_modifiers();
         modifiers.shift = shift;
         let mut input = egui::RawInput {
-            events: vec![egui::Event::Paste("native payload".into())],
-            modifiers,
+            events: std::iter::once(egui::Event::ModifiersChanged(modifiers))
+                .chain(vec![egui::Event::Paste("native payload".into())])
+                .collect(),
+
             ..Default::default()
         };
-        harness.app.stage_discovery_input(&ctx, &mut input);
-        assert!(input.events.is_empty(), "shift={shift}");
+        harness.app.raw_input_hook(&ctx, &mut input);
+        assert!(
+            input
+                .events
+                .iter()
+                .all(|event| matches!(event, egui::Event::ModifiersChanged(_))),
+            "shift={shift}"
+        );
         assert_eq!(
             harness.app.pending_picker_selection_pin.as_deref(),
             Some("picked")
@@ -756,7 +764,10 @@ fn native_paste_during_deferred_picker_open_retains_editor_paste_input() {
                 .as_ref()
                 .unwrap()
                 .input_events,
-            vec![egui::Event::Paste("native payload".into())]
+            vec![
+                key_event(egui::Key::V, modifiers),
+                egui::Event::Paste("native payload".into())
+            ]
         );
         assert!(harness.cmd_rx.try_recv().is_err());
         assert_eq!(harness.app.active_snapshot(), before);

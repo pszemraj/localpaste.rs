@@ -469,19 +469,23 @@ fn maps_macos_delete_to_line_start_and_end() {
 #[test]
 fn maps_ime_events() {
     let events = vec![
-        egui::Event::Ime(egui::ImeEvent::Enabled),
-        egui::Event::Ime(egui::ImeEvent::Preedit("に".to_string())),
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: "に".to_string(),
+            active_range_chars: None,
+        }),
         egui::Event::Ime(egui::ImeEvent::Commit("日".to_string())),
-        egui::Event::Ime(egui::ImeEvent::Disabled),
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: String::new(),
+            active_range_chars: None,
+        }),
     ];
     let commands = commands_from_events_for_platform(&events, true, PlatformFlavor::Other);
     assert_eq!(
         commands,
         vec![
-            VirtualInputCommand::ImeEnabled,
             VirtualInputCommand::ImePreedit("に".to_string()),
             VirtualInputCommand::ImeCommit("日".to_string()),
-            VirtualInputCommand::ImeDisabled,
+            VirtualInputCommand::ImePreedit(String::new()),
         ]
     );
 }
